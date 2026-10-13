@@ -4,6 +4,14 @@
 
 {% block extra_css %}
 <style>
+    .breadcrumb {
+        font-size: 13px;
+        color: var(--ri-muted);
+        margin-bottom: 10px;
+    }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .breadcrumb a:hover { text-decoration: underline; }
+
     .page-header {
         display: flex;
         justify-content: space-between;
@@ -17,23 +25,33 @@
 
     .page-header h1 {
         margin: 0;
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 700;
         border-bottom: none;
         padding-bottom: 0;
     }
 
-    .page-subtitle {
-        color: var(--ri-muted);
-        font-size: 13px;
-        margin-top: 4px;
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .chip-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
     }
 
-    .action-bar {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
+    .chip {
+        background: #eef3f8;
+        border: 1px solid var(--ri-border);
+        border-radius: 18px;
+        padding: 6px 14px;
+        font-size: 12px;
+        color: var(--ri-ink);
     }
+    .chip strong { color: var(--ri-accent); font-variant-numeric: tabular-nums; }
+    .chip .chip-label { color: var(--ri-muted); margin-right: 6px; }
 
     .section {
         background: var(--ri-surface);
@@ -51,79 +69,124 @@
         padding-bottom: 6px;
     }
 
-    table.info-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-    }
-
-    .info-table th,
-    .info-table td {
+    table.info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .info-table th, .info-table td {
         padding: 5px 10px;
         border-bottom: 1px solid #e4e8ec;
         text-align: left;
         vertical-align: top;
     }
-
     .info-table th {
         width: 140px;
         color: var(--ri-muted);
         font-weight: 600;
         background: #f8fafb;
     }
-
     .info-table td.mono {
         font-family: ui-monospace, monospace;
         font-size: 12px;
         word-break: break-all;
     }
 
-    .transcript {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .turn {
+    /* T5 手风琴 turn 视图 */
+    details.turn {
         background: #fafbfc;
         border: 1px solid #e4e8ec;
         border-left: 4px solid #9aa8b8;
         border-radius: var(--te-radius);
-        padding: 10px 12px;
+        padding: 0;
+        margin-bottom: 8px;
     }
+    details.turn[open] { background: #ffffff; }
+    details.turn.turn-system { border-left-color: #8a5a12; }
+    details.turn.turn-user { border-left-color: #2d6a9f; }
+    details.turn.turn-assistant { border-left-color: var(--ri-success); }
+    details.turn.turn-tool { border-left-color: #757575; }
+    details.turn.turn-unknown { border-left-color: #9b2c2c; }
 
-    .turn.turn-system { border-left-color: #8a5a12; }
-    .turn.turn-user { border-left-color: #2d6a9f; }
-    .turn.turn-assistant { border-left-color: var(--ri-success); }
-    .turn.turn-tool { border-left-color: #757575; }
-    .turn.turn-unknown { border-left-color: #9b2c2c; }
-
-    .turn .turn-header {
+    details.turn > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 8px 12px;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-bottom: 6px;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: var(--ri-ink);
+    }
+    details.turn > summary::-webkit-details-marker { display: none; }
+    details.turn > summary::before {
+        content: "▶";
+        font-size: 10px;
+        color: var(--ri-muted);
+        transition: transform 0.2s;
+        display: inline-block;
+    }
+    details.turn[open] > summary::before {
+        transform: rotate(90deg);
     }
 
-    .turn .turn-role {
-        font-size: 12px;
+    .role-badge {
+        display: inline-block;
+        font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
-        color: var(--ri-muted);
-        letter-spacing: 0.04em;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: #e0e6ec;
+        color: var(--ri-ink);
     }
+    .role-badge.role-system { background: #f0e2c5; color: #8a5a12; }
+    .role-badge.role-user { background: #c7def5; color: #1e5080; }
+    .role-badge.role-assistant { background: #cde7d6; color: var(--ri-success); }
+    .role-badge.role-tool { background: #e0e0e0; color: #424242; }
+    .role-badge.role-unknown { background: #f3c8c8; color: #9b2c2c; }
 
-    .turn .turn-index {
+    .turn-icon {
+        font-size: 12px;
+        color: var(--ri-muted);
+    }
+    .turn-icon.has-tool-call { color: #1e5080; }
+    .turn-icon.has-think { color: #8a5a12; }
+
+    .turn-index {
+        font-family: ui-monospace, monospace;
         font-size: 11px;
         color: var(--ri-muted);
-        font-family: ui-monospace, monospace;
     }
 
-    .turn pre.turn-body {
+    .turn-meta {
+        font-size: 12px;
+        color: var(--ri-muted);
+        margin-left: auto;
+    }
+
+    .tool-call-list {
+        width: 100%;
+        font-size: 12px;
+        color: #1e5080;
+        background: #e8f0fa;
+        padding: 4px 12px 4px 36px;
+        margin: 0;
+        border-top: 1px dashed #c7def5;
+    }
+    .tool-call-list .tool-name {
+        display: inline-block;
         background: #ffffff;
-        border: 1px solid #e4e8ec;
-        border-radius: var(--te-radius);
-        padding: 8px 10px;
+        border: 1px solid #c7def5;
+        padding: 1px 6px;
+        border-radius: 8px;
+        margin: 2px 4px 2px 0;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+    }
+
+    details.turn pre.turn-body {
+        background: #ffffff;
+        border-top: 1px solid #e4e8ec;
+        border-radius: 0;
+        padding: 10px 14px;
         font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
         font-size: 12.5px;
         line-height: 1.55;
@@ -133,78 +196,99 @@
         max-height: 600px;
         overflow: auto;
     }
+    details.turn[open] pre.turn-body { max-height: none; }
 
-    .turn pre.turn-body .marker-start,
-    .turn pre.turn-body .marker-end {
+    .turn-body.collapsed-text {
+        max-height: 320px;
+        overflow: hidden;
+        position: relative;
+    }
+    .turn-body.collapsed-text::after {
+        content: "";
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 60px;
+        background: linear-gradient(to bottom, transparent, #ffffff 80%);
+        pointer-events: none;
+    }
+    .expand-toggle {
+        background: transparent;
+        border: 1px solid var(--ri-border);
+        color: var(--ri-accent);
+        font-size: 12px;
+        padding: 2px 10px;
+        margin: 4px 12px 8px 36px;
+        border-radius: var(--te-radius);
+        cursor: pointer;
+    }
+    .expand-toggle:hover { background: #eef3f8; }
+
+    details.turn pre.turn-body .marker-start,
+    details.turn pre.turn-body .marker-end {
         background: #fff3cd;
         color: #856404;
         padding: 0 2px;
         border-radius: 2px;
         font-weight: 700;
     }
-
-    .turn pre.turn-body .marker-end {
+    details.turn pre.turn-body .marker-end {
         background: #cde7d6;
         color: var(--ri-success);
     }
-
-    .turn pre.turn-body .tool-call {
+    details.turn pre.turn-body .tool-call {
         background: #e8f0fa;
         color: #1e5080;
         padding: 0 2px;
         border-radius: 2px;
     }
-
-    .turn pre.turn-body .tool-result {
+    details.turn pre.turn-body .tool-result {
         background: #f0e2c5;
         color: #8a5a12;
         padding: 0 2px;
         border-radius: 2px;
     }
 
-    .toolbar {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 12px;
-    }
-
-    .empty-row {
-        text-align: center;
-        color: var(--ri-muted);
-        padding: 24px 8px;
-        font-size: 14px;
-    }
-
-    .alert {
-        padding: 10px 12px;
-        border-radius: var(--te-radius);
-        border-left: 4px solid;
-        margin-bottom: 14px;
-    }
-
-    .alert-warning {
-        background: #fff3cd;
-        border-color: #ffc107;
-        color: #856404;
-    }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .empty-row { text-align: center; color: var(--ri-muted); padding: 24px 8px; font-size: 14px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 14px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
 </style>
 {% endblock %}
 
 {% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    &nbsp;/&nbsp;
+    {% if task_id %}
+        <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}{% if task_name %}（{{ task_name }}）{% endif %}</a>
+    {% else %}
+        任务 #-
+    {% endif %}
+    &nbsp;/&nbsp;
+    {% if rollout_pk %}
+        <a href="/api/tasks/{{ task_id or '' }}/rollouts/{{ rollout_pk }}">rollout #{{ rollout_biz_id if rollout_biz_id is not none else rollout_pk }}</a>
+    {% else %}
+        rollout #-
+    {% endif %}
+    &nbsp;/&nbsp;
+    <strong>segment #{{ segment.id }}</strong>
+</div>
+
 <div class="page-header">
     <div>
         <h1>Segment #{{ segment.id }}</h1>
         <div class="page-subtitle">
             attempt <strong>{{ segment.attempt_id or "-" }}</strong>
             {% if segment.segment_index is not none and segment.segment_count is not none %}
-            &nbsp;·&nbsp; 第 {{ segment.segment_index }} / {{ segment.segment_count }} 段
+                &nbsp;·&nbsp; 第 {{ segment.segment_index }} / {{ segment.segment_count }} 段
             {% endif %}
             &nbsp;·&nbsp; status <code>{{ segment.status or "-" }}</code>
         </div>
     </div>
     <div class="action-bar">
         <a href="{% if task_id %}/api/tasks/{{ task_id }}{% else %}/api/tasks{% endif %}" class="btn btn-secondary">返回</a>
-        <button type="button" class="btn" id="copyBtn">复制文本</button>
+        <button type="button" class="btn" id="reparseBtn" data-rollout-pk="{{ rollout_pk or '' }}">重解析 .pt</button>
         <a class="btn btn-secondary" href="/api/segments/{{ segment.id }}/transcript.json" target="_blank">JSON 原文</a>
     </div>
 </div>
@@ -212,6 +296,32 @@
 {% if warning %}
 <div class="alert alert-warning">{{ warning }}</div>
 {% endif %}
+
+{% if sibling_prev_id or sibling_next_id %}
+<div class="alert alert-info" style="display: flex; gap: 8px; align-items: center;">
+    <span style="color: var(--ri-muted); font-size: 12px;">兄弟 segment 导航:</span>
+    {% if sibling_prev_id %}
+        <a class="btn btn-secondary btn-sm" href="/api/segments/{{ sibling_prev_id }}">← segment #{{ sibling_prev_id }}</a>
+    {% else %}
+        <button class="btn btn-secondary btn-sm" disabled>← 没有更早</button>
+    {% endif %}
+    {% if sibling_next_id %}
+        <a class="btn btn-secondary btn-sm" href="/api/segments/{{ sibling_next_id }}">segment #{{ sibling_next_id }} →</a>
+    {% else %}
+        <button class="btn btn-secondary btn-sm" disabled>没有更晚 →</button>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="chip-row">
+    <div class="chip"><span class="chip-label">turn_count</span><strong>{{ turn_stats.turn_count or 0 }}</strong></div>
+    <div class="chip"><span class="chip-label">total_chars</span><strong>{{ turn_stats.total_chars or 0 }}</strong></div>
+    <div class="chip"><span class="chip-label">token_estimate</span><strong>{{ turn_stats.token_estimate or 0 }}</strong></div>
+    <div class="chip">
+        <span class="chip-label">time_cost</span>
+        {% if turn_stats.time_cost is not none %}<strong>{{ "%.2f"|format(turn_stats.time_cost) }}s</strong>{% else %}<strong>-</strong>{% endif %}
+    </div>
+</div>
 
 <div class="section">
     <h2>Metadata</h2>
@@ -229,8 +339,13 @@
             </td>
         </tr>
         <tr>
-            <th>rollout_id</th>
-            <td class="mono">{{ segment.rollout_id if segment.rollout_id is not none else "-" }}</td>
+            <th>rollout</th>
+            <td class="mono">
+                {% if rollout_pk %}
+                <a href="/api/tasks/{{ task_id or '' }}/rollouts/{{ rollout_pk }}">#{{ rollout_pk }}</a>
+                {% if rollout_biz_id is not none %}<span style="color: var(--ri-muted);">（业务 rollout_id={{ rollout_biz_id }}）</span>{% endif %}
+                {% else %}-{% endif %}
+            </td>
         </tr>
         <tr>
             <th>group_index</th>
@@ -286,7 +401,7 @@
 </div>
 
 <div class="section">
-    <h2>Transcript <small style="color: var(--ri-muted); font-size: 12px;">{{ turns | length }} turn(s)</small></h2>
+    <h2>Turns <small style="color: var(--ri-muted); font-size: 12px;">{{ turns | length }} turn(s)</small></h2>
 
     {% if turns %}
     <div class="toolbar">
@@ -296,75 +411,94 @@
 
     <div class="transcript" id="transcriptContainer">
         {% for t in turns %}
-        <div class="turn turn-{{ t.role_class }}" data-index="{{ loop.index0 }}">
-            <div class="turn-header">
-                <div class="turn-role">turn {{ loop.index }} · {{ t.role_label }}</div>
-                <div class="turn-index">{{ t.char_count }} chars</div>
+        <details class="turn turn-{{ t.role_class }}" data-index="{{ t.turn_index }}">
+            <summary>
+                <span class="turn-index">#{{ t.turn_index }}</span>
+                <span class="role-badge role-{{ t.role_class }}">{{ t.role_label }}</span>
+                {% if t.has_think %}<span class="turn-icon has-think" title="包含 think 块">💭</span>{% endif %}
+                {% if t.has_tool_call %}<span class="turn-icon has-tool-call" title="包含 tool call">🔧</span>{% endif %}
+                <span class="turn-meta">{{ t.body_char_count }} chars{% if t.token_estimate %} · ~{{ t.token_estimate }} tok{% endif %}</span>
+            </summary>
+            {% if t.role_label == 'assistant' and t.tool_call_names %}
+            <div class="tool-call-list">
+                tools:
+                {% for name in t.tool_call_names %}
+                    <span class="tool-name">{{ name }}</span>
+                {% endfor %}
             </div>
-            <pre class="turn-body{% if t.collapsed %} collapsed{% endif %}">{{ t.html | safe }}</pre>
-        </div>
+            {% endif %}
+            <pre class="turn-body{% if t.body_char_count > 3000 %} collapsed-text{% endif %}">{{ t.html | safe }}</pre>
+            {% if t.body_char_count > 3000 %}
+            <button type="button" class="expand-toggle">展开全文</button>
+            {% endif %}
+        </details>
         {% endfor %}
     </div>
     {% else %}
-    <div class="empty-row">该 segment 暂无 transcript 文本（可能未提供 prompt / response，或尚未扫描入库）</div>
+    <div class="empty-row">
+        该 segment 暂无 turn 文本。
+        {% if warning %}
+        <br><span style="color: var(--ri-muted); font-size: 12px;">{{ warning }}</span>
+        {% endif %}
+    </div>
     {% endif %}
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    // 折叠/展开控制：每个 turn 正文前 4 行折叠
-    document.querySelectorAll("pre.turn-body").forEach(function (pre) {
-        if (!pre.classList.contains("collapsed")) {
-            pre.classList.add("collapsed");
-        }
-    });
+    const SEGMENT_ID = {{ (segment.id or 0) | tojson }};
+    const ROLLOUT_PK = {{ (rollout_pk or 0) | tojson }};
 
     document.getElementById("expandAllBtn") && document.getElementById("expandAllBtn").addEventListener("click", function () {
-        document.querySelectorAll("pre.turn-body").forEach(function (p) { p.classList.remove("collapsed"); });
+        document.querySelectorAll("details.turn").forEach(function (d) { d.open = true; });
+        document.querySelectorAll("pre.turn-body.collapsed-text").forEach(function (p) { p.classList.remove("collapsed-text"); });
+        document.querySelectorAll(".expand-toggle").forEach(function (b) { b.style.display = "none"; });
     });
     document.getElementById("collapseAllBtn") && document.getElementById("collapseAllBtn").addEventListener("click", function () {
-        document.querySelectorAll("pre.turn-body").forEach(function (p) { p.classList.add("collapsed"); });
+        document.querySelectorAll("details.turn").forEach(function (d) { d.open = false; });
     });
 
-    // 点击 turn 头部可切换折叠
-    document.querySelectorAll(".turn").forEach(function (turn) {
-        turn.querySelector(".turn-header").addEventListener("click", function () {
-            const pre = turn.querySelector("pre.turn-body");
-            if (pre) pre.classList.toggle("collapsed");
+    // 「展开全文」按钮：去掉 collapsed-text + 隐藏自己
+    document.querySelectorAll(".expand-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            const turn = btn.closest("details.turn");
+            if (turn) turn.open = true;
+            const pre = turn ? turn.querySelector("pre.turn-body") : null;
+            if (pre) pre.classList.remove("collapsed-text");
+            btn.style.display = "none";
         });
     });
 
-    // 复制全文
-    document.getElementById("copyBtn").addEventListener("click", async function () {
-        const blocks = document.querySelectorAll(".turn");
-        if (!blocks.length) {
-            alert("没有可复制的 transcript");
+    // 重解析 .pt
+    document.getElementById("reparseBtn") && document.getElementById("reparseBtn").addEventListener("click", async function () {
+        if (!ROLLOUT_PK) {
+            alert("找不到对应的 rollout 主键，无法触发重解析");
             return;
         }
-        const lines = [];
-        blocks.forEach(function (turn, idx) {
-            const role = turn.querySelector(".turn-role");
-            const pre = turn.querySelector("pre.turn-body");
-            if (role) lines.push("### " + role.textContent);
-            if (pre) lines.push(pre.innerText);
-            lines.push("");
-        });
-        const text = lines.join("\n");
+        const btn = this;
+        if (!confirm("确定要重新解析该 rollout 的 .pt 文件吗？\n会按 T3 规则重新切分 attempt / segment / turn，并刷新 turn 表。")) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "解析中…";
         try {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(text);
-            } else {
-                const ta = document.createElement("textarea");
-                ta.value = text;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand("copy");
-                document.body.removeChild(ta);
+            const resp = await fetch("/api/rollouts/" + encodeURIComponent(ROLLOUT_PK) + "/parse?force=true", {
+                method: "POST",
+                headers: { "Accept": "application/json" },
+            });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!data || data.code !== 0) {
+                throw new Error((data && data.msg) || ("HTTP " + resp.status));
             }
-            alert("已复制 " + blocks.length + " 段 transcript 到剪贴板");
+            alert("解析完成\nattempts: " + (data.data && data.data.n_attempts) +
+                  "\nsegments: " + (data.data && data.data.n_segments) +
+                  "\npersisted_turns: " + (data.data && data.data.persisted_turns));
+            window.location.reload();
         } catch (e) {
-            alert("复制失败：" + e.message);
+            alert("解析失败：" + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = original;
         }
     });
 </script>

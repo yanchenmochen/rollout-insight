@@ -293,7 +293,7 @@ async def api_segments_search(
 
 @router.get("/api/segments/{segment_id}", include_in_schema=False)
 async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResponse:
-    """渲染 segment_transcript.html。"""
+    """渲染 segment_transcript.html（v0.4.0 T5：注入 turns 列表 + 兄弟 segment 导航）。"""
     Segment = _segment_model()
     Attempt = _attempt_model()
     Rollout = _rollout_model()
@@ -305,6 +305,17 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
     turns: List[Dict[str, Any]] = []
     seg: Dict[str, Any] = _empty_segment_dict(segment_id)
     task_id: Optional[int] = None
+    task_name: Optional[str] = None
+    rollout_biz_id: Optional[int] = None
+    rollout_pk: Optional[int] = None
+    sibling_prev_id: Optional[int] = None
+    sibling_next_id: Optional[int] = None
+    turn_stats: Dict[str, Any] = {
+        "turn_count": 0,
+        "total_chars": 0,
+        "token_estimate": 0,
+        "time_cost": None,
+    }
 
     if Segment is None or Session is None:
         warning = "Segment 模型尚未就绪（2A 阶段未完成）"
@@ -337,34 +348,61 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
                     if rollout_obj is not None:
                         seg["rollout_id"] = rollout_obj.primary_id
                         seg["pt_path"] = getattr(rollout_obj, "pt_path", None)
+                        rollout_pk = getattr(rollout_obj, "primary_id", None)
+                        rollout_biz_id = getattr(rollout_obj, "rollout_id", None)
                         if getattr(rollout_obj, "task_id", None) is not None:
                             task_id = rollout_obj.task_id
+                    if task_id is not None and Task is not None:
+                        t_obj = session.query(Task).filter(Task.primary_id == task_id).first()
+                        if t_obj is not None:
+                            task_name = getattr(t_obj, "task_name", None)
 
-                    # 尝试加载 transcript 文本：先 ensure_transcript（带 DB 缓存），
-                    # 失败/为空再 fallback 到 segment 上的字段
-                    transcript_text: str = ""
-                    try:
-                        ensure_fn = _ensure_transcript_fn()
-                        if callable(ensure_fn):
-                            r = ensure_fn(segment_id)
-                            if isinstance(r, dict):
-                                transcript_text = (
-                                    r.get("transcript")
-                                    or r.get("text")
-                                    or r.get("response_text")
-                                    or r.get("prompt_text")
-                                    or ""
+                    # v0.4.0 T5：先从 ri_segment_turn_table 读 turns
+                    turns = _load_turns_for_segment(segment_id, session)
+                    if not turns:
+                        # 没有 turns：触发一次 ensure_transcript（懒加载 .pt）
+                        # 然后调 T3 split_response_to_turns 落库到 turn 表
+                        transcript_text = _ensure_turns_for_segment(segment_id, obj, seg)
+                        if transcript_text:
+                            turns = _load_turns_for_segment(segment_id, session)
+                        if not turns:
+                            # 兜底：从 raw transcript 切分（仅用于显示，不落库）
+                            try:
+                                ensure_fn = _ensure_transcript_fn()
+                                if callable(ensure_fn):
+                                    r = ensure_fn(segment_id)
+                                    if isinstance(r, dict):
+                                        transcript_text = (
+                                            r.get("transcript")
+                                            or r.get("text")
+                                            or r.get("response_text")
+                                            or r.get("prompt_text")
+                                            or ""
+                                        )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
+                            if not transcript_text:
+                                transcript_text = _load_transcript_text(obj, seg)
+                            if transcript_text:
+                                turns = _build_turns_html(transcript_text)
+                            else:
+                                warning = (
+                                    "未找到 transcript 文本（可能为 2D 阶段尚未补 ensure_transcript，"
+                                    "或未提供 tokenizer 目录）"
                                 )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
-                    if not transcript_text:
-                        transcript_text = _load_transcript_text(obj, seg)
-                    if transcript_text:
-                        turns = _build_turns_html(transcript_text)
-                    else:
-                        warning = (
-                            "未找到 transcript 文本（可能为 2D 阶段尚未补 ensure_transcript，"
-                            "或未提供 tokenizer 目录）"
+
+                    # 统计 turn 数据 + 兄弟 segment 导航
+                    if turns:
+                        turn_stats["turn_count"] = len(turns)
+                        for t in turns:
+                            turn_stats["total_chars"] += int(t.get("body_char_count") or t.get("char_count") or 0)
+                            turn_stats["token_estimate"] += int(t.get("token_estimate") or 0)
+                    turn_stats["time_cost"] = _extract_time_cost(seg, obj)
+
+                    # 兄弟 segment（按 segment_index 排序的 prev/next）
+                    if attempt_obj is not None:
+                        sibling_prev_id, sibling_next_id = _sibling_nav(
+                            session, attempt_obj.primary_id, obj.segment_index
                         )
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 segment #{} 失败: {}", segment_id, exc)
@@ -378,9 +416,183 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
             "segment": seg,
             "turns": turns,
             "task_id": task_id,
+            "task_name": task_name,
+            "rollout_biz_id": rollout_biz_id,
+            "rollout_pk": rollout_pk,
+            "sibling_prev_id": sibling_prev_id,
+            "sibling_next_id": sibling_next_id,
+            "turn_stats": turn_stats,
             "warning": warning,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# T5 辅助
+# ---------------------------------------------------------------------------
+
+
+def _load_turns_for_segment(segment_id: int, session: Any) -> List[Dict[str, Any]]:
+    """从 ``ri_segment_turn_table`` 读 turns；若空返回 []。"""
+    try:
+        from db.db_segment_turn import DBSegmentTurn
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_load_turns_for_segment: DBSegmentTurn 不可用: {}", exc)
+        return []
+    try:
+        rows = (
+            session.query(DBSegmentTurn)
+            .filter(DBSegmentTurn.segment_id == segment_id)
+            .order_by(DBSegmentTurn.turn_index.asc())
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_load_turns_for_segment: 查询失败: {}", exc)
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            tool_calls = _safe_json_load(getattr(r, "tool_call_names_json", "[]"), default=[])
+        except Exception:
+            tool_calls = []
+        if not isinstance(tool_calls, list):
+            tool_calls = []
+        body_text = r.body_text or ""
+        out.append(
+            {
+                "primary_id": r.primary_id,
+                "turn_index": r.turn_index,
+                "role": r.role or "unknown",
+                "role_label": r.role or "unknown",
+                "role_class": r.role or "unknown",
+                "body_text": body_text,
+                "body_char_count": int(r.body_char_count or 0),
+                "has_tool_call": bool(r.has_tool_call),
+                "has_think": bool(r.has_think),
+                "tool_call_names": [str(x) for x in tool_calls if x],
+                "token_estimate": int(r.token_estimate or 0),
+                "html": _highlight_html(body_text),
+            }
+        )
+    return out
+
+
+def _ensure_turns_for_segment(segment_id: int, seg_obj: Any, seg_dict: Dict[str, Any]) -> str:
+    """懒加载：调 T3 split_response_to_turns，把 turn 写到 ``ri_segment_turn_table``。
+
+    Returns:
+        response_text（写入前的内容），用于诊断。
+    """
+    try:
+        from db.db_segment_turn_service import DBSegmentTurnService
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_ensure_turns_for_segment: DBSegmentTurnService 不可用: {}", exc)
+        return ""
+    # 先 ensure_transcript 让 transcript 行落库
+    response_text = ""
+    try:
+        ensure_fn = _ensure_transcript_fn()
+        if callable(ensure_fn):
+            r = ensure_fn(segment_id)
+            if isinstance(r, dict):
+                response_text = (
+                    r.get("transcript")
+                    or r.get("text")
+                    or r.get("response_text")
+                    or ""
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
+    if not response_text:
+        response_text = _load_transcript_text(seg_obj, seg_dict)
+    if not response_text:
+        return ""
+
+    try:
+        from utils.rollout_pt_parser import split_response_to_turns
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("import split_response_to_turns 失败: {}", exc)
+        return response_text
+    turns = split_response_to_turns(response_text)
+    if not turns:
+        return response_text
+    try:
+        DBSegmentTurnService.upsert_segment_turns(
+            segment_id=int(segment_id), turns=turns, force=True
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("upsert_segment_turns 失败 segment_id={}: {}", segment_id, exc)
+    return response_text
+
+
+def _extract_time_cost(seg_dict: Dict[str, Any], seg_obj: Any) -> Optional[float]:
+    """从 attempt / segment 元数据抽 time_cost（秒）。"""
+    for candidate in (seg_dict, seg_obj):
+        pt = None
+        if hasattr(candidate, "phase_time"):
+            pt = getattr(candidate, "phase_time", None)
+        elif isinstance(candidate, dict):
+            pt = candidate.get("phase_time")
+        if isinstance(pt, dict):
+            for key in ("agent_run", "rollout_total", "total", "agent"):
+                v = pt.get(key)
+                if isinstance(v, (int, float)):
+                    return float(v)
+            total = sum(v for v in pt.values() if isinstance(v, (int, float)))
+            if total > 0:
+                return float(total)
+    return None
+
+
+def _sibling_nav(session: Any, attempt_id: int, current_index: Any) -> tuple[Optional[int], Optional[int]]:
+    """返回 (prev_segment_id, next_segment_id)，按 segment_index 排序。"""
+    try:
+        from db.db_segment import DBSegment
+    except Exception:
+        return None, None
+    prev_id: Optional[int] = None
+    next_id: Optional[int] = None
+    if current_index is None:
+        return None, None
+    try:
+        prev_row = (
+            session.query(DBSegment)
+            .filter(
+                DBSegment.attempt_id == attempt_id,
+                DBSegment.segment_index < current_index,
+            )
+            .order_by(DBSegment.segment_index.desc())
+            .first()
+        )
+        next_row = (
+            session.query(DBSegment)
+            .filter(
+                DBSegment.attempt_id == attempt_id,
+                DBSegment.segment_index > current_index,
+            )
+            .order_by(DBSegment.segment_index.asc())
+            .first()
+        )
+        if prev_row is not None:
+            prev_id = int(prev_row.primary_id)
+        if next_row is not None:
+            next_id = int(next_row.primary_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_sibling_nav 失败: {}", exc)
+    return prev_id, next_id
+
+
+def _safe_json_load(raw: Any, default: Any) -> Any:
+    import json as _json
+
+    if raw is None:
+        return default
+    if isinstance(raw, (list, dict)):
+        return raw
+    try:
+        return _json.loads(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 @router.get("/api/segments/{segment_id}/transcript.json")
