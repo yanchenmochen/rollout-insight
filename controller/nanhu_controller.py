@@ -126,6 +126,8 @@ def _normalize_remote_job(payload: Dict[str, Any], cluster: str) -> Dict[str, An
         payload.get("job_id")
         or payload.get("jobId")
         or payload.get("id")
+        or payload.get("uuid")  # 南湖 CLI 默认字段
+        or payload.get("jobInstanceId")
         or ""
     )
     name = (

@@ -15,3 +15,7 @@ venv/
 *.pt
 *.pt.lock
 .DS_Store
+# pip install -e 产物
+*.egg-info/
+build/
+dist/

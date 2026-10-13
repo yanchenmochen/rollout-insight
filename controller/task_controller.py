@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
 from starlette.templating import Jinja2Templates
@@ -118,13 +118,15 @@ def _rollout_to_dict(r: Any) -> Dict[str, Any]:
     if r is None:
         return {}
     return {
-        "id": getattr(r, "id", None),
+        "id": getattr(r, "primary_id", None) or getattr(r, "id", None),
+        "primary_id": getattr(r, "primary_id", None) or getattr(r, "id", None),
         "rollout_id": getattr(r, "rollout_id", None),
         "n_samples": getattr(r, "n_samples", None),
         "n_attempts": getattr(r, "n_attempts", None),
         "mean_reward": getattr(r, "mean_reward", None),
         "scanned_at": _format_dt(getattr(r, "scanned_at", None)),
         "pt_path": getattr(r, "pt_path", None),
+        "task_id": getattr(r, "task_id", None),
     }
 
 
@@ -132,7 +134,8 @@ def _attempt_to_dict(a: Any) -> Dict[str, Any]:
     if a is None:
         return {}
     return {
-        "id": getattr(a, "id", None),
+        "id": getattr(a, "primary_id", None) or getattr(a, "id", None),
+        "primary_id": getattr(a, "primary_id", None) or getattr(a, "id", None),
         "rollout_id": getattr(a, "rollout_id", None),
         "group_index": getattr(a, "group_index", None),
         "instance_id": getattr(a, "instance_id", None),
@@ -145,20 +148,21 @@ def _segment_to_dict(s: Any) -> Dict[str, Any]:
     if s is None:
         return {}
     return {
-        "id": getattr(s, "id", None),
+        "id": getattr(s, "primary_id", None) or getattr(s, "id", None),
+        "primary_id": getattr(s, "primary_id", None) or getattr(s, "id", None),
         "attempt_id": getattr(s, "attempt_id", None),
         "rollout_id": getattr(s, "rollout_id", None),
         "group_index": getattr(s, "group_index", None),
-        "instance_id": getattr(s, "instance_id", None),
+        "instance_id": None,  # attempt 表里；为 null 时由 caller 补充
         "segment_index": getattr(s, "segment_index", None),
         "segment_count": getattr(s, "segment_count", None),
         "sandbox_id": getattr(s, "sandbox_id", None),
         "status": getattr(s, "status", None),
         "reward": getattr(s, "reward", None),
-        "agent_turns": getattr(s, "agent_turns", None),
-        "tool_calls": getattr(s, "tool_calls", None),
+        "agent_turns": None,
+        "tool_calls": None,
         "response_length": getattr(s, "response_length", None),
-        "diff_line_count": getattr(s, "diff_line_count", None),
+        "diff_line_count": None,
     }
 
 
@@ -339,7 +343,7 @@ async def api_create_task(
             session.add(obj)
             session.commit()
             session.refresh(obj)
-            new_id = getattr(obj, "id", None)
+            new_id = getattr(obj, "primary_id", None) or getattr(obj, "id", None)
             logger.info("已创建任务 id={} name={}", new_id, task_name)
 
         # 触发一次初始扫描（如果扫描服务已就绪）；失败不影响创建结果
@@ -432,21 +436,33 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                 ):
                     rollouts.append(_rollout_to_dict(r))
             if Attempt is not None:
-                # 通过 rollout_id 关联到本任务
+                # 通过 (task_id, rollout_id 业务键) 关联到本任务
                 if Rollout is not None:
-                    rollout_ids = [r["id"] for r in rollouts if r.get("id") is not None]
-                    if rollout_ids:
+                    rollout_biz_ids = [
+                        r["rollout_id"] for r in rollouts if r.get("rollout_id") is not None
+                    ]
+                    if rollout_biz_ids:
                         for a in (
                             session.query(Attempt)
-                            .filter(Attempt.rollout_id.in_(rollout_ids))
+                            .filter(
+                                Attempt.task_id == task_id,
+                                Attempt.rollout_id.in_(rollout_biz_ids),
+                            )
                             .order_by(Attempt.primary_id.asc())
                             .limit(500)
                             .all()
                         ):
                             attempts.append(_attempt_to_dict(a))
             if Segment is not None:
-                attempt_ids = [a["id"] for a in attempts if a.get("id") is not None]
-                if attempt_ids:
+                attempt_ids = [a["primary_id"] for a in attempts if a.get("primary_id") is not None]
+                if attempt_ids and Attempt is not None:
+                    # 批量查 attempt 表，用于补 segment dict 的 instance_id / tool_calls 等
+                    attempt_objs = (
+                        session.query(Attempt)
+                        .filter(Attempt.primary_id.in_(attempt_ids))
+                        .all()
+                    )
+                    attempt_map = {a.primary_id: a for a in attempt_objs}
                     for s in (
                         session.query(Segment)
                         .filter(Segment.attempt_id.in_(attempt_ids))
@@ -454,7 +470,42 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                         .limit(1000)
                         .all()
                     ):
-                        segments.append(_segment_to_dict(s))
+                        seg_attempt = attempt_map.get(getattr(s, "attempt_id", None))
+                        # 借用 segment_controller._segment_to_dict：让 segment 模板拿得到
+                        # instance_id / agent_turns / tool_calls（这些字段在 attempt 表）
+                        from controller.segment_controller import (
+                            _segment_to_dict as _seg_to_dict,
+                        )
+                        seg_dict = _seg_to_dict(s, seg_attempt)
+                        # 再补 task_id 和 pt_path（用于页面跳转）
+                        if seg_attempt is not None:
+                            seg_dict["rollout_id"] = getattr(seg_attempt, "rollout_id", None)
+                            # 通过 (task_id, rollout_id 业务键) 找 rollout
+                            if Rollout is not None and seg_dict["rollout_id"] is not None:
+                                ro = (
+                                    session.query(Rollout)
+                                    .filter(
+                                        Rollout.task_id == task_id,
+                                        Rollout.rollout_id == seg_dict["rollout_id"],
+                                    )
+                                    .first()
+                                )
+                                if ro is not None:
+                                    seg_dict["pt_path"] = getattr(ro, "pt_path", None)
+                        segments.append(seg_dict)
+                else:
+                    # 无 attempts 时（极端情况）只列 segment 主键
+                    for s in (
+                        session.query(Segment)
+                        .filter(Segment.attempt_id.in_(attempt_ids))
+                        .order_by(Segment.attempt_id.asc(), Segment.segment_index.asc())
+                        .limit(1000)
+                        .all()
+                    ):
+                        from controller.segment_controller import (
+                            _segment_to_dict as _seg_to_dict,
+                        )
+                        segments.append(_seg_to_dict(s))
 
         return templates.TemplateResponse(
             request,
@@ -475,35 +526,60 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
 
 
 @router.post("/api/tasks/{task_id}/rescan")
-async def api_rescan_task(task_id: int) -> Response:
-    """触发 RolloutScanService.rescan_task。"""
+async def api_rescan_task(
+    task_id: int,
+    background: BackgroundTasks = None,  # 由 FastAPI 依赖注入
+) -> Response:
+    """触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。
+
+    异步原因：单 task 含 30~50 个 .pt 同步扫会持续 1~3 分钟，期间阻塞 server 线程
+    让所有其他请求都排队。改成 BackgroundTasks 后请求立即返回，scan 在后台跑。
+    """
+    Task = _task_model()
+    if Task is None:
+        raise RolloutInsightException(
+            RolloutInsightException.NOT_IMPLEMENTED,
+            "任务模型尚未就绪（2A 阶段未完成）",
+        )
+    # 校验 task 存在性（先同步快路径，避免后台跑空）
+    Session = _session_factory()
+    if Session is None:
+        raise RolloutInsightException(
+            RolloutInsightException.DB_ERROR, "Session 工厂不可用"
+        )
+    with Session() as session:
+        obj = session.query(Task).filter(Task.primary_id == task_id).first()
+        if obj is None:
+            raise RolloutInsightException(
+                RolloutInsightException.TASK_NOT_FOUND, f"任务 #{task_id} 不存在"
+            )
+
     scan_cls = _scan_service()
     if scan_cls is None:
         raise RolloutInsightException(
             RolloutInsightException.NOT_IMPLEMENTED,
             "扫描服务尚未就绪（2B 阶段未完成）",
         )
+    # 把扫描塞到后台；请求立即返回
+    if background is not None:
+        background.add_task(_run_rescan_background, scan_cls, task_id)
+    return Response.success(
+        msg="已提交后台重扫",
+        data={
+            "task_id": task_id,
+            "status": "PENDING_SCAN",
+            "hint": "用 GET /api/tasks/{id} 查看进度（status=READY/FAILED/SCANNING）",
+        },
+    )
+
+
+def _run_rescan_background(scan_cls, task_id: int) -> None:
+    """后台线程：执行 rescan，仅记日志，不抛回响应。"""
     try:
         inst = scan_cls() if callable(scan_cls) else scan_cls
-        if not hasattr(inst, "rescan_task"):
-            raise RolloutInsightException(
-                RolloutInsightException.NOT_IMPLEMENTED,
-                "RolloutScanService.rescan_task 不可用",
-            )
-        result = inst.rescan_task(task_id)
-        # rescan_task 可能返回 dict / int / str；尽量规整
-        if isinstance(result, dict):
-            payload = result
-        else:
-            payload = {"task_id": task_id, "result": result}
-        return Response.success(msg="重扫完成", data=payload)
-    except RolloutInsightException:
-        raise
+        inst.rescan_task(task_id)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("重扫任务 {} 失败: {}", task_id, exc)
-        raise RolloutInsightException(
-            RolloutInsightException.TASK_ERROR, f"重扫失败: {exc}"
-        ) from exc
+        logger.exception("后台重扫 task_id={} 失败: {}", task_id, exc)
 
 
 @router.post("/api/tasks/{task_id}/delete")

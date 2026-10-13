@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -76,6 +77,51 @@ class RolloutScanService:
         from db.db_segment_service import DBSegmentService
 
         return DBSegmentService
+
+    @staticmethod
+    def _session_factory():
+        try:
+            from db.db_element import Session
+
+            return Session
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _task_model():
+        try:
+            from db import Task as DBTask
+
+            return DBTask
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _rollout_model():
+        try:
+            from db import Rollout as DBRollout
+
+            return DBRollout
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _attempt_model():
+        try:
+            from db import Attempt as DBAttempt
+
+            return DBAttempt
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _segment_model():
+        try:
+            from db import Segment as DBSegment
+
+            return DBSegment
+        except Exception:  # noqa: BLE001
+            return None
 
     # ---------- 主入口 ----------
 
@@ -160,7 +206,8 @@ class RolloutScanService:
 
         # 3. 解析 .pt 路径
         try:
-            pt_paths = self._resolve_dump_paths(task_name)
+            task_rollout_root = getattr(task, "rollout_root", "") or ""
+            pt_paths = self._resolve_dump_paths(task_name, task_rollout_root)
             result["total"] = len(pt_paths)
             logger.info(
                 "[scan_task] task_id={} task_name={} resolved dump paths count={}",
@@ -224,6 +271,12 @@ class RolloutScanService:
                 "更新状态 -> {} 失败 task_id={}", result["status"], task_id
             )
 
+        # 5.1 回写任务级统计（rollout_count/attempt_count/segment_count/mean_reward/last_scanned_at）
+        try:
+            self._update_task_stats(task_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("更新任务统计失败 task_id={}", task_id)
+
         logger.info(
             "[scan_task] done task_id={} status={} scanned={}/{} rollouts={} attempts={} segments={} errors={}",
             task_id,
@@ -275,13 +328,51 @@ class RolloutScanService:
     def _scan_log_path(self, task_id: int) -> Path:
         return self.log_dir / f"scan_{task_id}.log"
 
-    def _resolve_dump_paths(self, task_name: str) -> List[Path]:
+    def _resolve_dump_paths(self, task_name: str, task_rollout_root: str = "") -> List[Path]:
         """按优先级解析 .pt 列表：
-        OUTPUT_DIR -> ROLLOUT_DUMP_DIR -> <rollout_dump_root>/<task_name>/rollout_dumps/
+        0) task.rollout_root（页面/南湖创建时填的具体路径，最优先）
+        1) OUTPUT_DIR 环境变量（若含 rollout_dumps 子目录则用之，否则用其本身）
+        2) ROLLOUT_DUMP_DIR 环境变量
+        3) <rollout_dump_root>/<task_name>/rollout_dumps/（兜底）
 
         Returns:
             按路径排序的 .pt 列表（来自第一个能找到 .pt 的来源）
         """
+        # 0) task.rollout_root（用户在页面填的具体路径；若是目录则 glob rollout_*.pt）
+        if task_rollout_root:
+            root = Path(task_rollout_root)
+            if root.is_dir():
+                hits = sorted(root.glob("rollout_*.pt"))
+                if hits:
+                    logger.info(
+                        "_resolve_dump_paths: 使用 task.rollout_root={} 命中 {} 个 .pt",
+                        root,
+                        len(hits),
+                    )
+                    return hits
+                # 是目录但没有 rollout_*.pt → 试一下子目录 rollout_dumps/
+                sub = root / "rollout_dumps"
+                if sub.is_dir():
+                    hits = sorted(sub.glob("rollout_*.pt"))
+                    if hits:
+                        logger.info(
+                            "_resolve_dump_paths: 使用 task.rollout_root/rollout_dumps={} 命中 {} 个 .pt",
+                            sub,
+                            len(hits),
+                        )
+                        return hits
+            elif root.is_file() and root.suffix == ".pt":
+                # 用户填的就是单个 .pt 路径
+                logger.info(
+                    "_resolve_dump_paths: task.rollout_root 是单个 .pt path={}",
+                    root,
+                )
+                return [root]
+            else:
+                logger.warning(
+                    "_resolve_dump_paths: task.rollout_root 不存在或不是目录 path={}",
+                    root,
+                )
         # 1) OUTPUT_DIR：若 .pt 目录在子目录则用之，否则用 OUTPUT_DIR 本身
         out_dir = os.environ.get("OUTPUT_DIR")
         if out_dir:
@@ -497,3 +588,65 @@ class RolloutScanService:
         except Exception:  # noqa: BLE001
             logger.exception("[_purge_task_data] failed task_id={}", task_id)
             raise
+
+    def _update_task_stats(self, task_id: int) -> None:
+        """回写任务的聚合统计到 ri_task_table。
+
+        字段：rollout_count, attempt_count, segment_count, mean_reward, last_scanned_at。
+        调用时机：scan_task 完成后。
+        """
+        Session = self._session_factory()
+        if Session is None:
+            logger.warning("_update_task_stats: Session 工厂不可用")
+            return
+        DBRollout = self._rollout_model()
+        DBAttempt = self._attempt_model()
+        DBSegment = self._segment_model()
+        if DBRollout is None or DBAttempt is None or DBSegment is None:
+            logger.warning("_update_task_stats: ORM 不可用")
+            return
+        with Session() as session:
+            n_rollouts = session.query(DBRollout).filter(DBRollout.task_id == task_id).count()
+            n_attempts = (
+                session.query(DBAttempt)
+                .filter(DBAttempt.task_id == task_id)
+                .count()
+            )
+            n_segments = (
+                session.query(DBSegment)
+                .join(DBAttempt, DBSegment.attempt_id == DBAttempt.primary_id)
+                .filter(DBAttempt.task_id == task_id)
+                .count()
+            )
+            mean_reward = (
+                session.query(DBRollout.mean_reward)
+                .filter(DBRollout.task_id == task_id)
+                .all()
+            )
+            mean_reward_val = (
+                sum(r[0] for r in mean_reward if r[0] is not None) / len(mean_reward)
+                if mean_reward
+                else 0.0
+            )
+            # 写回 DBTask
+            DBTask = self._task_model()
+            if DBTask is None:
+                return
+            task_obj = session.query(DBTask).filter(DBTask.primary_id == task_id).first()
+            if task_obj is None:
+                return
+            task_obj.rollout_count = n_rollouts
+            task_obj.attempt_count = n_attempts
+            task_obj.segment_count = n_segments
+            # mean_reward 列是 Integer，平均值转 int（页面/JSON 输出时再 float）
+            task_obj.mean_reward = int(round(mean_reward_val * 1000))  # ×1000 存为定点
+            task_obj.last_scanned_at = datetime.now()
+            session.commit()
+            logger.info(
+                "[_update_task_stats] task_id={} rollouts={} attempts={} segments={} mean_reward={:.3f}",
+                task_id,
+                n_rollouts,
+                n_attempts,
+                n_segments,
+                mean_reward_val,
+            )

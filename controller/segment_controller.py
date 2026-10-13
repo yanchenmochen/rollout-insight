@@ -65,8 +65,9 @@ def _task_model():
     return _safe_import_attr("db.models", "Task") or _safe_import_attr("db", "Task")
 
 
-def _segment_service():
-    return _safe_import_attr("service.segment_service", "SegmentService")
+def _ensure_transcript_fn():
+    """直接拿 2D 的 ensure_transcript 函数。"""
+    return _safe_import_attr("service.segment_transcript_service", "ensure_transcript")
 
 
 # ---------------------------------------------------------------------------
@@ -184,26 +185,35 @@ def _build_turns_html(transcript_text: str) -> List[Dict[str, Any]]:
 # 序列化辅助
 # ---------------------------------------------------------------------------
 
-def _segment_to_dict(s: Any) -> Dict[str, Any]:
+def _segment_to_dict(s: Any, attempt: Any = None) -> Dict[str, Any]:
+    """Segment ORM → 模板/JSON 友好字典。
+
+    Args:
+        s: DBSegment ORM 对象
+        attempt: 可选，对应的 DBAttempt（用于补 instance_id / agent_turns /
+                 tool_calls / diff_line_count / pt_path 等 segment 表没有的字段）
+    """
     if s is None:
         return {}
-    return {
-        "id": getattr(s, "id", None),
+    seg_dict = {
+        "id": getattr(s, "primary_id", None) or getattr(s, "id", None),
+        "primary_id": getattr(s, "primary_id", None) or getattr(s, "id", None),
         "attempt_id": getattr(s, "attempt_id", None),
         "rollout_id": getattr(s, "rollout_id", None),
         "group_index": getattr(s, "group_index", None),
-        "instance_id": getattr(s, "instance_id", None),
+        "instance_id": getattr(attempt, "instance_id", None) if attempt else None,
         "segment_index": getattr(s, "segment_index", None),
         "segment_count": getattr(s, "segment_count", None),
         "sandbox_id": getattr(s, "sandbox_id", None),
         "status": _status_str(getattr(s, "status", None)),
         "reward": getattr(s, "reward", None),
-        "agent_turns": getattr(s, "agent_turns", None),
-        "tool_calls": getattr(s, "tool_calls", None),
+        "agent_turns": getattr(attempt, "agent_turns", None) if attempt else None,
+        "tool_calls": getattr(attempt, "tool_calls", None) if attempt else None,
+        "diff_line_count": getattr(attempt, "diff_line_count", None) if attempt else None,
         "response_length": getattr(s, "response_length", None),
-        "diff_line_count": getattr(s, "diff_line_count", None),
-        "pt_path": getattr(s, "pt_path", None),
+        "pt_path": None,
     }
+    return seg_dict
 
 
 def _status_str(value: Any) -> Optional[str]:
@@ -241,60 +251,35 @@ async def api_segments_search(
     request: Request,
     task_id: Optional[int] = Query(default=None, description="按任务过滤"),
     min_reward: Optional[float] = Query(default=None, description="reward 下限"),
-    keyword: Optional[str] = Query(default=None, description="instance_id / sandbox_id 模糊匹配"),
+    keyword: Optional[str] = Query(default=None, description="关键字（命中 segment_transcript.response_text）"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
 ):
-    """Segment 检索：详细检索/聚合逻辑由 2D 阶段补齐。
+    """Segment 检索：调 SegmentSearchService.search_segments。
 
-    当前实现：
-    - 必须有 task_id（2D 阶段才会放开）
-    - 返回基本字段（id / attempt / instance_id / reward / turns / tool_calls / status / segment 序号）
+    支持 (task_id, min_reward, keyword) 三维过滤，keyword 命中后会回写
+    ri_segment_transcript_table 的 full_text_fetched=1，下次秒回。
     """
-    if task_id is None:
-        return Response.error(
-            code=50001,
-            msg="当前阶段 2C 仅支持 task_id 过滤的 segment 检索；详细检索由 2D 补齐",
-        )
-
-    Segment = _segment_model()
-    Attempt = _attempt_model()
-    Rollout = _rollout_model()
-    Session = _session_factory()
-    if Segment is None or Session is None:
+    try:
+        from service.segment_search_service import search_segments
+    except Exception as exc:  # noqa: BLE001
         raise RolloutInsightException(
             RolloutInsightException.NOT_IMPLEMENTED,
-            "Segment 模型尚未就绪（2A 阶段未完成）",
-        )
-
+            f"segment_search_service 不可用: {exc}",
+        ) from exc
     try:
-        with Session() as session:
-            q = session.query(Segment)
-            if Attempt is not None and Rollout is not None:
-                q = q.join(Attempt, Segment.attempt_id == Attempt.primary_id)
-                q = q.join(Rollout, Attempt.rollout_id == Rollout.primary_id)
-                q = q.filter(Rollout.task_id == task_id)
-            if min_reward is not None:
-                q = q.filter(Segment.reward >= min_reward)
-            if keyword:
-                like = f"%{keyword}%"
-                # instance_id / sandbox_id 任一命中
-                q = q.filter(
-                    (Segment.instance_id.ilike(like)) | (Segment.sandbox_id.ilike(like))
-                )
-
-            total = q.count()
-            rows = (
-                q.order_by(Segment.primary_id.asc())
-                .offset((page - 1) * page_size)
-                .limit(page_size)
-                .all()
-            )
-            seg_list = [_segment_to_dict(s) for s in rows]
+        offset = (page - 1) * page_size
+        result = search_segments(
+            task_id=task_id,
+            min_reward=float(min_reward or 0.0),
+            keyword=keyword or "",
+            limit=page_size,
+            offset=offset,
+        )
         return Response.success(
             data={
-                "segments": seg_list,
-                "total": total,
+                "segments": result.get("items", []),
+                "total": result.get("total", 0),
                 "page": page,
                 "page_size": page_size,
             },
@@ -330,27 +315,50 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
                 if obj is None:
                     warning = f"segment #{segment_id} 不存在"
                 else:
-                    seg = _segment_to_dict(obj)
-                    # 找 task_id（segment → attempt → rollout → task）
+                    # 找 attempt 和 rollout（用于补 instance_id / pt_path / task_id）
+                    attempt_obj = None
+                    rollout_obj = None
                     if (
                         Attempt is not None
-                        and Rollout is not None
-                        and Task is not None
                         and getattr(obj, "attempt_id", None) is not None
                     ):
                         attempt_obj = session.query(Attempt).filter(Attempt.primary_id == obj.attempt_id).first()
-                        if attempt_obj is not None and getattr(attempt_obj, "rollout_id", None) is not None:
-                            rollout_obj = (
-                                session.query(Rollout)
-                                .filter(Rollout.primary_id == attempt_obj.rollout_id)
-                                .first()
-                            )
-                            if rollout_obj is not None and getattr(rollout_obj, "task_id", None) is not None:
-                                task_id = rollout_obj.task_id
-                                seg["rollout_id"] = rollout_obj.id
+                    if (
+                        attempt_obj is not None
+                        and Rollout is not None
+                        and getattr(attempt_obj, "rollout_id", None) is not None
+                    ):
+                        rollout_obj = (
+                            session.query(Rollout)
+                            .filter(Rollout.primary_id == attempt_obj.rollout_id)
+                            .first()
+                        )
+                    seg = _segment_to_dict(obj, attempt_obj)
+                    if rollout_obj is not None:
+                        seg["rollout_id"] = rollout_obj.primary_id
+                        seg["pt_path"] = getattr(rollout_obj, "pt_path", None)
+                        if getattr(rollout_obj, "task_id", None) is not None:
+                            task_id = rollout_obj.task_id
 
-                    # 尝试加载 transcript 文本
-                    transcript_text = _load_transcript_text(obj, seg)
+                    # 尝试加载 transcript 文本：先 ensure_transcript（带 DB 缓存），
+                    # 失败/为空再 fallback 到 segment 上的字段
+                    transcript_text: str = ""
+                    try:
+                        ensure_fn = _ensure_transcript_fn()
+                        if callable(ensure_fn):
+                            r = ensure_fn(segment_id)
+                            if isinstance(r, dict):
+                                transcript_text = (
+                                    r.get("transcript")
+                                    or r.get("text")
+                                    or r.get("response_text")
+                                    or r.get("prompt_text")
+                                    or ""
+                                )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
+                    if not transcript_text:
+                        transcript_text = _load_transcript_text(obj, seg)
                     if transcript_text:
                         turns = _build_turns_html(transcript_text)
                     else:
@@ -388,6 +396,8 @@ async def api_segment_transcript_json(segment_id: int) -> Response:
         }
     """
     Segment = _segment_model()
+    Attempt = _attempt_model()
+    Rollout = _rollout_model()
     Session = _session_factory()
     if Segment is None or Session is None:
         raise RolloutInsightException(
@@ -402,25 +412,49 @@ async def api_segment_transcript_json(segment_id: int) -> Response:
                 RolloutInsightException.PARSE_DUMP_NOT_FOUND,
                 f"segment #{segment_id} 不存在",
             )
-        seg = _segment_to_dict(obj)
+        # 补 attempt 字段（instance_id / agent_turns / tool_calls / pt_path 等）
+        attempt_obj = None
+        if Attempt is not None and getattr(obj, "attempt_id", None) is not None:
+            attempt_obj = (
+                session.query(Attempt)
+                .filter(Attempt.primary_id == obj.attempt_id)
+                .first()
+            )
+        seg = _segment_to_dict(obj, attempt_obj)
+        if attempt_obj is not None and Rollout is not None:
+            seg["rollout_id"] = getattr(attempt_obj, "rollout_id", None)
+            ro = (
+                session.query(Rollout)
+                .filter(
+                    Rollout.task_id == attempt_obj.task_id,
+                    Rollout.rollout_id == attempt_obj.rollout_id,
+                )
+                .first()
+            )
+            if ro is not None:
+                seg["pt_path"] = getattr(ro, "pt_path", None)
 
-    # 尝试走 SegmentService.ensure_transcript（2D 阶段补齐）
+    # 尝试走 SegmentTranscriptService.ensure_transcript（2D 阶段补齐）
     transcript_text: Optional[str] = None
     used_service = False
     try:
-        svc_cls = _segment_service()
-        if svc_cls is not None:
-            svc_inst = svc_cls() if callable(svc_cls) else svc_cls
-            if hasattr(svc_inst, "ensure_transcript"):
-                result = svc_inst.ensure_transcript(segment_id)
-                # 约定：返回 dict {transcript: str, ...} 或 str
-                if isinstance(result, dict):
-                    transcript_text = result.get("transcript") or result.get("text")
-                elif isinstance(result, str):
-                    transcript_text = result
-                used_service = True
+        ensure_fn = _ensure_transcript_fn()
+        if callable(ensure_fn):
+            result = ensure_fn(segment_id)
+            # 约定：返回 dict {prompt_text, response_text, turns_json, ...} 或 str
+            if isinstance(result, dict):
+                transcript_text = (
+                    result.get("transcript")
+                    or result.get("text")
+                    or result.get("response_text")
+                    or result.get("prompt_text")
+                    or ""
+                )
+            elif isinstance(result, str):
+                transcript_text = result
+            used_service = bool(transcript_text)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("SegmentService.ensure_transcript 调用失败: {}", exc)
+        logger.warning("ensure_transcript 调用失败: {}", exc)
 
     # 兜底：直接读 segment 上的 transcript / response 字段
     if not transcript_text:
