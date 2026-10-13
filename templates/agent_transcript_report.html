@@ -1,0 +1,540 @@
+{% extends "base.html" %}
+
+{% block title %}Agent-Transcripts 报告 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .section {
+        background: var(--ri-surface);
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 16px 20px;
+        margin-bottom: 18px;
+    }
+
+    .section h2 {
+        margin: 0 0 12px 0;
+        font-size: 1.1em;
+        color: var(--ri-ink);
+        border-bottom: 1px solid var(--ri-border);
+        padding-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .section h2 .file-label {
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+        color: var(--ri-muted);
+        font-weight: 500;
+    }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .stat-card {
+        background: #f8fafb;
+        border: 1px solid #e4e8ec;
+        border-radius: var(--te-radius);
+        padding: 10px 12px;
+    }
+
+    .stat-card .label {
+        color: var(--ri-muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+    }
+
+    .stat-card .value {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--ri-ink);
+        margin-top: 4px;
+        font-family: ui-monospace, monospace;
+    }
+
+    .stat-card .value.small {
+        font-size: 14px;
+    }
+
+    .chart-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 12px;
+    }
+
+    @media (max-width: 1100px) {
+        .chart-grid { grid-template-columns: 1fr; }
+    }
+
+    .chart-block {
+        background: #ffffff;
+        border: 1px solid #e4e8ec;
+        border-radius: var(--te-radius);
+        padding: 10px 12px;
+    }
+
+    .chart-block h3 {
+        margin: 0 0 6px 0;
+        font-size: 13px;
+        color: var(--ri-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: 600;
+    }
+
+    .chart-block svg {
+        width: 100%;
+        height: auto;
+        max-height: 320px;
+        display: block;
+    }
+
+    .chart-block .reward-legend {
+        display: flex;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--ri-muted);
+        margin-top: 4px;
+    }
+
+    .chart-block .reward-legend .dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 4px;
+        vertical-align: middle;
+    }
+
+    table.summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    table.summary-table th,
+    table.summary-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+    }
+
+    table.summary-table th {
+        background: #f3f5f8;
+        color: var(--ri-muted);
+        font-weight: 600;
+    }
+
+    table.summary-table td.mono {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+    }
+
+    table.preview-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+    }
+
+    table.preview-table th,
+    table.preview-table td {
+        padding: 5px 8px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+        vertical-align: top;
+    }
+
+    table.preview-table th {
+        background: #f3f5f8;
+        color: var(--ri-muted);
+        font-weight: 600;
+    }
+
+    table.preview-table td.preview {
+        font-family: ui-monospace, monospace;
+        font-size: 11.5px;
+        color: #444;
+        word-break: break-word;
+        max-width: 600px;
+    }
+
+    .alert {
+        padding: 10px 12px;
+        border-radius: var(--te-radius);
+        border-left: 4px solid;
+        margin-bottom: 14px;
+    }
+
+    .alert-warning {
+        background: #fff3cd;
+        border-color: #ffc107;
+        color: #856404;
+    }
+
+    .alert-info {
+        background: #e8f0fa;
+        border-color: var(--ri-accent);
+        color: #1e5080;
+    }
+
+    .empty-row {
+        text-align: center;
+        color: var(--ri-muted);
+        padding: 20px 8px;
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+
+{% macro fmt_int(v) -%}
+    {{ "{:,}".format(v) }}
+{%- endmacro %}
+
+{% macro fmt_float(v, digits=2) -%}
+    {{ "%.{}f".format(digits) | format(v) }}
+{%- endmacro %}
+
+{% macro svg_line_chart(turn_indices, char_counts, title="") -%}
+{% set n = turn_indices | length %}
+{% set w = 540 %}
+{% set h = 220 %}
+{% set pad_l = 50 %}
+{% set pad_r = 16 %}
+{% set pad_t = 16 %}
+{% set pad_b = 36 %}
+{% set plot_w = w - pad_l - pad_r %}
+{% set plot_h = h - pad_t - pad_b %}
+{% if n > 1 and char_counts %}
+    {% set v_max = (char_counts | max) or 1 %}
+    {% if v_max == 0 %}{% set v_max = 1 %}{% endif %}
+    {% set x_max = turn_indices[-1] or 1 %}
+    <svg viewBox="0 0 {{ w }} {{ h }}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="{{ w }}" height="{{ h }}" fill="#ffffff" />
+        {% set y_ticks = [0, 0.25, 0.5, 0.75, 1.0] %}
+        {% for tk in y_ticks %}
+            {% set ty = pad_t + plot_h - tk * plot_h %}
+            <line x1="{{ pad_l }}" y1="{{ ty }}" x2="{{ pad_l + plot_w }}" y2="{{ ty }}" stroke="#e4e8ec" stroke-width="1" />
+            <text x="{{ pad_l - 6 }}" y="{{ ty + 4 }}" text-anchor="end" font-size="10" fill="#5c6b7a">{{ fmt_float(tk * v_max, 0) }}</text>
+        {% endfor %}
+        <text x="{{ pad_l - 36 }}" y="{{ pad_t + 8 }}" font-size="10" fill="#5c6b7a" transform="rotate(-90 {{ pad_l - 36 }} {{ pad_t + 40 }})">chars</text>
+        <text x="{{ pad_l + plot_w / 2 }}" y="{{ h - 6 }}" text-anchor="middle" font-size="10" fill="#5c6b7a">turn_index</text>
+        <line x1="{{ pad_l }}" y1="{{ pad_t + plot_h }}" x2="{{ pad_l + plot_w }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" stroke-width="1" />
+        <line x1="{{ pad_l }}" y1="{{ pad_t }}" x2="{{ pad_l }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" stroke-width="1" />
+        {% set x_ticks_n = 5 %}
+        {% for i in range(x_ticks_n + 1) %}
+            {% set ratio = i / x_ticks_n %}
+            {% set x = pad_l + ratio * plot_w %}
+            {% set label = (ratio * x_max) | int %}
+            <line x1="{{ x }}" y1="{{ pad_t + plot_h }}" x2="{{ x }}" y2="{{ pad_t + plot_h + 4 }}" stroke="#5c6b7a" />
+            <text x="{{ x }}" y="{{ pad_t + plot_h + 16 }}" text-anchor="middle" font-size="10" fill="#5c6b7a">{{ label }}</text>
+        {% endfor %}
+        {% set pts = [] %}
+        {% for idx in range(n) %}
+            {% set x = pad_l + (turn_indices[idx] / x_max) * plot_w %}
+            {% set y = pad_t + plot_h - (char_counts[idx] / v_max) * plot_h %}
+            {% set _ = pts.append("{},{}".format(x, y)) %}
+        {% endfor %}
+        <polyline points="{{ pts | join(' ') }}" fill="none" stroke="#2d6a9f" stroke-width="1.5" />
+        {% for idx in range(n) %}
+            {% set x = pad_l + (turn_indices[idx] / x_max) * plot_w %}
+            {% set y = pad_t + plot_h - (char_counts[idx] / v_max) * plot_h %}
+            <circle cx="{{ x }}" cy="{{ y }}" r="2.5" fill="#2d6a9f" />
+        {% endfor %}
+    </svg>
+{% else %}
+    <div class="empty-row">无数据</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro svg_histogram(histogram, title="") -%}
+{% set edges = histogram.edges %}
+{% set counts = histogram.counts %}
+{% set bins = counts | length %}
+{% set w = 540 %}
+{% set h = 220 %}
+{% set pad_l = 50 %}
+{% set pad_r = 16 %}
+{% set pad_t = 16 %}
+{% set pad_b = 36 %}
+{% set plot_w = w - pad_l - pad_r %}
+{% set plot_h = h - pad_t - pad_b %}
+{% if bins > 0 %}
+    {% set c_max = (counts | max) or 1.0 %}
+    {% if c_max == 0 %}{% set c_max = 1.0 %}{% endif %}
+    {% set bar_w = plot_w / bins %}
+    <svg viewBox="0 0 {{ w }} {{ h }}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="{{ w }}" height="{{ h }}" fill="#ffffff" />
+        {% set y_ticks = [0, 0.25, 0.5, 0.75, 1.0] %}
+        {% for tk in y_ticks %}
+            {% set ty = pad_t + plot_h - tk * plot_h %}
+            <line x1="{{ pad_l }}" y1="{{ ty }}" x2="{{ pad_l + plot_w }}" y2="{{ ty }}" stroke="#e4e8ec" stroke-width="1" />
+            <text x="{{ pad_l - 6 }}" y="{{ ty + 4 }}" text-anchor="end" font-size="10" fill="#5c6b7a">{{ fmt_float(tk * c_max, 0) }}</text>
+        {% endfor %}
+        <text x="{{ pad_l - 36 }}" y="{{ pad_t + 8 }}" font-size="10" fill="#5c6b7a" transform="rotate(-90 {{ pad_l - 36 }} {{ pad_t + 40 }})">count</text>
+        <text x="{{ pad_l + plot_w / 2 }}" y="{{ h - 6 }}" text-anchor="middle" font-size="10" fill="#5c6b7a">chars (bin)</text>
+        <line x1="{{ pad_l }}" y1="{{ pad_t + plot_h }}" x2="{{ pad_l + plot_w }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" />
+        <line x1="{{ pad_l }}" y1="{{ pad_t }}" x2="{{ pad_l }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" />
+        {% for i in range(bins) %}
+            {% set c = counts[i] %}
+            {% set bh = (c / c_max) * plot_h %}
+            {% set x = pad_l + i * bar_w + 2 %}
+            {% set y = pad_t + plot_h - bh %}
+            {% set bw = bar_w - 4 %}
+            {% if bw < 2 %}{% set bw = 2 %}{% endif %}
+            <rect x="{{ x }}" y="{{ y }}" width="{{ bw }}" height="{{ bh }}" fill="#2d6a4f" opacity="0.85" />
+            {% set label_lo = edges[i] | int %}
+            {% set label_hi = edges[i + 1] | int %}
+            <text x="{{ x + bw / 2 }}" y="{{ pad_t + plot_h + 14 }}" text-anchor="middle" font-size="9" fill="#5c6b7a">{{ label_lo }}</text>
+        {% endfor %}
+    </svg>
+{% else %}
+    <div class="empty-row">无数据</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro svg_reward_chart(user_indices, rewards) -%}
+{% set n = user_indices | length %}
+{% set w = 540 %}
+{% set h = 220 %}
+{% set pad_l = 50 %}
+{% set pad_r = 16 %}
+{% set pad_t = 16 %}
+{% set pad_b = 36 %}
+{% set plot_w = w - pad_l - pad_r %}
+{% set plot_h = h - pad_t - pad_b %}
+{% set color_map = {0.0: "#b91c1c", 0.5: "#9aa8b8", 1.0: "#2d6a4f"} %}
+{% if n > 0 %}
+    {% set x_max = (user_indices | max) or 1 %}
+    <svg viewBox="0 0 {{ w }} {{ h }}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="{{ w }}" height="{{ h }}" fill="#ffffff" />
+        {% set y_levels = [0.0, 0.5, 1.0] %}
+        {% set y_pos = {0.0: pad_t + plot_h, 0.5: pad_t + plot_h / 2, 1.0: pad_t} %}
+        {% for lvl in y_levels %}
+            {% set ty = y_pos[lvl] %}
+            <line x1="{{ pad_l }}" y1="{{ ty }}" x2="{{ pad_l + plot_w }}" y2="{{ ty }}" stroke="#e4e8ec" stroke-width="1" />
+            <text x="{{ pad_l - 6 }}" y="{{ ty + 4 }}" text-anchor="end" font-size="10" fill="#5c6b7a">{{ "%.1f" | format(lvl) }}</text>
+        {% endfor %}
+        <text x="{{ pad_l - 36 }}" y="{{ pad_t + 8 }}" font-size="10" fill="#5c6b7a" transform="rotate(-90 {{ pad_l - 36 }} {{ pad_t + 40 }})">reward</text>
+        <text x="{{ pad_l + plot_w / 2 }}" y="{{ h - 6 }}" text-anchor="middle" font-size="10" fill="#5c6b7a">user feedback #</text>
+        <line x1="{{ pad_l }}" y1="{{ pad_t + plot_h }}" x2="{{ pad_l + plot_w }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" />
+        <line x1="{{ pad_l }}" y1="{{ pad_t }}" x2="{{ pad_l }}" y2="{{ pad_t + plot_h }}" stroke="#5c6b7a" />
+        {% set x_ticks_n = 5 %}
+        {% for i in range(x_ticks_n + 1) %}
+            {% set ratio = i / x_ticks_n %}
+            {% set x = pad_l + ratio * plot_w %}
+            {% set label = (ratio * x_max) | int %}
+            <line x1="{{ x }}" y1="{{ pad_t + plot_h }}" x2="{{ x }}" y2="{{ pad_t + plot_h + 4 }}" stroke="#5c6b7a" />
+            <text x="{{ x }}" y="{{ pad_t + plot_h + 16 }}" text-anchor="middle" font-size="10" fill="#5c6b7a">{{ label }}</text>
+        {% endfor %}
+        {% set pts = [] %}
+        {% for idx in range(n) %}
+            {% set r = rewards[idx] %}
+            {% set x = pad_l + (user_indices[idx] / x_max) * plot_w %}
+            {% set y = y_pos[r] %}
+            {% set _ = pts.append("{},{}".format(x, y)) %}
+        {% endfor %}
+        <polyline points="{{ pts | join(' ') }}" fill="none" stroke="#5c6b7a" stroke-width="1" stroke-dasharray="3,3" />
+        {% for idx in range(n) %}
+            {% set r = rewards[idx] %}
+            {% set x = pad_l + (user_indices[idx] / x_max) * plot_w %}
+            {% set y = y_pos[r] %}
+            <circle cx="{{ x }}" cy="{{ y }}" r="4.5" fill="{{ color_map[r] }}" stroke="#ffffff" stroke-width="1" />
+        {% endfor %}
+    </svg>
+{% else %}
+    <div class="empty-row">无 user 反馈</div>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Agent-Transcripts 报告</h1>
+        <div class="page-subtitle">
+            来自 <code>{{ default_files | length }}</code> 个真实数据文件的 token 字符数 / 隐式 reward 分布分析
+        </div>
+    </div>
+    <div class="action-bar">
+        <a class="btn btn-secondary" href="/api/agent-transcripts/batch">批量 JSON</a>
+    </div>
+</div>
+
+{% if warnings %}
+    {% for w in warnings %}
+    <div class="alert alert-warning">{{ w }}</div>
+    {% endfor %}
+{% endif %}
+
+{% if not reports %}
+    <div class="alert alert-warning">未找到可分析的 jsonl 文件，请检查默认路径。</div>
+{% else %}
+
+<div class="section">
+    <h2>摘要对比</h2>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>文件</th>
+                <th>events</th>
+                <th>user 轮</th>
+                <th>assistant 轮</th>
+                <th>tool_calls</th>
+                <th>mean chars</th>
+                <th>max chars</th>
+                <th>mean reward</th>
+                <th>反馈数</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in summary_rows %}
+            <tr>
+                <td class="mono">{{ row.name }}</td>
+                <td>{{ row.total_events }}</td>
+                <td>{{ row.user_turn_count }}</td>
+                <td>{{ row.assistant_turn_count }}</td>
+                <td>{{ row.tool_call_count }}</td>
+                <td>{{ fmt_float(row.mean_chars, 1) }}</td>
+                <td>{{ fmt_int(row.max_chars) }}</td>
+                <td><strong>{{ fmt_float(row.mean_reward, 3) }}</strong></td>
+                <td>{{ row.n_feedback }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% for r in reports %}
+<div class="section">
+    <h2>
+        <span>{{ loop.index }}.</span>
+        <span class="file-label">{{ r.path }}</span>
+    </h2>
+
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="label">total_events</div>
+            <div class="value">{{ fmt_int(r.total_events) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">role 分布</div>
+            <div class="value small">
+                {% for k, v in r.role_distribution.items() %}
+                    {{ k }}={{ v }}{% if not loop.last %} · {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="label">assistant 轮数</div>
+            <div class="value">{{ fmt_int(r.assistant_turn_count) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">user 轮数</div>
+            <div class="value">{{ fmt_int(r.user_turn_count) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">tool_call_count</div>
+            <div class="value">{{ fmt_int(r.tool_call_count) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">mean chars</div>
+            <div class="value small">{{ fmt_float(r.char_distribution.mean_chars, 1) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">max chars</div>
+            <div class="value">{{ fmt_int(r.char_distribution.max_chars) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">mean reward</div>
+            <div class="value small">
+                <strong>{{ fmt_float(r.implicit_rewards.mean_reward, 3) }}</strong>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="label">反馈 +/-/~</div>
+            <div class="value small">
+                {{ r.implicit_rewards.n_positive }} / {{ r.implicit_rewards.n_negative }} / {{ r.implicit_rewards.n_neutral }}
+            </div>
+        </div>
+    </div>
+
+    <div class="chart-grid">
+        <div class="chart-block">
+            <h3>assistant 字符数折线（turn_index → char_count）</h3>
+            {{ svg_line_chart(r.char_distribution.turn_indices, r.char_distribution.char_counts) }}
+        </div>
+        <div class="chart-block">
+            <h3>assistant 字符数直方图（{{ r.char_distribution.histogram.counts | length }} bins）</h3>
+            {{ svg_histogram(r.char_distribution.histogram) }}
+        </div>
+    </div>
+
+    <div class="chart-block" style="margin-top: 16px;">
+        <h3>隐式 reward 走势（user 反馈序号 → reward）</h3>
+        {{ svg_reward_chart(r.implicit_rewards.user_turn_indices, r.implicit_rewards.rewards) }}
+        <div class="reward-legend">
+            <span><span class="dot" style="background:#2d6a4f"></span>1.0 正向</span>
+            <span><span class="dot" style="background:#9aa8b8"></span>0.5 中性</span>
+            <span><span class="dot" style="background:#b91c1c"></span>0.0 负向</span>
+        </div>
+    </div>
+
+    <h3 style="margin-top: 18px; font-size: 13px; color: var(--ri-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;">
+        Top {{ r.top_longest_turns | length }} 最长 assistant turn
+    </h3>
+    <table class="preview-table">
+        <thead>
+            <tr>
+                <th>turn_index</th>
+                <th>char_count</th>
+                <th>preview（前 100 字符）</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for t in r.top_longest_turns %}
+            <tr>
+                <td>{{ t.turn_index }}</td>
+                <td>{{ fmt_int(t.char_count) }}</td>
+                <td class="preview">{{ t.preview }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}
