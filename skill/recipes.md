@@ -109,3 +109,177 @@ rollout-insight tasks delete --task-id 99 --submit
 | `segments search: INVALID_ARGUMENT 当前阶段 2C 仅支持 task_id` | controller 限制 | 加 `--task-id <n>` |
 | `--format table` 输出 `(empty)` | payload 不是 list-of-dict | 改 `--format json` 看数据结构 |
 | `tokenizer test` 报 `未找到任何 tokenizer 关键文件` | 路径里没有 tokenizer.json 等 | 确认是 HF tokenizer 目录（`tokenizer.json` / `vocab.json` 等） |
+
+---
+
+# v0.4.0 新增 recipes
+
+> 本节对应 v0.4.0 T7/T8：rollout 详情/解析/列表 + agent-transcripts 报告。CLI 完整命令树见 `SKILL.md` §命令树。
+
+## 场景 6：看单个 rollout 详情（pt_path / n_samples / mean_reward / attempts 摘要）
+
+**何时用**：
+
+- 想知道某次 rollout 的 .pt 在哪、有多少 sample、mean_reward 多少
+- 列出该 rollout 的 attempts（按 group_index 聚合，每 attempt 的 sandbox/instance/status/mean_reward）
+
+**命令**：
+
+```bash
+rollout-insight rollouts show 87
+```
+
+**预期输出片段**（`--pretty` 模式）：
+
+```json
+{
+  "pt_path": "/mnt/zj-data/.../rollout_dumps/rollout_10.pt",
+  "mean_reward": 0.15346534653465346,
+  "n_samples": 202,
+  "n_attempts": 64,
+  "instance_count": 64,
+  "scanned_at": "2026-10-13 15:56:24",
+  "attempts": [
+    {
+      "primary_id": 18285,
+      "group_index": 98,
+      "segment_count": 1,
+      "mean_reward": 0.0,
+      "sandbox_id": "bf70958a-...-a52174a0dfbc",
+      "instance_id": "python-poetry_poetry-core_pr327",
+      "status": "completed",
+      "first_segment_id": 17643
+    }
+  ]
+}
+```
+
+**相关端点**：
+
+- `GET /api/rollouts/{id}/json`（plan 契约，404 时回退到 `/api/rollouts/{id}`）
+
+## 场景 7：强制重解析 .pt 并写 turn 表
+
+**何时用**：
+
+- 怀疑 turn 表（`ri_segment_turn_table`）丢了某些 turn 或想刷新 token 估算
+- 修了 T3 的解析 service 后想批量回填
+
+**命令**：
+
+```bash
+# 不加 --submit 也会触发（parse 自身 idempotent + 用户主动操作），但建议先 dry-run
+rollout-insight rollouts parse 87
+rollout-insight rollouts parse 87 --tokenizer /mnt/zj-data/models/public/021-32B-Agentic-hf
+```
+
+**预期输出片段**：
+
+```json
+{
+  "rollout_id": 87,
+  "pt_path": "/mnt/zj-data/.../rollout_10.pt",
+  "force": true,
+  "status": "PENDING_PARSE"
+}
+```
+
+> 后台解析是异步的：返回 `PENDING_PARSE` 表示已加入队列；想看进度去 web UI 重新刷新对应 rollout 详情页 / 查 turn 表行数。
+
+**相关端点**：
+
+- `POST /api/rollouts/{id}/parse?force=true`（body `{"tokenizer_dir": "..."}` 备用）
+
+## 场景 8：列 task 下的 rollouts
+
+**何时用**：
+
+- 想批量看 task #N 下有多少 rollout，每个的均值 reward / 状态 / instance 数
+- 决策要不要 rescan / delete 整个 task
+
+**命令**：
+
+```bash
+rollout-insight rollouts list --task 1
+```
+
+**预期输出片段**（v0.4.0 controller **暂无** `GET /api/tasks/{id}/rollouts` JSON 端点，CLI 自动 fallback 到 `/api/tasks` 拿 task 摘要）：
+
+```json
+{
+  "task_id": 1,
+  "task_summary": {
+    "task_name": "smoke-001",
+    "status": "READY",
+    "rollout_count": 36,
+    "attempt_count": 6650,
+    "segment_count": 6650,
+    "mean_reward": 249,
+    "rollout_root": "/mnt/zj-data/.../rollout_dumps"
+  },
+  "rollouts": [],
+  "count": 0,
+  "fallback": true,
+  "hint": "v0.4.0 controller 未提供 GET /api/tasks/{id}/rollouts JSON 端点；如需逐个 rollout 概览，请用 'rollout-insight rollouts show <primary_id>'"
+}
+```
+
+> 若 controller 后续补上 list 端点，CLI 会**自动**走真实 list（无需改 CLI）。
+
+**相关端点**：
+
+- `GET /api/tasks/{id}/rollouts?limit=...`（fallback → `GET /api/tasks`）
+
+## 场景 9：出 agent-transcripts 批量报告（token + 隐式 reward）
+
+**何时用**：
+
+- 想知道一组 cursor 对话日志的 turn 分布、token 估算、用户反馈（隐式 reward）走势
+- 评估 RL 训练数据里「真实用户接受/拒绝」的分布
+
+**命令**：
+
+```bash
+# 目录：自动走 batch 端点，递归扫所有 .jsonl
+rollout-insight agent-transcripts report /root/.cursor/projects/mnt-zj-data-data-songquanheng-slime/agent-transcripts
+
+# 单文件：走 report 端点
+rollout-insight agent-transcripts report /root/.cursor/projects/.../xxx.jsonl
+```
+
+**预期输出片段**（每个文件 1 行摘要）：
+
+```json
+{
+  "reports": [
+    {
+      "path": "/root/.../08d589c6-...jsonl",
+      "total_events": 70,
+      "role_distribution": {"user": 10, "assistant": 51, "?": 9},
+      "assistant_turn_count": 51,
+      "user_turn_count": 10,
+      "tool_call_count": 54,
+      "char_distribution": {"mean_chars": 422.76, "max_chars": 3157, ...},
+      "implicit_rewards": {"mean_reward": 0.55, "n_feedback": 10, "n_positive": 2, "n_negative": 1, "n_neutral": 7},
+      "top_longest_turns": [{"turn_index": 46, "char_count": 3157, "preview": "那我直接给完整结论..."}]
+    }
+  ],
+  "count": 79
+}
+```
+
+**相关端点**：
+
+- `GET /api/agent-transcripts/report?path=<file>`（单文件）
+- `GET /api/agent-transcripts/batch?dir=<dir>`（批量；缺省走 controller 内置的 2 个默认文件）
+
+---
+
+## v0.4.0 排障追加
+
+| 症状 | 原因 | 行动 |
+|------|------|------|
+| `rollouts show N` 输出 `{"code":51001,"msg":"rollout #N 不存在",...}` | N 不是 `ri_rollout_table.primary_id`（业务键是 `task_id+rollout_id`） | 改用 `rollouts list --task <task_id>` 拿 task 摘要 + 自己查 `db_rollout` |
+| `rollouts list --task N` 显示 `"fallback": true` | v0.4.0 controller 暂未提供 `GET /api/tasks/{id}/rollouts` JSON 端点 | 已知；等 T2 worker 后续补端点，CLI 会自动走真实路径 |
+| `rollouts parse N` 后 `status: PENDING_PARSE` 但页面没新 turn | 后台异步解析；可能 .pt 大或 sandbox 不可达 | 看 `log/server.log` 查 `parse_rollout` 是否报错；或重试 |
+| `agent-transcripts report <path>` 输出 `null` | 路径不存在或 controller 端点变化 | 先 `ls` 确认路径；curl `http://localhost:39998/api/agent-transcripts/report?path=<path>` 排查 |

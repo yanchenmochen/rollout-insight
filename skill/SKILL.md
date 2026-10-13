@@ -1,9 +1,9 @@
 ---
 name: rollout-insight
 description: >-
-  通过 rollout-insight CLI 操作本地 rollout-insight Web 服务：列出/新建/重扫/删除任务、检索与查看 segment、调用南湖（nanhu）作业（jobs / restart / link）、配置 tokenizer。
+  通过 rollout-insight CLI 操作本地 rollout-insight Web 服务：列出/新建/重扫/删除任务、检索与查看 segment、调用南湖（nanhu）作业（jobs / restart / link）、配置 tokenizer；v0.4.0 新增 rollout 详情/解析/列表（rollouts）与 agent-transcripts 报告（agent transcript 报告 / 隐式 reward / cursor transcript 分析）。
   集群默认 wuxi，可切 x10000。写操作默认 dry-run，加 --submit 才执行。
-  在用户提到 rollout-insight、rollout 任务、segment transcript、南湖 job 关联、tokenizer 路径、rollout dump 扫描、查看 agent 对话记录时使用。
+  在用户提到 rollout-insight、rollout 任务、segment transcript、rollout 解析、.pt 字段分布、.pt 字段含义、.pt 数据结构、.pt 转 JSON、.pt 转 markdown、.pt 摘要、.pt 摘要统计、.pt 字段摘要、.pt 字段解释、.pt 字段说明、南湖 job 关联、tokenizer 路径、rollout dump 扫描、查看 agent 对话记录、agent transcript 报告、隐式 reward、cursor transcript 分析时使用。
 ---
 
 # rollout-insight CLI / Skill
@@ -18,6 +18,22 @@ description: >-
 - 检索 segment（按 reward / keyword / task 过滤）、查看 segment transcript
 - 查/重启南湖（nanhu）作业；把南湖 job 绑定到本地 task
 - 修改 / 验证 config.json 的 tokenizer_dir
+- **v0.4.0** 看单个 rollout 详情（pt_path / n_samples / mean_reward / attempts 摘要）
+- **v0.4.0** 触发 `.pt` 重解析（idempotent）并写 turn 表
+- **v0.4.0** 列 task 下的 rollouts（fallback 到 task 摘要）
+- **v0.4.0** 看 agent-transcripts 报告（turn 折线 / 隐式 reward / token 分布）
+
+## 命令树（v0.4.0）
+
+```text
+rollout-insight [--api-base URL] [--format json|table] [--pretty] [--cluster wuxi|x10000]
+  tasks {list,create,rescan,delete}
+  segments {list,show,search}
+  nanhu {jobs,restart,link}
+  tokenizer {set,test}
+  rollouts {show,parse,list}                # v0.4.0
+  agent-transcripts {report}                # v0.4.0
+```
 
 ## 前置条件
 
@@ -120,6 +136,41 @@ rollout-insight tokenizer set --path /mnt/zj-data/models/public/021-32B-Agentic-
 rollout-insight tokenizer set --path /mnt/zj-data/models/public/021-32B-Agentic-hf --submit
 ```
 
+### Rollouts（v0.4.0）
+
+```bash
+# 看单个 rollout 概览（pt_path / n_samples / n_attempts / mean_reward / attempts 摘要）
+# → GET /api/rollouts/{id}/json（404 时回退 /api/rollouts/{id}）
+rollout-insight rollouts show 87
+
+# 触发 .pt 重解析（idempotent；可选 --tokenizer 备用）
+# → POST /api/rollouts/{id}/parse
+rollout-insight rollouts parse 87 --tokenizer /mnt/zj-data/models/public/021-32B-Agentic-hf
+
+# 列 task 下的 rollouts（v0.4.0 controller 暂无 JSON list 端点，CLI 自动 fallback 到 task 摘要）
+# → GET /api/tasks/{id}/rollouts（404 → /api/tasks）
+rollout-insight rollouts list --task 1
+```
+
+> **写操作约定**：`rollouts parse` 自身 idempotent + 用户主动触发，所以**不加 `--submit` 也默认打印 plan**；带 `--submit` 才真触发。CLI 不会重复写库。
+
+### Agent-Transcripts（v0.4.0 T6 配套）
+
+```bash
+# 自动判别：file → /api/agent-transcripts/report?path=...；dir → /api/agent-transcripts/batch?dir=...
+# 单文件报告（user 反馈 0/1 + 字符/token 分布 + top 5 最长 turn）
+rollout-insight agent-transcripts report /root/.cursor/projects/.../xxx.jsonl
+
+# 批量报告（递归扫目录下所有 .jsonl，给每个出 token/reward 摘要）
+rollout-insight agent-transcripts report /root/.cursor/projects/.../agent-transcripts/
+```
+
+报告字段：
+- `total_events / role_distribution / assistant_turn_count / user_turn_count / tool_call_count`
+- `char_distribution`（turn 字符数 + token 估算 + 直方图）
+- `implicit_rewards`（user 反馈 0/1 启发式 → mean_reward）
+- `top_longest_turns`（最长的 5 个 turn + 预览）
+
 ## 对人回复模板
 
 **列表类**（tasks / segments / nanhu jobs）：用 markdown 表，无结果明确写「**当前无匹配记录**」。不要把整页 JSON 贴给用户。
@@ -150,3 +201,4 @@ rollout-insight tokenizer set --path /mnt/zj-data/models/public/021-32B-Agentic-
 - 命令/参数表：`skill/recipes.md`
 - 安装步骤：`skill/install.sh`
 - Web API 全集：见仓库 `controller/` 与 `docs/`（v0.2 阶段补齐）
+- v0.4.0 计划：根目录 `rollout-insight_v0.4.0_52e49d78.plan.md`（T7→T8 串行链对应本 skill 升级）
