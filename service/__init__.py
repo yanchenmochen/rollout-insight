@@ -1,4 +1,8 @@
-"""service 包：业务逻辑层占位。
+"""service 包：业务逻辑层。
 
-后续阶段把任务生命周期、nanhu 调用、解析调度等核心逻辑放在此处。
+v0.2 阶段落地：
+- rollout_scan_service：扫描 .pt dump 文件并入库
 """
+from service.rollout_scan_service import RolloutScanService
+
+__all__ = ["RolloutScanService"]
