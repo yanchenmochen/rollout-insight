@@ -62,6 +62,10 @@ def load_config(config_path: Optional[str] = None) -> Dict:
     config.setdefault("rollout_insight_version", "0.1.0")
     config.setdefault("rollout_insight_title", "Rollout Insight")
 
+    # v0.3.0 nanhu-skill 集成默认配置
+    config.setdefault("nanhu_cluster", "wuxi")
+    config.setdefault("nanhu_user_id", "")
+
     return config
 
 
@@ -147,6 +151,14 @@ class Config:
     @property
     def rollout_insight_title(self) -> str:
         return self._data.get("rollout_insight_title", "Rollout Insight")
+
+    @property
+    def nanhu_cluster(self) -> str:
+        return self._data.get("nanhu_cluster", "wuxi")
+
+    @property
+    def nanhu_user_id(self) -> str:
+        return self._data.get("nanhu_user_id", "")
 
 
 config = Config.instance()
