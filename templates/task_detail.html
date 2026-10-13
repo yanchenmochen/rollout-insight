@@ -261,13 +261,14 @@
 {% endif %}
 
 <div class="layout-split">
-    <aside class="left-nav">
-        <h3>本任务导航</h3>
-        <a href="#overview" class="active">概览</a>
-        <a href="#rollouts">Rollout 列表 ({{ rollouts | length }})</a>
-        <a href="#attempts">Attempt 列表 ({{ attempts | length }})</a>
-        <a href="#segments">Segment 列表 ({{ segments | length }})</a>
-    </aside>
+        <aside class="left-nav">
+            <h3>本任务导航</h3>
+            <a href="#overview" class="active">概览</a>
+            <a href="#rollouts">Rollout 列表 ({{ rollouts | length }})</a>
+            <a href="#attempts">Attempt 列表 ({{ attempts | length }})</a>
+            <a href="#segments">Segment 列表 ({{ segments | length }})</a>
+            <a href="#nanhu">关联南湖 job</a>
+        </aside>
 
     <div class="right-main">
         <div class="section" id="overview">
@@ -447,6 +448,55 @@
                 </tbody>
             </table>
         </div>
+
+        <div class="section" id="nanhu">
+            <h2>关联南湖 job <small>可绑定到南湖侧已有 job，便于溯源 / 重启</small></h2>
+            <table class="info-table">
+                <tr>
+                    <th>当前 nanhu_job_id</th>
+                    <td class="mono" id="currentNanhuJobId">{{ task.nanhu_job_id or '-' }}</td>
+                </tr>
+            </table>
+
+            <div style="margin-top:14px; display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start;">
+                <form id="bindForm" style="flex:1 1 320px; min-width:280px;" autocomplete="off">
+                    <h3 style="font-size:14px; color:var(--ri-muted); margin: 0 0 8px 0;">绑定到已有南湖 job</h3>
+                    <div class="form-group">
+                        <label for="bindJobId">南湖 job_id</label>
+                        <input id="bindJobId" name="job_id" type="text" placeholder="例如：j-xxxxxx" style="width:100%; padding:6px 8px; border:1px solid var(--ri-border); border-radius: var(--te-radius);" />
+                        <div style="font-size:12px; color:var(--ri-muted); margin-top:4px;">
+                            不确定？先去 <a href="/api/nanhu/jobs/page" target="_blank">南湖作业列表</a> 同步后取一份
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="bindCluster">集群（可选）</label>
+                        <input id="bindCluster" name="cluster" type="text" placeholder="wuxi / x10000" style="width:100%; padding:6px 8px; border:1px solid var(--ri-border); border-radius: var(--te-radius);" />
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input id="bindSubmit" type="checkbox" /> 立即写库（默认 dry-run）
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:6px;">
+                        <button type="submit" class="btn" id="bindSubmitBtn">绑定</button>
+                        <button type="button" class="btn btn-secondary" id="bindClearBtn">清空输入</button>
+                    </div>
+                </form>
+
+                <div style="flex:1 1 280px; min-width:240px; border:1px solid var(--ri-border); border-radius: var(--te-radius); padding:14px;">
+                    <h3 style="font-size:14px; color:var(--ri-muted); margin: 0 0 8px 0;">解除绑定</h3>
+                    <p style="font-size:13px; color:var(--ri-muted); margin-bottom:10px;">
+                        清空当前任务上的 nanhu_job_id 字段；不影响 ri_nanhu_job_table 中的作业记录。
+                    </p>
+                    <button type="button" class="btn btn-secondary" id="unbindBtn" {% if not task.nanhu_job_id %}disabled{% endif %}>解除绑定</button>
+                    <div id="unbindDryRunRow" style="margin-top:8px; font-size:13px; color:var(--ri-muted);">
+                        <label><input id="unbindSubmit" type="checkbox" /> 立即生效（默认 dry-run）</label>
+                    </div>
+                </div>
+            </div>
+
+            <div id="bindMessage" class="alert" style="display:none; margin-top:12px;"></div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -503,6 +553,98 @@
                 target.scrollIntoView({ behavior: "smooth", block: "start" });
             }
         });
+    });
+
+    // -------------------------------------------------------------------------
+    // 关联南湖 job：绑定 / 解除绑定
+    // -------------------------------------------------------------------------
+    function showBindMsg(msg, level) {
+        const el = document.getElementById("bindMessage");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.className = "alert " + (level === "success" ? "alert-info" : "alert-warning");
+        el.style.display = msg ? "" : "none";
+    }
+
+    async function postBind(url, payload) {
+        var resp = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            body: JSON.stringify(payload || {}),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data;
+    }
+
+    document.getElementById("bindClearBtn").addEventListener("click", function () {
+        document.getElementById("bindJobId").value = "";
+        document.getElementById("bindCluster").value = "";
+        document.getElementById("bindSubmit").checked = false;
+    });
+
+    document.getElementById("bindForm").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const jobId = (document.getElementById("bindJobId").value || "").trim();
+        const cluster = (document.getElementById("bindCluster").value || "").trim();
+        const submit = document.getElementById("bindSubmit").checked;
+        if (!jobId) {
+            showBindMsg("请填写南湖 job_id", "warn");
+            return;
+        }
+        const btn = document.getElementById("bindSubmitBtn");
+        btn.disabled = true;
+        try {
+            const url = "/api/nanhu/jobs/" + encodeURIComponent(jobId)
+                + "/link-task?submit=" + (submit ? "1" : "0");
+            await postBind(url, { task_id: TASK_ID, cluster: cluster });
+            showBindMsg(
+                (submit ? "绑定成功" : "dry-run 完成（未真正写库）") + "：job=" + jobId,
+                "success"
+            );
+            // 立即更新页面顶部展示的 nanhu_job_id
+            const cur = document.getElementById("currentNanhuJobId");
+            if (cur) cur.textContent = submit ? jobId : (cur.textContent + "（dry-run）");
+            // 解绑按钮启用（仅 submit 后）
+            if (submit) {
+                document.getElementById("unbindBtn").disabled = false;
+            }
+        } catch (err) {
+            showBindMsg("绑定失败：" + err.message, "warn");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById("unbindBtn").addEventListener("click", async function () {
+        const cur = (document.getElementById("currentNanhuJobId").textContent || "").trim();
+        if (!cur || cur === "-" || cur.indexOf("dry-run") >= 0) {
+            showBindMsg("当前任务没有 nanhu_job_id，无需解绑", "warn");
+            return;
+        }
+        const submit = document.getElementById("unbindSubmit").checked;
+        if (!confirm("确认解除绑定吗？\n将清空本任务上的 nanhu_job_id=" + cur + "（" + (submit ? "立即生效" : "仅 dry-run") + "）")) return;
+        const btn = this;
+        btn.disabled = true;
+        try {
+            const url = "/api/nanhu/jobs/" + encodeURIComponent(cur)
+                + "/unlink-task?submit=" + (submit ? "1" : "0");
+            await postBind(url, {});
+            showBindMsg(
+                (submit ? "解绑成功" : "dry-run 完成（未真正解绑）") + "：job=" + cur,
+                "success"
+            );
+            if (submit) {
+                document.getElementById("currentNanhuJobId").textContent = "-";
+                btn.disabled = true;
+            }
+        } catch (err) {
+            showBindMsg("解绑失败：" + err.message, "warn");
+        } finally {
+            btn.disabled = false;
+        }
     });
 </script>
 {% endblock %}

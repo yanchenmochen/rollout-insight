@@ -1,0 +1,528 @@
+{% extends "base.html" %}
+
+{% block title %}南湖作业 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .filter-panel {
+        background: #f4f6f8;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .filter-panel .form-group {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 140px;
+    }
+
+    .filter-panel label {
+        font-size: 12px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .filter-panel input,
+    .filter-panel select {
+        padding: 6px 8px;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        font-size: 14px;
+    }
+
+    table.nanhu-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .nanhu-table thead {
+        background: #2a3542;
+        color: #e8ecf0;
+    }
+
+    .nanhu-table th,
+    .nanhu-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .nanhu-table th {
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .nanhu-table tbody tr:hover {
+        background: #f8fafb;
+    }
+
+    .nanhu-table .col-id {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--ri-muted);
+    }
+
+    .nanhu-table .col-actions {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .nanhu-table .col-actions a,
+    .nanhu-table .col-actions button {
+        margin-left: 4px;
+    }
+
+    .nanhu-table .path-cell {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: var(--ri-muted);
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .empty-row,
+    .loading-row {
+        text-align: center;
+        color: var(--ri-muted);
+        padding: 24px 8px;
+        font-size: 14px;
+    }
+
+    .status-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #e0e6ec;
+        color: var(--ri-ink);
+    }
+
+    .status-tag.status-pending { background: #f0e2c5; color: #8a5a12; }
+    .status-tag.status-running { background: #c7def5; color: #1e5080; }
+    .status-tag.status-success,
+    .status-tag.status-succeeded { background: #cde7d6; color: var(--ri-success); }
+    .status-tag.status-failed { background: #f3c8c8; color: #9b2c2c; }
+
+    .alert {
+        padding: 10px 12px;
+        border-radius: var(--te-radius);
+        border-left: 4px solid;
+        margin-bottom: 14px;
+    }
+
+    .alert-info {
+        background: #e8f0fa;
+        border-color: var(--ri-accent);
+        color: #1e5080;
+    }
+
+    .alert-warning {
+        background: #fff3cd;
+        border-color: #ffc107;
+        color: #856404;
+    }
+
+    .modal-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1100;
+    }
+    .modal-mask.show { display: flex; }
+    .modal-card {
+        background: var(--ri-surface);
+        border-radius: 8px;
+        width: 480px;
+        max-width: 95vw;
+        padding: 20px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    }
+    .modal-card h2 {
+        margin: 0 0 12px 0;
+        font-size: 1.1em;
+    }
+    .modal-card label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        font-size: 13px;
+    }
+    .modal-card input,
+    .modal-card select {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+    .modal-card .btn-row {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>南湖作业</h1>
+        <div class="page-subtitle">
+            列出南湖调度平台上的训练 / 推理 job；可关联到本系统的 Rollout 任务，便于溯源
+        </div>
+    </div>
+    <div>
+        <button type="button" class="btn" id="syncBtn">从南湖同步</button>
+        <a href="/api/tasks" class="btn btn-secondary">返回任务列表</a>
+    </div>
+</div>
+
+{% if warning %}
+<div class="alert alert-warning">{{ warning }}</div>
+{% endif %}
+<div class="alert alert-info" id="topNotice" style="display:none;"></div>
+
+<form id="filterForm" class="filter-panel" autocomplete="off" onsubmit="return false;">
+    <div class="form-group">
+        <label for="clusterFilter">集群</label>
+        <select id="clusterFilter">
+            <option value="">（全部）</option>
+            <option value="wuxi" {% if filter_cluster == 'wuxi' %}selected{% endif %}>wuxi</option>
+            <option value="x10000" {% if filter_cluster == 'x10000' %}selected{% endif %}>x10000</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="statusFilter">状态</label>
+        <input id="statusFilter" placeholder="如 PENDING / RUNNING" value="{{ filter_status or '' }}" />
+    </div>
+    <div class="form-group">
+        <label>&nbsp;</label>
+        <button type="button" class="btn" id="reloadBtn">应用过滤</button>
+    </div>
+</form>
+
+<table class="nanhu-table">
+    <thead>
+        <tr>
+            <th>job_id</th>
+            <th>名称</th>
+            <th>状态</th>
+            <th>集群</th>
+            <th>output_dir</th>
+            <th>关联任务</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="jobTableBody">
+        {% if jobs %}
+            {% for j in jobs %}
+            <tr data-job-id="{{ j.job_id }}">
+                <td class="col-id">{{ j.job_id }}</td>
+                <td>{{ j.name or '-' }}</td>
+                <td><span class="status-tag {{ ('status-' + (j.status|lower)) if j.status else '' }}">{{ j.status or '-' }}</span></td>
+                <td>{{ j.cluster or '-' }}</td>
+                <td class="path-cell" title="{{ j.output_dir or '' }}">{{ j.output_dir or '-' }}</td>
+                <td class="col-id">
+                    {% if j.related_task_id %}<a href="/api/tasks/{{ j.related_task_id }}">#{{ j.related_task_id }}</a>
+                    {% else %}-{% endif %}
+                </td>
+                <td class="col-actions">
+                    <button type="button" class="btn btn-secondary btn-sm js-link" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">链接任务</button>
+                    <button type="button" class="btn btn-secondary btn-sm js-restart" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">重启</button>
+                </td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr><td colspan="7" class="empty-row">暂无 nanhu job；点击「从南湖同步」拉取最新数据</td></tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<!-- 链接任务 / 重启 共用的模态 -->
+<div class="modal-mask" id="linkModal">
+    <div class="modal-card">
+        <h2>关联 Rollout 任务到南湖 job</h2>
+        <form id="linkForm" autocomplete="off">
+            <label for="linkJobId">南湖 job_id</label>
+            <input id="linkJobId" name="job_id" readonly />
+            <label for="linkCluster">集群</label>
+            <input id="linkCluster" name="cluster" placeholder="可选：wuxi / x10000" />
+            <label for="linkTaskId">Rollout 任务 ID *</label>
+            <input id="linkTaskId" name="task_id" type="number" min="1" required placeholder="例如：42" />
+            <label for="linkSubmit">
+                <input id="linkSubmit" type="checkbox" /> 立即写库（默认 dry-run）
+            </label>
+            <div class="btn-row">
+                <button type="button" class="btn btn-secondary" id="linkCancel">取消</button>
+                <button type="submit" class="btn" id="linkSubmitBtn">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-mask" id="restartModal">
+    <div class="modal-card">
+        <h2>重启南湖作业</h2>
+        <form id="restartForm" autocomplete="off">
+            <label for="restartJobId">南湖 job_id</label>
+            <input id="restartJobId" name="job_id" readonly />
+            <label for="restartCluster">集群</label>
+            <input id="restartCluster" name="cluster" />
+            <label for="restartTaskId">关联任务 ID（可选）</label>
+            <input id="restartTaskId" name="task_id" type="number" min="1" placeholder="例如：42" />
+            <label for="restartSubmit">
+                <input id="restartSubmit" type="checkbox" /> 真正调用 restart_job（默认 dry-run）
+            </label>
+            <div class="btn-row">
+                <button type="button" class="btn btn-secondary" id="restartCancel">取消</button>
+                <button type="submit" class="btn" id="restartSubmitBtn">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escapeHtml(s) {
+    return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function statusClass(s) {
+    const v = String(s || "").toLowerCase();
+    if (v.includes("fail") || v.includes("error")) return "status-failed";
+    if (v.includes("success") || v.includes("succeeded") || v.includes("done")) return "status-success";
+    if (v.includes("run") || v.includes("starting")) return "status-running";
+    return "status-pending";
+}
+
+function showNotice(msg, level) {
+    const el = document.getElementById("topNotice");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = "alert " + (level === "success" ? "alert-info" : "alert-warning");
+    el.style.display = msg ? "" : "none";
+}
+
+async function postJson(url, payload) {
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify(payload || {}),
+    });
+    const data = await resp.json().catch(function () { return {}; });
+    if (!data || data.code !== 0) {
+        throw new Error((data && data.msg) || ("HTTP " + resp.status));
+    }
+    return data;
+}
+
+async function reloadJobs() {
+    const tbody = document.getElementById("jobTableBody");
+    tbody.innerHTML = '<tr><td colspan="4" class="loading-row">加载中…</td></tr>';
+    const params = new URLSearchParams();
+    const cluster = document.getElementById("clusterFilter").value.trim();
+    const status = document.getElementById("statusFilter").value.trim();
+    if (cluster) params.set("cluster", cluster);
+    if (status) params.set("status", status);
+    try {
+        const resp = await fetch("/api/nanhu/jobs?" + params.toString(), {
+            headers: { "Accept": "application/json" },
+        });
+        const data = await resp.json();
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || "查询失败");
+        }
+        const list = (data.data && data.data.jobs) || [];
+        if (!list.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-row">暂无 nanhu job；点击「从南湖同步」拉取最新数据</td></tr>';
+            return;
+        }
+        tbody.innerHTML = list.map(function (j) {
+            return '<tr data-job-id="' + escapeHtml(j.job_id) + '">'
+                + '<td class="col-id">' + escapeHtml(j.job_id) + '</td>'
+                + '<td>' + escapeHtml(j.name) + '</td>'
+                + '<td><span class="status-tag status-' + statusClass(j.status) + '">' + escapeHtml(j.status || '-') + '</span></td>'
+                + '<td>' + escapeHtml(j.cluster) + '</td>'
+                + '<td class="path-cell" title="' + escapeHtml(j.output_dir) + '">' + escapeHtml(j.output_dir) + '</td>'
+                + '<td class="col-id">' + (j.related_task_id ? ('<a href="/api/tasks/' + j.related_task_id + '">#' + j.related_task_id + '</a>') : '-') + '</td>'
+                + '<td class="col-actions">'
+                + '<button type="button" class="btn btn-secondary btn-sm js-link" data-job="' + escapeHtml(j.job_id) + '" data-cluster="' + escapeHtml(j.cluster) + '">链接任务</button> '
+                + '<button type="button" class="btn btn-secondary btn-sm js-restart" data-job="' + escapeHtml(j.job_id) + '" data-cluster="' + escapeHtml(j.cluster) + '">重启</button>'
+                + '</td>'
+                + '</tr>';
+        }).join("");
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
+    }
+}
+
+document.getElementById("reloadBtn").addEventListener("click", reloadJobs);
+
+document.getElementById("syncBtn").addEventListener("click", async function () {
+    const btn = this;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "同步中…";
+    try {
+        const params = new URLSearchParams();
+        const cluster = document.getElementById("clusterFilter").value.trim();
+        const status = document.getElementById("statusFilter").value.trim();
+        if (cluster) params.set("cluster", cluster);
+        if (status) params.set("status", status);
+        params.set("refresh", "1");
+        const resp = await fetch("/api/nanhu/jobs?" + params.toString(), {
+            headers: { "Accept": "application/json" },
+        });
+        const data = await resp.json();
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || "同步失败");
+        }
+        const synced = (data.data && data.data.synced) || 0;
+        const syncErr = (data.data && data.data.sync_error);
+        if (syncErr) {
+            showNotice("同步告警：" + syncErr + "（已写入本地缓存的行：" + synced + "）", "warn");
+        } else {
+            showNotice("已同步，" + synced + " 行写入本地缓存", "success");
+        }
+        reloadJobs();
+    } catch (e) {
+        showNotice("同步失败：" + e.message, "warn");
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+});
+
+function openModal(modalId) {
+    const m = document.getElementById(modalId);
+    if (m) m.classList.add("show");
+}
+function closeModal(modalId) {
+    const m = document.getElementById(modalId);
+    if (m) m.classList.remove("show");
+}
+
+document.addEventListener("click", function (event) {
+    const t = event.target;
+    if (!(t instanceof HTMLElement)) return;
+    if (t.classList.contains("js-link")) {
+        const job = t.getAttribute("data-job") || "";
+        const cluster = t.getAttribute("data-cluster") || "";
+        document.getElementById("linkJobId").value = job;
+        document.getElementById("linkCluster").value = cluster;
+        document.getElementById("linkTaskId").value = "";
+        document.getElementById("linkSubmit").checked = false;
+        openModal("linkModal");
+    } else if (t.classList.contains("js-restart")) {
+        const job = t.getAttribute("data-job") || "";
+        const cluster = t.getAttribute("data-cluster") || "";
+        document.getElementById("restartJobId").value = job;
+        document.getElementById("restartCluster").value = cluster;
+        document.getElementById("restartTaskId").value = "";
+        document.getElementById("restartSubmit").checked = false;
+        openModal("restartModal");
+    }
+});
+
+document.getElementById("linkCancel").addEventListener("click", function () { closeModal("linkModal"); });
+document.getElementById("restartCancel").addEventListener("click", function () { closeModal("restartModal"); });
+
+document.getElementById("linkForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const job = document.getElementById("linkJobId").value;
+    const cluster = document.getElementById("linkCluster").value;
+    const taskId = parseInt(document.getElementById("linkTaskId").value, 10);
+    const submit = document.getElementById("linkSubmit").checked;
+    if (!job) { showNotice("job_id 不能为空", "warn"); return; }
+    if (!taskId) { showNotice("请填写任务 ID", "warn"); return; }
+    const url = "/api/nanhu/jobs/" + encodeURIComponent(job) + "/link-task" + (submit ? "?submit=1" : "?submit=0");
+    const btn = document.getElementById("linkSubmitBtn");
+    btn.disabled = true;
+    try {
+        const data = await postJson(url, { task_id: taskId, cluster: cluster });
+        const msg = submit ? "已写入数据库" : "dry-run 完成（未真正写库）";
+        showNotice(msg + "：job=" + job + " task=" + taskId, "success");
+        closeModal("linkModal");
+        reloadJobs();
+    } catch (err) {
+        showNotice("提交失败：" + err.message, "warn");
+    } finally {
+        btn.disabled = false;
+    }
+});
+
+document.getElementById("restartForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const job = document.getElementById("restartJobId").value;
+    const cluster = document.getElementById("restartCluster").value;
+    const taskIdRaw = document.getElementById("restartTaskId").value;
+    const submit = document.getElementById("restartSubmit").checked;
+    if (!job) { showNotice("job_id 不能为空", "warn"); return; }
+    const payload = { job_id: job, cluster: cluster };
+    if (taskIdRaw) payload.task_id = parseInt(taskIdRaw, 10);
+    const btn = document.getElementById("restartSubmitBtn");
+    btn.disabled = true;
+    try {
+        const data = await postJson("/api/nanhu/jobs/restart" + (submit ? "?submit=1" : "?submit=0"), payload);
+        const msg = submit ? "已发起重启" : "dry-run 完成（未真正调用 restart_job）";
+        showNotice(msg + "：job=" + job, "success");
+        closeModal("restartModal");
+        reloadJobs();
+    } catch (err) {
+        showNotice("重启失败：" + err.message, "warn");
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+{% endblock %}
