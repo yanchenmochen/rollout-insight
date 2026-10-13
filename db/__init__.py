@@ -1,6 +1,7 @@
 """db 包：SQLAlchemy 模型与会话入口。
 
 v0.2.0 起 5 张 ORM 全部暴露在外面，方便 app 启动时 Base.metadata.create_all 一把建表。
+v0.3.0 起新增 2 张 nanhu 相关表（job / restart）。
 """
 from db.db_element import Base, Session, engine
 from db.db_task import DBTask
@@ -8,6 +9,8 @@ from db.db_rollout import DBRollout
 from db.db_attempt import DBAttempt
 from db.db_segment import DBSegment
 from db.db_segment_transcript import DBSegmentTranscript
+from db.db_nanhu_job import DBNanhuJob
+from db.db_nanhu_restart import DBNanhuRestart
 
 __all__ = [
     "Base",
@@ -19,4 +22,6 @@ __all__ = [
     "DBAttempt",
     "DBSegment",
     "DBSegmentTranscript",
+    "DBNanhuJob",
+    "DBNanhuRestart",
 ]
