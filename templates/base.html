@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Rollout Insight{% endblock %}</title>
+    <style>
+        :root {
+            --ri-bg: #e8ebef;
+            --ri-surface: #ffffff;
+            --ri-border: #c5cdd6;
+            --ri-ink: #1a2332;
+            --ri-muted: #5c6b7a;
+            --ri-accent: #2d6a9f;
+            --ri-accent-hover: #1e5080;
+            --ri-success: #2d6a4f;
+            --ri-font-sans: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+            --te-radius: 4px;
+            --ri-shadow: 0 1px 3px rgba(26, 35, 50, 0.08);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--ri-font-sans);
+            background-color: var(--ri-bg);
+            line-height: 1.6;
+            color: var(--ri-ink);
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .navbar {
+            background-color: #1f3550;
+            color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .navbar-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+        }
+
+        .navbar-brand {
+            font-size: 18px;
+            font-weight: 700;
+            padding: 14px 0;
+            color: white;
+            text-decoration: none;
+        }
+
+        .navbar-brand:hover { color: #66bbff; }
+
+        .navbar-nav {
+            display: flex;
+            list-style: none;
+            gap: 0;
+            align-items: center;
+        }
+
+        .nav-link {
+            display: block;
+            padding: 14px 18px;
+            color: white;
+            text-decoration: none;
+            transition: background-color 0.3s;
+            font-weight: 500;
+        }
+
+        .nav-link:hover { background-color: #294766; }
+        .nav-link.active { background-color: var(--ri-accent); }
+
+        .main-content { flex: 1; padding: 20px; }
+
+        .layout {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        .sidebar {
+            flex: 0 0 220px;
+            background: var(--ri-surface);
+            border-radius: 8px;
+            padding: 16px 12px;
+            box-shadow: var(--ri-shadow);
+        }
+
+        .sidebar h3 {
+            font-size: 14px;
+            color: var(--ri-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .sidebar ul { list-style: none; }
+        .sidebar li { margin: 4px 0; }
+        .sidebar a {
+            display: block;
+            padding: 8px 10px;
+            color: var(--ri-ink);
+            text-decoration: none;
+            border-radius: var(--te-radius);
+        }
+        .sidebar a:hover, .sidebar a.active {
+            background: #eef3f8;
+            color: var(--ri-accent);
+        }
+
+        .container {
+            flex: 1;
+            background: var(--ri-surface);
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: var(--ri-shadow);
+        }
+
+        h1 {
+            color: #1f3550;
+            margin-bottom: 16px;
+            border-bottom: 3px solid var(--ri-accent);
+            padding-bottom: 8px;
+            font-size: 1.6em;
+        }
+
+        h2 { color: #444; margin-top: 24px; margin-bottom: 14px; font-size: 1.3em; }
+
+        .btn {
+            padding: 8px 16px;
+            background-color: var(--ri-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: var(--te-radius);
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            display: inline-block;
+        }
+
+        .btn:hover { background-color: var(--ri-accent-hover); }
+
+        .btn-secondary { background-color: #757575; }
+        .btn-secondary:hover { background-color: #616161; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        table th, table td {
+            border-bottom: 1px solid var(--ri-border);
+            padding: 8px 10px;
+            text-align: left;
+        }
+
+        table th {
+            background: #f3f5f8;
+            color: var(--ri-muted);
+        }
+
+        .meta { color: var(--ri-muted); font-size: 13px; }
+
+        @media (max-width: 900px) {
+            .layout { flex-direction: column; }
+            .sidebar { flex: 1; width: 100%; }
+            .navbar-container { flex-direction: column; padding: 10px; }
+            .navbar-nav { flex-direction: column; width: 100%; }
+            .nav-link { width: 100%; text-align: center; }
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <a href="/api/tasks" class="navbar-brand">Rollout Insight</a>
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a href="/api/tasks"
+                       class="nav-link {% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务列表</a>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/dumps"
+                       class="nav-link {% if request.url.path.startswith('/api/dumps') %}active{% endif %}">Rollout 落盘</a>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/insights"
+                       class="nav-link {% if request.url.path.startswith('/api/insights') %}active{% endif %}">洞察</a>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/settings"
+                       class="nav-link {% if request.url.path.startswith('/api/settings') %}active{% endif %}">系统设置</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- 左右布局 -->
+    <main class="main-content">
+        <div class="layout">
+            <aside class="sidebar">
+                <h3>快速导航</h3>
+                <ul>
+                    <li><a href="/api/tasks"
+                           class="{% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务</a></li>
+                    <li><a href="/api/dumps"
+                           class="{% if request.url.path.startswith('/api/dumps') %}active{% endif %}">Rollout dump</a></li>
+                    <li><a href="/api/insights"
+                           class="{% if request.url.path.startswith('/api/insights') %}active{% endif %}">洞察报告</a></li>
+                    <li><a href="/api/nanhu/jobs"
+                           class="{% if request.url.path.startswith('/api/nanhu') %}active{% endif %}">南湖作业</a></li>
+                </ul>
+                <p class="meta" style="margin-top:16px;">
+                    v0.1.0 骨架阶段，更多功能将在后续迭代上线。
+                </p>
+            </aside>
+            <section class="container">
+                {% block content %}{% endblock %}
+            </section>
+        </div>
+    </main>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
