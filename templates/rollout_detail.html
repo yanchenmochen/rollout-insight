@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}Rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }} - 任务 #{{ task.id if task else '-' }} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .breadcrumb {
+        font-size: 13px;
+        color: var(--ri-muted);
+        margin-bottom: 10px;
+    }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .breadcrumb a:hover { text-decoration: underline; }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+
+    .section {
+        background: var(--ri-surface);
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 16px 20px;
+        margin-bottom: 18px;
+    }
+
+    .section h2 {
+        margin: 0 0 12px 0;
+        font-size: 1.15em;
+        color: var(--ri-ink);
+        border-bottom: 1px solid var(--ri-border);
+        padding-bottom: 6px;
+    }
+
+    .section h2 small {
+        color: var(--ri-muted);
+        font-size: 12px;
+        font-weight: 500;
+        margin-left: 8px;
+    }
+
+    .info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .info-table th, .info-table td {
+        padding: 5px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+        vertical-align: top;
+    }
+    .info-table th {
+        width: 160px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        background: #f8fafb;
+    }
+    .info-table td.mono {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        word-break: break-all;
+    }
+
+    table.sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sub-table th, .sub-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+    }
+    .sub-table thead { background: #f3f5f8; }
+    .sub-table th {
+        font-size: 11px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .sub-table .col-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .sub-table .col-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ri-muted); }
+    .sub-table tbody tr:hover { background: #f8fafb; }
+
+    .empty-row { text-align: center; color: var(--ri-muted); padding: 16px 8px; }
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 14px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    &nbsp;/&nbsp;
+    {% if task %}
+        <a href="/api/tasks/{{ task.id }}">任务 #{{ task.id }}（{{ task.task_name }}）</a>
+    {% else %}
+        任务 #-
+    {% endif %}
+    &nbsp;/&nbsp;
+    <strong>rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }}</strong>
+</div>
+
+<div class="page-header">
+    <div>
+        <h1>Rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }}</h1>
+        <div class="page-subtitle">
+            任务 <strong>{{ task.task_name if task else '-' }}</strong>
+            {% if rollout.scanned_at %}&nbsp;·&nbsp; 最近扫描 {{ rollout.scanned_at }}{% endif %}
+        </div>
+    </div>
+    <div class="action-bar">
+        <a href="{% if task %}/api/tasks/{{ task.id }}{% else %}/api/tasks{% endif %}" class="btn btn-secondary">返回任务</a>
+        <button type="button" class="btn" id="reparseBtn">重解析 .pt</button>
+    </div>
+</div>
+
+{% if warning %}
+<div class="alert alert-warning">{{ warning }}</div>
+{% endif %}
+
+<div class="section">
+    <h2>概览</h2>
+    <table class="info-table">
+        <tr>
+            <th>rollout 主键 ID</th>
+            <td class="mono">{{ rollout.id if rollout.id is not none else '-' }}</td>
+        </tr>
+        <tr>
+            <th>业务 rollout_id</th>
+            <td class="mono">{{ rollout.rollout_id if rollout.rollout_id is not none else '-' }}</td>
+        </tr>
+        <tr>
+            <th>任务 ID</th>
+            <td class="mono">
+                {% if task %}<a href="/api/tasks/{{ task.id }}">{{ task.id }}</a>{% else %}-{% endif %}
+            </td>
+        </tr>
+        <tr>
+            <th>pt_path</th>
+            <td class="mono">{{ rollout.pt_path or '-' }}</td>
+        </tr>
+        <tr>
+            <th>pt_size / mtime</th>
+            <td class="mono">
+                {{ rollout.pt_size_bytes or 0 }} bytes
+                {% if rollout.pt_mtime %}&nbsp;·&nbsp; mtime {{ "%.0f"|format(rollout.pt_mtime) }}{% endif %}
+            </td>
+        </tr>
+        <tr>
+            <th>n_samples</th>
+            <td>{{ rollout.n_samples if rollout.n_samples is not none else '-' }}</td>
+        </tr>
+        <tr>
+            <th>n_attempts</th>
+            <td>{{ rollout.n_attempts if rollout.n_attempts is not none else '-' }}</td>
+        </tr>
+        <tr>
+            <th>mean_reward</th>
+            <td>
+                {% if rollout.mean_reward is not none %}
+                    <strong>{{ "%.4f"|format(rollout.mean_reward) }}</strong>
+                {% else %}-{% endif %}
+            </td>
+        </tr>
+        <tr>
+            <th>instance_count</th>
+            <td>{{ rollout.instance_count if rollout.instance_count is not none else '-' }}</td>
+        </tr>
+        <tr>
+            <th>scanned_at</th>
+            <td>{{ rollout.scanned_at or '-' }}</td>
+        </tr>
+    </table>
+</div>
+
+<div class="section">
+    <h2>Attempts <small>{{ attempts | length }} 个</small></h2>
+    <table class="sub-table">
+        <thead>
+            <tr>
+                <th>primary_id</th>
+                <th>group_index</th>
+                <th>attempt_id</th>
+                <th>instance_id</th>
+                <th class="col-num">segment_count</th>
+                <th class="col-num">mean_reward</th>
+                <th>status</th>
+                <th>第一个 segment</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if attempts %}
+                {% for a in attempts %}
+                <tr>
+                    <td class="col-id">{{ a.primary_id }}</td>
+                    <td>{{ a.group_index if a.group_index is not none else '-' }}</td>
+                    <td class="col-id">{{ a.attempt_id if a.attempt_id is not none else '-' }}</td>
+                    <td class="mono">{{ a.instance_id or '-' }}</td>
+                    <td class="col-num">{{ a.segment_count }}</td>
+                    <td class="col-num">
+                        {% if a.mean_reward %}{{ "%.4f"|format(a.mean_reward) }}{% else %}0.0000{% endif %}
+                    </td>
+                    <td>{{ a.status or '-' }}</td>
+                    <td>
+                        {% if a.segments and a.segments[0] %}
+                            <a href="/api/segments/{{ a.segments[0].primary_id }}">
+                                segment #{{ a.segments[0].primary_id }}
+                            </a>
+                            {% if a.segments[0].segment_index is not none %}
+                                (idx {{ a.segments[0].segment_index }})
+                            {% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="8" class="empty-row">暂无 attempt 数据</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<div class="section">
+    <h2>原始 JSON</h2>
+    <p style="font-size:13px; color:var(--ri-muted);">
+        完整 attempts + segments 数据见 <a href="/api/rollouts/{{ rollout.id }}" target="_blank">/api/rollouts/{{ rollout.id }}</a>
+    </p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const ROLLOUT_ID = {{ (rollout.id or 0) | tojson }};
+
+    document.getElementById("reparseBtn").addEventListener("click", async function () {
+        const btn = this;
+        if (!confirm("确定要重新解析该 rollout 对应的 .pt 文件吗？\n会按 T3 规则重新切分 attempt / segment / turn，并刷新 turn 表。")) return;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "解析中…";
+        try {
+            const resp = await fetch("/api/rollouts/" + encodeURIComponent(ROLLOUT_ID) + "/parse?force=true", {
+                method: "POST",
+                headers: { "Accept": "application/json" },
+            });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!data || data.code !== 0) {
+                throw new Error((data && data.msg) || ("HTTP " + resp.status));
+            }
+            alert("解析完成\nattempts: " + (data.data && data.data.n_attempts) +
+                  "\nsegments: " + (data.data && data.data.n_segments) +
+                  "\npersisted_turns: " + (data.data && data.data.persisted_turns));
+            window.location.reload();
+        } catch (e) {
+            alert("解析失败：" + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+        }
+    });
+</script>
+{% endblock %}
