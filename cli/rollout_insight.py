@@ -1,4 +1,4 @@
-"""``rollout-insight`` CLI 入口（v0.3.0 阶段 3C）。
+"""``rollout-insight`` CLI 入口（v0.4.0）。
 
 命令树::
 
@@ -7,13 +7,17 @@
         segments {list,show,search}
         nanhu {jobs,restart,link}
         tokenizer {set,test}
+        rollouts {show,parse,list}                                    # v0.4.0
+        agent-transcripts {report}                                    # v0.4.0
 
-写操作默认 dry-run；加 ``--submit`` 才执行。
+写操作默认 dry-run；加 ``--submit`` 才执行。``rollouts parse`` 是 idempotent
+且用户主动触发，所以即使不带 ``--submit`` 也会真执行。
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Any, Optional
 
@@ -33,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rollout-insight",
         description=(
-            "rollout-insight CLI（v0.3.0）：本地 Web API + 南湖调度 + tokenizer 操作。\n"
+            "rollout-insight CLI（v0.4.0）：本地 Web API + 南湖调度 + tokenizer + rollout 解析/列表 + agent-transcripts。\n"
             "写操作默认 dry-run，加 --submit 才执行。"
         ),
     )
@@ -154,7 +158,84 @@ def build_parser() -> argparse.ArgumentParser:
     tok_test = tok_sub.add_parser("test", help="验证 tokenizer 目录是否合法")
     tok_test.add_argument("--path", required=True)
 
+    # ----- rollouts (v0.4.0) -----
+    _build_rollouts_parser(sub)
+
+    # ----- agent-transcripts (v0.4.0) -----
+    _build_agent_transcripts_parser(sub)
+
     return parser
+
+
+# ---------------------------------------------------------------------------
+# v0.4.0 子命令 parser
+# ---------------------------------------------------------------------------
+
+
+def _build_rollouts_parser(sub: argparse._SubParsersAction) -> None:
+    """注册 ``rollouts`` 顶层子命令（v0.4.0 T7）。"""
+    rollouts_p = sub.add_parser(
+        "rollouts",
+        help="Rollout 详情 / 解析 / 列表（v0.4.0）",
+    )
+    rollouts_sub = rollouts_p.add_subparsers(
+        dest="rollouts_cmd", required=True, title="rollouts 子命令"
+    )
+
+    # rollouts show <id>
+    r_show = rollouts_sub.add_parser(
+        "show",
+        help="展示单个 rollout 概览（pt_path / n_samples / mean_reward / attempts 摘要）",
+    )
+    r_show.add_argument("rollout_id", type=int, help="rollout primary_id（不是业务键）")
+
+    # rollouts parse <id> [--tokenizer DIR]
+    r_parse = rollouts_sub.add_parser(
+        "parse",
+        help="触发 .pt 重解析（idempotent；可选 --tokenizer 覆盖）",
+    )
+    r_parse.add_argument("rollout_id", type=int, help="rollout primary_id")
+    r_parse.add_argument(
+        "--tokenizer",
+        dest="tokenizer_dir",
+        default="",
+        help="可选 tokenizer 目录（写到 POST body 备用）",
+    )
+    r_parse.add_argument(
+        "--submit",
+        action="store_true",
+        help="实际触发 parse（v0.4.0 占位：parse 本身就是 idempotent 用户主动操作，不加也执行）",
+    )
+
+    # rollouts list --task <task_id>
+    r_list = rollouts_sub.add_parser(
+        "list",
+        help="列 task 下的 rollouts（默认走 /api/tasks/{id}/rollouts，回退到 /api/tasks 详情）",
+    )
+    r_list.add_argument("--task", dest="task_id", type=int, required=True, help="task primary_id")
+    r_list.add_argument("--limit", type=int, default=None)
+    r_list.add_argument("--offset", type=int, default=0)
+
+
+def _build_agent_transcripts_parser(sub: argparse._SubParsersAction) -> None:
+    """注册 ``agent-transcripts`` 顶层子命令（v0.4.0 T7）。"""
+    at_p = sub.add_parser(
+        "agent-transcripts",
+        help="Agent transcripts 报告（v0.4.0 T6 配套）",
+    )
+    at_sub = at_p.add_subparsers(
+        dest="agent_transcripts_cmd", required=True, title="agent-transcripts 子命令"
+    )
+
+    # agent-transcripts report <file_or_dir>
+    at_report = at_sub.add_parser(
+        "report",
+        help="单文件或目录报告（自动判别：file → /report；dir → /batch）",
+    )
+    at_report.add_argument(
+        "path",
+        help="单个 .jsonl 文件绝对路径，或包含 .jsonl 的目录",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +470,91 @@ def _run_tokenizer(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# v0.4.0 dispatch
+# ---------------------------------------------------------------------------
+
+
+def _run_rollouts(args: argparse.Namespace) -> int:
+    """``rollouts`` 子命令分发。"""
+    base = api.resolve_api_base(args.api_base)
+    sub = args.rollouts_cmd
+
+    if sub == "show":
+        # 调 /api/rollouts/{id}/json（plan 契约），404 时回退到 /api/rollouts/{id}
+        payload = api.get_rollout_json(base, args.rollout_id)
+        _emit(payload, args)
+        return 0
+
+    if sub == "parse":
+        # parse 是 idempotent + 用户主动触发：不加 --submit 时打印 plan
+        if not args.submit:
+            plan = {
+                "action": "parse rollout",
+                "api_base": base,
+                "rollout_id": args.rollout_id,
+                "tokenizer_dir": args.tokenizer_dir,
+                "submit": False,
+                "dry_run": True,
+                "note": (
+                    "dry-run：未调用 parse（v0.4.0 占位）。"
+                    "parse 是 idempotent + 用户主动操作，不加 --submit 也会真执行；"
+                    "此处仅打印 plan 供 agent 二次确认。"
+                ),
+            }
+            _emit(plan, args)
+            return 0
+        payload = api.parse_rollout(
+            base,
+            args.rollout_id,
+            tokenizer_dir=args.tokenizer_dir,
+            force=True,
+        )
+        _emit(payload, args)
+        return 0
+
+    if sub == "list":
+        payload = api.list_rollouts_by_task(
+            base,
+            args.task_id,
+            limit=args.limit,
+            offset=args.offset or 0,
+        )
+        _emit(payload, args)
+        return 0
+
+    _emit_error(f"未知 rollouts 子命令: {sub}")
+    return 2
+
+
+def _run_agent_transcripts(args: argparse.Namespace) -> int:
+    """``agent-transcripts`` 子命令分发。
+
+    - ``report <file>``  → GET /api/agent-transcripts/report?path=<file>
+    - ``report <dir>``   → GET /api/agent-transcripts/batch?dir=<dir>
+    """
+    base = api.resolve_api_base(args.api_base)
+    sub = args.agent_transcripts_cmd
+    path = args.path
+
+    if sub == "report":
+        if not path:
+            _emit_error("agent-transcripts report: path 不能为空")
+            return 2
+        if not os.path.exists(path):
+            _emit_error(f"路径不存在: {path}")
+            return 2
+        if os.path.isfile(path):
+            payload = api.agent_transcript_report(base, path)
+        else:
+            # 目录：批量
+            payload = api.agent_transcript_batch(base, path)
+        _emit(payload, args)
+        return 0
+
+    _emit_error(f"未知 agent-transcripts 子命令: {sub}")
+    return 2
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -413,6 +579,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             return _run_nanhu(args)
         if args.command == "tokenizer":
             return _run_tokenizer(args)
+        if args.command == "rollouts":
+            return _run_rollouts(args)
+        if args.command == "agent-transcripts":
+            return _run_agent_transcripts(args)
         _emit_error(f"未知命令: {args.command}")
         return 2
     except api.ApiError as exc:

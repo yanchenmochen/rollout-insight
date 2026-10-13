@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_API_BASE = "http://localhost:39998"
@@ -84,12 +87,23 @@ def _request(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
-                return json.loads(raw)
+                payload = json.loads(raw)
             except json.JSONDecodeError as exc:
                 raise ApiError(
                     f"无法解析响应（{method} {url}）: {exc}; body 开头={raw[:120]!r}",
                     code=-1,
                 ) from exc
+            # 业务层 code != 0 → 抛 ApiError（即使 HTTP 200）
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("code") not in (None, 0)
+            ):
+                raise ApiError(
+                    payload.get("msg") or f"业务 code={payload.get('code')}",
+                    code=payload.get("code", -1),
+                    data=payload.get("data"),
+                )
+            return payload
     except urllib.error.HTTPError as exc:
         # 业务错误（5xx / 4xx）；读 body 仍可能给出结构化 Response
         raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
@@ -267,3 +281,163 @@ def list_segments(
 def healthz(api_base: str) -> dict:
     """GET /healthz。"""
     return _request("GET", f"{api_base}/healthz")
+
+
+# ---------------------------------------------------------------------------
+# Rollouts (v0.4.0)
+# ---------------------------------------------------------------------------
+
+
+def get_rollout(api_base: str, rollout_id: int) -> dict:
+    """GET /api/rollouts/{id}（rollout 概览 JSON）。"""
+    url = f"{api_base}/api/rollouts/{rollout_id}"
+    return _request("GET", url)
+
+
+def get_rollout_json(api_base: str, rollout_id: int) -> dict:
+    """GET /api/rollouts/{id}/json（plan 文档里的「.json」端点）。
+
+    v0.4.0 实际 controller **没有** ``.json`` 后缀的端点 — JSON 端点就是
+    ``/api/rollouts/{id}``。这里先试 ``.json``，404 时自动回退到无后缀路径。
+    """
+    url = f"{api_base}/api/rollouts/{rollout_id}/json"
+    try:
+        return _request("GET", url)
+    except ApiError as exc:
+        if exc.code == 404:
+            logger.info(
+                "/api/rollouts/{}/json 404，回退到 /api/rollouts/{}", rollout_id, rollout_id
+            )
+            return get_rollout(api_base, rollout_id)
+        raise
+
+
+def list_rollouts_by_task(
+    api_base: str,
+    task_id: int,
+    *,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+) -> dict:
+    """GET /api/tasks/{id}/rollouts。
+
+    v0.4.0 controller **没有**这个 JSON list 端点（只有 HTML 详情页
+    ``/api/tasks/{task_id}/rollouts/{rollout_id}``）。这里先尝试 list 端点，
+    404 时回退：从 ``/api/tasks`` 拿该 task 详情、再用 ``/api/rollouts/{id}``
+    一个个拉 — 仍可工作但慢；如果 task 也没有对应字段则返回空 list。
+    """
+    url = f"{api_base}/api/tasks/{task_id}/rollouts"
+    try:
+        return _request("GET", url, params={"limit": limit, "offset": offset})
+    except ApiError as exc:
+        if exc.code != 404:
+            raise
+        logger.info(
+            "/api/tasks/{}/rollouts 404，回退到 /api/tasks 详情（rollouts 字段）", task_id
+        )
+
+    # 回退：从 /api/tasks 拿 list，按 task_id 过滤（server 限制 limit<=500）
+    # v0.4.0 controller 的 /api/tasks 只返回 task 摘要（rollout_count 数字），
+    # 没有 rollouts 列表；这里 fallback 给 task 摘要 + 提示，不伪造 rollouts。
+    try:
+        tasks_resp = list_tasks(api_base, limit=500)
+    except ApiError as exc:
+        return {
+            "code": exc.code,
+            "msg": f"fallback 也失败（/api/tasks 不可用）: {exc}",
+            "data": {"task_id": task_id, "rollouts": [], "count": 0, "fallback": True},
+        }
+    task_payload = tasks_resp.get("data") if isinstance(tasks_resp, dict) else None
+    task_list = []
+    if isinstance(task_payload, dict):
+        task_list = task_payload.get("tasks") or []
+    elif isinstance(task_payload, list):
+        task_list = task_payload
+    target = next(
+        (
+            t
+            for t in task_list
+            if isinstance(t, Mapping)
+            and (t.get("id") == task_id or t.get("primary_id") == task_id)
+        ),
+        None,
+    )
+    if target is None:
+        return {
+            "code": 0,
+            "msg": f"task #{task_id} 不存在（fallback 路径）",
+            "data": {
+                "task_id": task_id,
+                "rollouts": [],
+                "count": 0,
+                "fallback": True,
+                "status": "task_not_found",
+                "hint": "controller 当前没有 GET /api/tasks/{id}/rollouts JSON 端点",
+            },
+        }
+    return {
+        "code": 0,
+        "msg": "ok (fallback：仅 task 摘要，无 rollouts 列表)",
+        "data": {
+            "task_id": task_id,
+            "task_summary": {
+                "task_name": target.get("task_name"),
+                "status": target.get("status"),
+                "rollout_count": target.get("rollout_count"),
+                "attempt_count": target.get("attempt_count"),
+                "segment_count": target.get("segment_count"),
+                "mean_reward": target.get("mean_reward"),
+                "rollout_root": target.get("rollout_root"),
+            },
+            "rollouts": [],
+            "count": 0,
+            "fallback": True,
+            "hint": (
+                "v0.4.0 controller 未提供 GET /api/tasks/{id}/rollouts JSON 端点；"
+                "如需逐个 rollout 概览，请用 'rollout-insight rollouts show <primary_id>'"
+                "（rollout primary_id 见 task_summary.attempt_count 或 sqlite 查 db_rollout）。"
+            ),
+        },
+    }
+
+
+def parse_rollout(
+    api_base: str,
+    rollout_id: int,
+    *,
+    tokenizer_dir: str = "",
+    force: bool = True,
+) -> dict:
+    """POST /api/rollouts/{id}/parse（触发 T3 重解析）。
+
+    Args:
+        tokenizer_dir: 写到 ``json_body`` 里作为 ``tokenizer_dir``；controller
+            当前不消费，但保留以备后端 T4/T5 升级。
+    """
+    url = f"{api_base}/api/rollouts/{rollout_id}/parse"
+    return _request(
+        "POST",
+        url,
+        params={"force": "true" if force else "false"},
+        json_body={"tokenizer_dir": tokenizer_dir},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent-transcripts (v0.4.0)
+# ---------------------------------------------------------------------------
+
+
+def agent_transcript_report(api_base: str, path: str) -> dict:
+    """GET /api/agent-transcripts/report?path=...（单文件）。"""
+    url = f"{api_base}/api/agent-transcripts/report"
+    return _request("GET", url, params={"path": path})
+
+
+def agent_transcript_batch(
+    api_base: str,
+    dir_path: Optional[str] = None,
+) -> dict:
+    """GET /api/agent-transcripts/batch[?dir=...]（批量）。"""
+    url = f"{api_base}/api/agent-transcripts/batch"
+    return _request("GET", url, params={"dir": dir_path})

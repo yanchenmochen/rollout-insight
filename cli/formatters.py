@@ -16,7 +16,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 def _unwrap_response(payload: Any) -> Any:
-    """如果 payload 是 ``{code, msg, data}``，返回 ``data``；否则原样返回。
+    """如果 payload 是 ``{code, msg, data}`` 且 ``code == 0``，返回 ``data``；
+    否则原样返回完整 wrapper（业务失败时不丢 msg）。
 
     主要给本地 Web API 的 ``Response.success`` / ``Response.error`` 用，
     CLI 默认展开 data，便于 list 渲染。
@@ -26,6 +27,7 @@ def _unwrap_response(payload: Any) -> Any:
         and "code" in payload
         and "msg" in payload
         and "data" in payload
+        and payload.get("code") == 0
     ):
         return payload.get("data")
     return payload
