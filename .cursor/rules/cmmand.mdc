@@ -1,0 +1,38 @@
+---
+description: 重构与批量改动时的安全协议（可选，用户显式启用时遵循）
+alwaysApply: false
+---
+
+# 变更安全协议（rollout-insight，精简版）
+
+> 原 Java 项目的 RIPER-5 全文不适合本仓库默认工作流。仅在用户明确要求「先调研再改」「分步确认」或提到 **变更安全协议** 时启用下列约定。
+> 默认仍遵循 [base.mdc](mdc:.cursor/rules/base.mdc) + [rollout-insight-project-conventions.mdc](mdc:.cursor/rules/rollout-insight-project-conventions.mdc)。
+
+## 原则
+
+- **未授权不扩 scope**：只改与任务相关的文件；不顺手「整理」无关模块。
+- **先索引后动手**：Read [func.md](mdc:func.md) → Grep 调用链 → 再编辑。
+- **小步可验证**：优先单模块重构；每步可运行 `python -m unittest discover -s tests -v`（或项目指定测试）。
+- **尊重分层**：不在 controller 加 DB；不把 schedule 逻辑复制到 bus。
+
+## 推荐阶段（无需 MODE 前缀，除非用户要求 RIPER 模式名）
+
+| 阶段 | 允许 | 禁止 |
+| --- | --- | --- |
+| 调研 | 读文件、Grep、列出现有 API/Service | 未经确认的大规模重命名 |
+| 方案 | 说明复用点（func.md 条目）、影响文件列表 | 直接写大量新代码 |
+| 实施 | 按已确认方案修改，更新 func.md | 偏离方案的「顺便优化」 |
+| 验证 | 跑测试、读 lints | 跳过测试声称完成 |
+
+## 重构专用清单
+
+1. 从 func.md 定位 **P1–P4** 复用策略。
+2. 若抽取函数：先放到已有 `utils` 或 `DBXxxService`，再改调用方。
+3. 删除重复代码后，Grep 旧符号确认无残留引用。
+4. 更新 func.md + 必要时 README。
+5. 向用户汇报：改了哪些模块、测试是否通过、是否还有已知技术债。
+
+## 与用户协作
+
+- 破坏性变更（删路由、改表结构、改状态机语义）前先说明影响面。
+- 用户未要求时 **不** 自动 `git commit` / `push`（见 [git.mdc](mdc:.cursor/rules/git.mdc)）。

@@ -1,0 +1,49 @@
+---
+description: Git 分支与 PR 工作流（rollout-insight）
+alwaysApply: false
+---
+
+# Gitflow 工作流（rollout-insight）
+
+## 主分支
+
+### main
+
+- 保持可部署/可发布状态。
+- **禁止**直接 push 功能提交；通过 PR 合并。
+- 接受：`release/*`、`hotfix/*` 合并；日常功能经 `feature/*` → PR。
+- 本仓库目前**仅**保留 `main` 作为唯一长期分支；不使用 `develop`。
+
+### develop（暂未启用）
+
+- 集成分支；功能分支默认从 main 拉出（以仓库远端约定为准）。
+
+## 功能分支 feature/*
+
+- 命名：`feature/<scope>-<short-desc>`，例如 `feature/insight-cache`、`feature/issue-12-rollout-step`、`feature/ri-nanhu-sync`。
+- 合并前：与目标分支同步，CI/本地测试通过。
+- 合并后：删除远程分支（可选）。
+
+## 修复分支 fix/*
+
+- 命名：`fix/<scope>-<short-desc>`，例如 `fix/db-session-leak`、`fix/issue-rollout-state`。
+
+## Pull Request
+
+1. 所有合并经 PR（可用 `gh pr create`）。
+2. PR 描述含：Summary、Test plan（跑了哪些 unittest）。
+3. 有冲突时优先保持 **API 契约** 与 **任务状态机语义** 不变，再解决代码冲突。
+
+## 与本仓库 Cursor 工作流
+
+- Issue 落地常用独立 worktree + 主题分支（见 `.cursor/agents/issue-handler.md`，如有）。
+- 批量 Issue 见 `batch-issues-workflow` skill（如有）：无依赖可并行，有依赖串行。
+
+## 版本
+
+- 语义化版本：MAJOR.MINOR.PATCH（对外发布时打 tag）。
+- 当前阶段：**v0.1.0**（阶段 1B：基础设施 + 规则 + 骨架），后续阶段：
+  - **v0.2.0** — 阶段 2：核心 rollout 接入与持久化。
+  - **v0.3.0** — 阶段 3：洞察生成与报告发布。
+  - 后续小步迭代以 PATCH 递增（v0.x.y）。
+- 内部自动化镜像/部署变更在 README 或 `docs/` 记录，不必每次 bump 版本号；阶段切分以 tag 形式显式标记。

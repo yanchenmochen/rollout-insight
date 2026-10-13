@@ -1,0 +1,81 @@
+---
+description: 代码生成与重构前必须查阅 func.md，避免重复实现
+ruleType: always
+alwaysApply: true
+---
+
+# 业务代码生成与重构检查规则（rollout-insight）
+
+## 核心原则
+
+**在生成或重构任何业务代码之前，必须使用 Read 工具查看完整的 [func.md](mdc:.cursor/func.md)，确认是否已有可复用的模块、类或函数。**
+
+分层与命名细节以 [rollout-insight-project-conventions.mdc](mdc:.cursor/rules/rollout-insight-project-conventions.mdc) 为准；本文档只规定 **func.md 驱动的复用流程**。
+
+## 强制检查流程
+
+### 第一步：查阅 func.md
+
+- 阅读「查阅顺序」表，按 `data → utils → db service → service → bus → schedule → controller` 自上而下排查。
+- 对目标任务关键词执行 Grep（如 `rollout`、`insight`、`nanhu_job`、`TaskStatus`、`RolloutInsightException`），防止文档未收录的边角实现被遗漏。
+
+### 第二步：按层核对
+
+| 层级 | 检查什么 | 典型复用入口 |
+| --- | --- | --- |
+| data | 枚举、DTO、异常码是否已存在 | `TaskStatus`、`RolloutInsightException`、`Response` |
+| utils | 是否已有纯函数可调用 | `date_utils`、`http_json_client`、`nanhu_*_utils` |
+| db | 是否已有 `DBXxx` / `DBXxxService` | `db/db_*_service.py` |
+| service | 是否已有编排或外部对接 | `schedule_service`、`NanhuJobService` |
+| bus | 是否已有 outbox/持久化路径 | `rollout_persistence`、`outbox_merger` |
+| schedule | 是否已有定时或后台步骤 | `schedule_rollout_sync`、`task_claim_lock` |
+| controller | 是否已有相同或相近路由 | `controller/*_controller.py` |
+
+### 第三步：复用决策（与 func.md 一致）
+
+1. **P1**：能力完全匹配 → 直接调用，禁止复制实现。
+2. **P2**：能力类似 → 在现有 `DBXxxService` / `service` / `utils` 中扩展方法。
+3. **P3**：相关但不一致 → 先抽取到 `utils` 或 `DBXxxService`，再复用。
+4. **P4**：确认无相关实现 → 新建模块，**必须**更新 func.md 对应章节。
+
+## 领域示例（重构时必查）
+
+### Rollout 任务与状态机
+
+- 任务读写、状态流转：**DBRolloutTaskService**（`transition_*`、`update_task_status`、`get_previous_stable_status` 配合 **TaskStatus**）。
+- 任务 API：**rollout_controller**；勿在 controller 内重写状态回退逻辑。
+
+### 洞察流水线
+
+- 洞察记录：**DBInsightService** / **DBInsightMetricService**；调度入口：**schedule_insight_job**、**insight_command_job**。
+- 跨节点写入：**bus/rollout_persistence**、**outbox_merger**（改持久化路径前先查 `use_outbox_writes`）。
+
+### 南湖调度
+
+- 节点/作业：**DBNanhuJobService**；启停与命令：**schedule_nanhu_sync**、**nanhu_command_job**、**DBNanhuCommandService**。
+- 业务校验异常：**RolloutInsightException.NANHU_***（53xxx 段）。
+
+### 报告生成
+
+- 报告记录：**DBReportService**；定时汇总：**schedule_report_aggregator**。
+
+## 违规处理
+
+发现与现有实现重复时：
+
+1. **停止**继续在新位置堆逻辑；
+2. **对比**现有方法与调用链是否满足需求；
+3. **选择**复用、扩展或抽取；
+4. **删除或收敛**重复代码，并更新 func.md。
+
+## 文档同步
+
+- 新增/修改 `DBXxxService` 方法、service 公开 API、utils 可复用函数、schedule 注册项、bus 事件处理 → 更新 [func.md](mdc:.cursor/func.md)。
+- 用户可见功能变更 → 在 [README.md](mdc:README.md) 补充变更说明（无需每次改版本号，除非发布约定要求）。
+
+## 执行清单（开发前勾选）
+
+- [ ] 已 Read 完整 func.md（或目标章节 + Grep 补充）
+- [ ] 已按层检查 data / utils / db / service / bus / schedule / controller
+- [ ] 已选定 P1–P4 策略
+- [ ] 计划在完成后更新 func.md（及 README 如需要）

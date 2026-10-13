@@ -1,0 +1,45 @@
+---
+description: rollout-insight 数据库实体与新增表规范
+globs: db/**/*.py
+alwaysApply: false
+---
+
+# 数据库实体规范（rollout-insight）
+
+新增或修改表结构前：
+
+1. 查阅 [func.md](mdc:.cursor/func.md)「db/ — ORM 模型」表，**优先复用已有实体**。
+2. 扫描 `db/db_*.py`，确认是否已有同领域 `DBXxx` 类。
+
+## 已有 ORM 实体（禁止重复建表）
+
+| 类名 | 文件 | 用途 |
+| --- | --- | --- |
+| DBRolloutTask | db_rollout_task.py | 主 rollout 任务 |
+| DBRolloutStep | db_rollout_step.py | rollout 内部步骤/阶段记录 |
+| DBInsight | db_insight.py | 洞察结果/分析记录 |
+| DBInsightMetric | db_insight_metric.py | 洞察指标数值 |
+| DBNanhuJob | db_nanhu_job.py | 南湖调度作业关联 |
+| DBSampleSummary | db_sample_summary.py | 样本级汇总 |
+| DBReport | db_report.py | 生成的报告记录 |
+| DBOperationLog | db_operation_log.py | 操作审计日志 |
+| DBConfigPreset | db_config_preset.py | JSON 配置预设 |
+
+> 上表为初始约定，后续以仓库 `db/db_*.py` 实际存在的 ORM 为准；新增前请先 Grep 确认。
+
+## 基础设施（勿重复创建 engine）
+
+- **db_element.py** — 全局 `engine`、`sessionmaker`、`Base`（配置来自 `db_config`，默认 SQLite 文件 `rollout_insight.db`）。
+- **db_retry.py** — DB 操作重试。
+
+## 新增表 checklist
+
+- 模型文件 `db/db_<领域>.py`，类名 `DBXxx`，`__tablename__ = "ri_<语义>_table"`。
+- 配套 `db/db_<领域>_service.py`，类名 `DBXxxService`，CRUD 仅用 `@staticmethod` + `with Session()`。
+- 主键 `primary_id`（Integer PK）；审计字段 `create_time` / `update_time`（与现有表对齐）。
+- **不在** ORM 文件内写业务查询；**不在** controller/schedule 内散落 Session。
+- 登记 [func.md](mdc:.cursor/func.md) 并补充迁移说明（SQLite 变更需考虑现有表的 schema touch 模式）。
+
+## 读写复用
+
+- 同一表的查询/更新/删除**只能**在对应 `DBXxxService` 中扩展；重构时合并重复 SQL 到该 Service，而非复制到 `schedule` 或 `bus`。

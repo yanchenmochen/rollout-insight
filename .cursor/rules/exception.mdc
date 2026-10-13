@@ -1,0 +1,75 @@
+---
+description: rollout-insight 异常处理与日志规范
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# 异常处理与错误管理（rollout-insight）
+
+## 异常分类
+
+### 业务异常 — RolloutInsightException
+
+- **定义**：[data/rollout_insight_exception.py](mdc:data/rollout_insight_exception.py)，三元组 `(code, name, message)`。
+- **场景**：参数校验失败、资源不存在、状态不允许、IP/端口冲突、南湖作业不可用等可预期错误。
+- **用法**：
+
+  ```python
+  raise RolloutInsightException(RolloutInsightException.ROLLOUT_NOT_FOUND)
+  raise RolloutInsightException(RolloutInsightException.ROLLOUT_VALIDATION, "自定义说明")
+  ```
+
+- **错误码段分配**（统一三元组 `(code, name, message)`，按模块分段）：
+
+  | 段位 | 用途 | 示例 |
+  | --- | --- | --- |
+  | **50xxx** | 通用 / 跨模块错误（参数、权限、内部错误） | 50001 `INTERNAL_ERROR`、50010 `VALIDATION_ERROR` |
+  | **51xxx** | 任务 / rollout / insight 领域错误 | 51001 `ROLLOUT_NOT_FOUND`、51002 `INSIGHT_NOT_FOUND` |
+  | **52xxx** | 解析 / 序列化 / 数据格式 | 52001 `PARSE_JSON_ERROR`、52002 `SCHEMA_MISMATCH` |
+  | **53xxx** | 南湖（Nanhu）调度相关 | 53001 `NANHU_JOB_SUBMIT_FAILED`、53002 `NANHU_JOB_NOT_FOUND` |
+  | **54xxx** | 系统 / 基础设施（DB、网络、文件 IO） | 54001 `DATABASE_ERROR`、54002 `IO_ERROR` |
+
+- **新增错误码**：在同一类中按上述段位新增，避免与现有 code 冲突；同步 func.md「data/」章节。
+
+### 系统/数据访问异常
+
+- **db service**：捕获 `SQLAlchemyError` 等，记录 ERROR 日志后向上抛出或包装为明确消息；**不要**吞掉异常返回 `None` 误导调用方。
+- **外部 HTTP**：使用 `utils/http_json_client` 或 service 层统一处理超时与非 2xx；失败记日志并转为业务可理解的 `RolloutInsightException` 或 `Response.error`。
+
+## 分层传播
+
+| 层级 | 职责 |
+| --- | --- |
+| controller | 不宽泛 `except Exception`；可捕获用于转 `Response.error` 的仅限明确边界；优先让 `RolloutInsightException` 走全局 handler |
+| service / schedule | 业务流程校验 → `RolloutInsightException`；意外错误记日志后抛出 |
+| db service | 记录 `task_id`/`rollout_id`/`nanhu_job_id` 等关键 ID；不返回含糊 False 而不说明原因（除非接口契约为布尔幂等） |
+
+## 全局处理
+
+- **注册位置**：[main.py](mdc:main.py) `@app.exception_handler(RolloutInsightException)`。
+- **响应格式**：`Response.error(msg=exc.message, code=exc.code)`，与 [data/response.py](mdc:data/response.py) 一致。
+- **未捕获异常**：单独 handler，记录完整堆栈，对外返回通用错误文案。
+
+## 日志
+
+- 使用 [config/log.py](mdc:config/log.py) `Log.ulog("模块.log")`；模块级独立日志文件（如 `rollout.log`、`insight.log`、`schedule.log`）。
+- 业务异常：WARN/ERROR，记录 `code`、`name`、`message` 及 `task_id`/`rollout_id`/`nanhu_job_id` 等业务键。
+- 系统异常：ERROR + `exc_info=True`。
+- **禁止**新增调试用 `print`（改动到相关代码时改为 logger）。
+
+## Controller 与 API 错误
+
+- 简单参数错误可直接 `return Response.error(msg=..., code=400)`。
+- 与领域规则相关的失败优先 `raise RolloutInsightException`，保持错误码一致。
+- 前端只解析 `code`、`msg`、`data`；勿返回 Python traceback。
+
+## 示例（db service）
+
+```python
+try:
+    with Session() as session:
+        ...
+except Exception as e:
+    log.error("upsert_rollout_task 失败 rollout_id=%s err=%s", rollout_id, e, exc_info=True)
+    raise
+```

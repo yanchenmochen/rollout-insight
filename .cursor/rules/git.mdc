@@ -1,0 +1,49 @@
+---
+description: Git 提交信息规范（rollout-insight 仓库）
+alwaysApply: false
+---
+
+# Git 规则
+
+## 重要原则
+
+- **不要自动提交**，除非用户明确要求（可使用 commit-cn skill 生成中文说明并经确认后提交）。
+- 提交前尽量运行相关 `tests/test_*.py` 或 `python -m unittest discover -s tests`。
+- 保持提交原子化：一个逻辑变更一个 commit；大功能可拆分多个 commit。
+- **不要**修改 git config；**不要** force push `main`。
+
+## 提交规范
+
+格式：`<type>(<scope>): <subject>`（冒号后留空格；subject 使用中文，保持简洁）
+
+| type | 含义 |
+| --- | --- |
+| feat | 新功能 |
+| fix | 修复缺陷 |
+| refactor | 重构（无新功能、非修 bug） |
+| perf | 性能 |
+| test | 测试 |
+| docs | 文档 |
+| chore | 构建/脚本/配置 |
+| style | 格式（不改变逻辑） |
+
+**scope 示例**（本仓库）：`rollout`、`insight`、`db`、`schedule`、`bus`、`api`、`nanhu`、`docs`
+
+多要点时在 subject 后用列表：
+
+```
+feat(rollout): 新增 rollout 步骤持久化接口
+
+- 在 DBRolloutStepService 中添加 upsert_step_record
+- 更新 func.md 与 README「任务状态」一节
+```
+
+## 分支管理
+
+| 分支 | 用途 |
+| --- | --- |
+| main | 生产就绪，仅通过 PR 合并 |
+| feature/* | 功能开发，如 `feature/insight-cache` |
+| fix/* | 缺陷修复，如 `fix/issue-rollout-state` |
+
+与本项目 Issue 工作流对齐时，可使用 `feature/<scope>-<short-desc>` 或 `feature/<issue-id>-<short-desc>`，合并后删除分支（见 [gitflow.mdc](mdc:.cursor/rules/gitflow.mdc)）。

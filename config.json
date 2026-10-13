@@ -1,0 +1,13 @@
+{
+    "program_root": "/mnt/zj-data/data/songquanheng/rollout-insight",
+    "db_path": "/mnt/zj-data/data/songquanheng/rollout-insight/data/rollout_insight.db",
+    "database_url": "",
+    "database_url_readonly": "",
+
+    "rollout_insight_title": "Rollout Insight",
+    "log_dir": "/mnt/zj-data/data/songquanheng/rollout-insight/log",
+
+    "rollout_dump_root": "/mnt/zj-data/data/songquanheng/output/slime",
+    "rollout_dump_pattern": "**/rollout_dumps/rollout_*.pt",
+    "rollout_insight_version": "0.1.0"
+}

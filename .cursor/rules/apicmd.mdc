@@ -1,0 +1,45 @@
+---
+description: 按接口文档实现 FastAPI REST 接口（rollout-insight）
+globs: controller/**/*.py
+alwaysApply: false
+---
+
+# API 实现规则（FastAPI / rollout-insight）
+
+实现或修改 REST 接口前，先查阅 [func.md](mdc:.cursor/func.md) 与对应 `controller`，避免重复路由。
+
+## 契约
+
+1. **入参、出参**必须与接口文档一致（字段名、类型、是否必填）；不得擅自改名或删减字段。
+2. 请求体使用 `data/` 下 Pydantic 模型（命名 `XxxRequest`）；无合适模型时再新增，并登记 func.md。
+3. 响应统一使用 [data/response.py](mdc:data/response.py) 的 `Response`：
+   - 成功：`return Response.success(msg="...", data=...)`
+   - 失败：`return Response.error(msg="...", code=...)`
+   - **禁止**返回裸 `dict`、元组或未封装的布尔值（新接口强制）。
+
+## 路由
+
+4. 路径、HTTP 方法须与文档一致。实现时对照 `controller` 中 `@router.get/post/...` 的 `path`：
+   - 已与文档一致 → **不要**为对齐文档而改路径（避免破坏前端与已有调用）。
+   - 控制器路径与文档不一致 → 在**不改既有 path**前提下，与用户确认是否文档过期或需兼容路由。
+5. 路由组织：`APIRouter(prefix="/api/rollout-insight/xxx", tags=[...])`，函数名 `snake_case`；服务默认监听 **39998**（见 [rollout-insight-project-conventions.mdc](mdc:.cursor/rules/rollout-insight-project-conventions.mdc)）。
+
+## 时间与格式
+
+6. 文档要求返回**字符串时间**时：从 DB 的 `datetime` 用 [utils/date_utils.py](mdc:utils/date_utils.py)（或项目已有格式化函数）转换，勿在 controller 内重复写格式逻辑。
+
+## 分层与复用
+
+7. Controller 只做：参数解析、轻量校验、调用 `DBXxxService` / `service`、组装 `Response`。
+8. **禁止**在 controller 中：`with Session()`、裸 SQL、启动子进程、复杂状态机（应下沉到 service / schedule / db service）。
+9. 多接口共享的逻辑放入 `utils` 或 `DBXxxService`，见 [base.mdc](mdc:.cursor/rules/base.mdc)。
+
+## 完成度
+
+10. 所有文档列出的接口必须**真实实现**；禁止空实现、`TODO`、返回假数据占位。
+11. 缺表或缺字段：按 [database.mdc](mdc:.cursor/rules/database.mdc) 与 [rollout-insight-project-conventions.mdc](mdc:.cursor/rules/rollout-insight-project-conventions.mdc) 新增 ORM + `DBXxxService`，或向用户确认 schema。
+
+## 错误处理
+
+12. 可预期业务错误：`raise RolloutInsightException(RolloutInsightException.xxx)`，由 `main.py` 全局 handler 转为 `Response.error`。
+13. 参数错误：转为明确 `code`/`msg`，勿把堆栈返回给前端（见 [exception.mdc](mdc:.cursor/rules/exception.mdc)）。

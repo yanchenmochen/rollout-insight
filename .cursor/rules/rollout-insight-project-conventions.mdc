@@ -1,0 +1,145 @@
+---
+description: rollout-insight 项目分层、代码风格与复用约定
+alwaysApply: true
+---
+
+# rollout-insight 项目通用规则
+
+## 分层边界
+
+- `controller/*.py` 只负责 FastAPI 路由、参数解析、简单校验、调用 service/db 层并组装返回值。
+- `db/db_xxx.py` 定义 SQLAlchemy ORM 模型；读写封装集中在 `db/db_xxx_service.py`（类名 `DBXxxService`），优先使用 `@staticmethod` 与 `with Session()` 短事务上下文。
+- `service/xxx_service.py` 一般定义与 controller 对应的业务流程，组合调用 `db/db_xxx_service.py`（或领域内其它服务），不在此层散落裸 SQL/SQLAlchemy Session。
+- `data/*.py` 放任务、请求对象、枚举、异常等领域数据结构；不要把数据库访问或路由逻辑放进 data 层。
+- `utils/*.py` 放通用工具、配置读取、响应封装、日志、文件与日期工具；可复用逻辑优先沉淀到 utils，纯技术型，与框架无关，业务无关的螺丝钉。
+- `schedule/*.py` 放定时任务、后台任务启动与任务状态流转逻辑；不要在 controller 中直接堆复杂调度流程。
+- `config/xxx_config.json` 保存项目模块配置，而 `config.json` 则用来保存配置信息，目录配置信息要兼容 linux 和 windows 系统。
+
+## 数据库与表设计（db/）
+
+以下约定来自当前 `db/` 中模型的共性，可作为新增表时的检查清单。
+
+### 基础设施与会话
+
+- **单一入口**：`engine`、`sessionmaker`、`Base` 统一定义在 `db/db_element.py`（并由配置 `db_config` 驱动数据源路径，默认 SQLite 文件 `rollout_insight.db`）；新增 ORM 类 `from db.db_element import Base` 并继承 `Base`。
+- **不在模型文件中** 新建 engine/session；**不在 ORM 类实例方法中** 执行业务查询或持有长生命周期 Session——CRUD 与查询一律通过 `DBXxxService`。
+- Service 中使用 `with Session() as session:`（或等价上下文）包裹单次操作，`commit()` 在写入路径显式触发，保持事务边界清晰。
+
+### 文件布局与命名
+
+- **一对一**：一张业务表对应一个模型文件 `db_<领域>.py`，其中通常只放一个 ORM 类 `DBXxx`（与文件名领域一致）。
+- **读写配对**：同领域配套 `db_<领域>_service.py`，类名为 `DBXxxService`，封装该表的查询与更新静态方法。
+- **物理表名**：`__tablename__ = "ri_<业务语义>_table"`，全小写 `snake_case`，统一 `ri_` 前缀与同后缀 `_table`，避免与其它模块表名碰撞。
+- **列 / 属性名**：`Column` 的 Python 属性名使用 `snake_case`，且默认即数据库列名；除非跨语言迁移等特殊原因，不要随意用 `name="..."` 与属性名割裂。
+
+### 主键与时间戳
+
+- **代理主键**：整型列 `primary_id = Column(Integer, primary_key=True)` 作为表主键；与业务可见 ID（例如 `task_id`）分列存储，语义不混用。
+- **审计时间**：新业务表优先同时包含 **`create_time`** 与 **`update_time`**：`create_time` 非空并 `default=datetime.now`（传入可调用对象，避免所有行共享同一时间戳实例）；`update_time` 使用 `onupdate=datetime.now`。新建表在时间列上可优先与已有表对齐（例如对外部协调一致时采用带 `timezone=True` 的 `DateTime`）。
+
+### 字段类型与约束
+
+- SQLite 语境下常用 **`Integer`、`String`、`DateTime`**；大段结构化数据若以文本落库，与现有表一致可用 `String` 存序列化 JSON，并在业务层封装编解码。
+- 核心业务字段设 **`nullable=False`**；可为空的扩展字段默认 `nullable=True`，必要时 **`default`** 给出稳定初始值（如枚举类字符串）。
+- 需要唯一性、高频过滤或排序时，在模型上使用 `UniqueConstraint` / `Index`，或在迁移/SQL 层补上等价约束——避免仅依赖应用层惯例。
+
+### 关系与一致性
+
+- 关联表可以以 **业务键**（如 `task_id`、`rollout_id`）表达参照关系；若暂不声明 `ForeignKey`，则须在 Service/业务流程中明确生命周期与一致性策略。需要数据库级参照完整性时再引入 `ForeignKey`/`relationship`。
+
+### 模型可读性
+
+- 类文档字符串说明 **表承担的业务含义**；关键字段用简短注释标出语义（尤其在存在历史别名时）。
+- 提供精简 **`__repr__`**（主键 + 一两个业务关键字段），便于日志与调试，避免把整个大字段拼进 repr。
+
+## DTO 实践
+
+- 接口入参 DTO 放在 `data/*.py`，优先继承 `pydantic.BaseModel`，如 `RolloutRequest`、`InsightRequest`、`TaskRequest`。
+- DTO 只描述外部输入/输出的数据形状和轻量校验；不要在 DTO 中访问数据库、启动任务、调用外部服务或写复杂流程。
+- DTO、领域对象、ORM 模型保持边界清晰：Controller 接收 DTO，领域对象组合业务状态，数据库持久化使用 ORM 模型。
+- 需要从 DTO 生成领域对象或 ORM 记录时，在领域对象或 service 中集中转换。
+- 新增请求对象命名为 `XxxRequest`；配置型 DTO 可使用已有语义名，字段名保持前端契约，不为迎合后端随意改名。
+
+```python
+# GOOD: controller 接收 DTO，业务对象负责转换和后续流程
+async def build_rollout(rollout_request: RolloutRequest):
+    task = Task(rollout_descriptor, rollout_request)
+    DBTaskService.save(task.record)
+    return Response.success(data=task)
+```
+
+## Controller 规则
+
+- 新增 REST 接口必须统一返回 `Response.success(...)` 或 `Response.error(...)`；当前项目使用 `utils.response.Response`，若迁移到 `data/response.py`，以统一 Response 类为准。
+- Controller 不直接写 SQL、不直接管理数据库 session；数据库操作通过 `DBXxxService`。
+- 业务错误优先抛出或转换为项目异常（`RolloutInsightException`），避免吞异常后返回含糊结果。
+- 路由使用 `APIRouter(prefix="/api/rollout-insight/xxx", tags=[...])`，函数名使用 `snake_case`；**默认服务端口 39998**（见 `config.json` / 启动脚本）。
+
+```python
+# BAD: controller 中直接操作 session 或返回散乱结构
+return {"ok": True, "result": data}
+
+# GOOD: 使用统一响应封装
+return Response.success(msg="查询成功", data=data)
+```
+
+## API 返回与异常
+
+- REST API 返回值统一使用 `Response(code, msg, data)` 风格：成功 `Response.success(msg="success", code=0, data=...)`，失败 `Response.error(msg="error", code=-1, data=...)`。
+- Controller 不直接返回裸 `dict`、字符串或布尔值；欢迎页等旧接口可逐步迁移，新接口必须保持统一结构。
+- 全局异常捕获应在 FastAPI 应用入口统一注册，例如 `main.py` 中通过 `app.add_exception_handler(...)` 或 `@app.exception_handler(...)` 处理。
+- `RolloutInsightException` 表示可预期的业务异常，异常定义统一为三元组 `(code, name, message)`，例如 `ROLLOUT_NOT_FOUND = (51001, "ROLLOUT_NOT_FOUND", "...")`。
+- 业务代码抛异常时优先使用 `raise RolloutInsightException(RolloutInsightException.ROLLOUT_NOT_FOUND)`；需要补充上下文时使用 `raise RolloutInsightException(RolloutInsightException.ROLLOUT_VALIDATION, "自定义消息")`。
+- 异常处理器返回 `Response.error(msg=exception.message, code=exception.code)`；日志中应记录 `exception.name`，方便按异常名检索定位。
+- `ValueError`、`TypeError` 等参数或数据格式异常，应转换成参数错误类响应，避免把内部堆栈暴露给前端。
+- 未预期异常使用统一兜底 handler 记录日志，并返回通用错误消息；不要在 Controller 中到处写宽泛的 `except Exception`。
+- 异常处理器也必须返回统一响应结构，保持前端只解析 `code`、`msg`、`data`。
+
+```python
+# GOOD: 业务层抛出明确异常，全局 handler 统一转成 Response.error
+raise RolloutInsightException(RolloutInsightException.ROLLOUT_NOT_FOUND)
+```
+
+## 日志框架
+
+- FastAPI 入口、Controller、Service、Schedule 均使用项目统一日志能力，优先通过 `config.log.Log.ulog("xxx.log")` 获取模块 logger。
+- 新增业务模块使用独立日志文件名，如 `rollout.log`、`insight.log`、`api.log`，日志内容包含关键业务标识：`task_id`、`rollout_id`、`job_id`、异常 `code/name/message`。
+- Controller 只记录请求入口、关键参数和异常摘要；业务过程日志放在 service、data 或 schedule 执行模块中。
+- 全局异常 handler 必须记录未预期异常堆栈；业务异常记录 `RolloutInsightException.code/name/message`，不要把堆栈直接返回给前端。
+- 定时任务日志使用 scheduler listener 统一记录执行成功、失败、missed 事件；任务函数内部只记录业务步骤和结果。
+- 不新增临时 `print`；旧代码中的 `print` 可在改动相关逻辑时逐步替换为 logger。
+
+## 定时任务
+
+- 定时任务执行函数放在 `schedule/*.py`，注册入口集中在 `utils/schedule_service.py`，不要在 `main.py` 或 Controller 中直接散落 `add_job`。
+- 统一复用 `scheduler = Scheduler.AsyncScheduler()`；应用启动时调用 `add_schedule_service()` 注册全部任务，关闭时统一清理 scheduler。
+- 新增任务遵循现有注册风格：在 `add_schedule_service()` 中调用 `add_schedule_xxx(interval)`，再由该函数调用 `scheduler.add_job(...)`。
+- 每个 job 必须设置稳定唯一的 `id`、`trigger`、`seconds` 和 `replace_existing=True`，避免重复注册。
+- 定时任务函数命名使用动词短语，如 `collect_rollout_metrics`、`refresh_insight_cache`；注册函数命名为 `add_schedule_xxx`。
+- 定时任务异常不要在任务内部吞掉；让 scheduler listener 统一捕获并记录，业务可抛出 `RolloutInsightException` 保留错误码和异常名。
+
+```python
+# GOOD: 集中注册新的定时任务
+def add_schedule_example(interval: int):
+    scheduler.add_job(example_task, args=[], id="example_task",
+                      trigger="interval", seconds=interval, replace_existing=True)
+```
+
+## 命名与风格
+
+- Python 文件、函数、变量使用 `snake_case`；类名使用 `PascalCase`；常量使用 `UPPER_SNAKE_CASE`。并且保持一个文件中仅有一个类型。
+- 控制器命名为 `xxx_controller.py`；数据库模型命名为 `db_xxx.py`、类名 `DBXxx`，物理表名遵循 `ri_<语义>_table`；数据库读写服务命名为 `db_xxx_service.py`、类名 `DBXxxService`。
+- 代码注释只解释业务约束或不明显的流程，不写"给变量赋值"这类重复代码含义的注释。
+- 日志使用项目已有日志配置，不新增临时 `print`；已有旧代码可逐步替换。
+
+## 代码复用和重构
+
+- **强制**：开发或重构前查阅 [func.md](mdc:func.md)，流程见 [base.mdc](mdc:.cursor/rules/base.mdc)。
+- 先查找现有 `data`、`utils`、`db service`、`service`、`bus`、`schedule` 能力，再新增实现；避免在 controller 或脚本中复制逻辑。
+- 同一类数据库读写必须集中在对应 `DBXxxService`，新增查询/更新方法也放在那里。
+- 与配置、路径、时间、文件、回调、响应等经常复用的公共逻辑，应优先放在 `utils` 目录并复用已有模块。
+- 看到重复代码时优先考虑小步重构：先抽函数消除重复，再根据稳定业务概念决定是否抽类。
+- 函数实现尽量保持短小，优先拆成代码行较少、命名清晰的私有辅助函数，避免一个函数同时完成多段流程。
+- 函数应符合单一职责：一个函数只表达一个明确动作或判断，例如解析参数、构造路径、保存记录、生成命令不要混在一起。
+- 当一组数据和行为长期一起变化时，优先使用类进行抽象、封装和组合，参考 `Task`、`InsightJob` 这类承载领域流程的对象。
+- 新增抽象只有在减少真实重复、明确表达业务边界或符合现有命名模式时才引入，避免为了抽象而抽象。

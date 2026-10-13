@@ -1,0 +1,53 @@
+---
+description: rollout-insight 项目通用规范与文档同步
+alwaysApply: true
+---
+
+# 项目通用规范（rollout-insight）
+
+## func.md 能力索引（代码复用中枢）
+
+- 全项目可复用能力登记在 [.cursor/func.md](mdc:.cursor/func.md)。
+- **新增或修改**以下任意内容时，必须同步更新 func.md 对应章节：
+  - `controller/` 路由与对外行为
+  - `service/` 业务流程
+  - `db/db_*_service.py` 公开静态方法
+  - `data/` 枚举、DTO、异常码
+  - `utils/` 被多处调用的工具函数
+  - `schedule/` 任务函数及 `service/schedule_service.py` 中的注册项
+  - `bus/` 事件类型与持久化入口
+
+### func.md 条目格式示例
+
+```markdown
+#### DBRolloutTaskService (`db/db_rollout_task_service.py`)
+- `query_recent_tasks` — 按 rollout 任务名模糊查询最近任务
+- `transition_step_done_to_insight` — STEP_DONE → INSIGHT 状态流转
+```
+
+## 与分层规则的关系
+
+- 分层、DTO、数据库表、日志、定时任务：**[rollout-insight-project-conventions.mdc](mdc:.cursor/rules/rollout-insight-project-conventions.mdc)**（始终生效）。
+- 开发前复用检查：**[base.mdc](mdc:.cursor/rules/base.mdc)**（始终生效）。
+- 按接口文档实现 API：**[apicmd.mdc](mdc:.cursor/rules/apicmd.mdc)**（实现 REST 时启用）。
+- 已有表/实体：**[database.mdc](mdc:.cursor/rules/database.mdc)**。
+- 异常：**[exception.mdc](mdc:.cursor/rules/exception.mdc)**。
+- Git：**[git.mdc](mdc:.cursor/rules/git.mdc)** — **不要自动 commit**，除非用户明确要求。
+
+## 项目结构原则
+
+- **分层**：`controller` → `service`（可选）→ `db/*_service` → ORM；`schedule` / `bus` 不反向依赖 controller。
+- **命名**：Python `snake_case`，类 `PascalCase`，库表 `ri_*_table`（见 conventions）。
+- **DRY**：同一表读写只出现在对应 `DBXxxService`；配置/路径/时间逻辑优先 `utils`。
+- **可测试性**：业务逻辑改动配套 `tests/test_*.py`（unittest），先查是否已有同类测试可扩展。
+- **方法规模**：单函数职责单一，过长则拆私有辅助函数；避免单函数混合「解析 + 落库 + 启进程」。
+
+## README 同步
+
+- 面向用户的功能、配置项、部署步骤变更时，更新 [README.md](mdc:README.md) 相应章节。
+- 不必为每次内部重构改 README，除非行为或配置对外可见。
+- 当前阶段 **v0.1.0**：README 应包含端口（默认 39998）、数据库文件（默认 `rollout_insight.db`）、快速启动命令。
+
+## 响应语言
+
+- 始终使用**简体中文**回复用户（代码与提交信息可按仓库既有英文习惯；提交信息 subject 推荐中文，见 [git.mdc](mdc:.cursor/rules/git.mdc)）。

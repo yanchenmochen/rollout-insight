@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.db-shm
+*.db-wal
+log/
+data/rollout_insight.db*
+.venv/
+venv/
+.idea/
+.vscode/
+.cursor/tmp/
+.cursor/agents/
+*.pt
+*.pt.lock
+.DS_Store
