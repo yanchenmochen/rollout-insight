@@ -74,3 +74,7 @@ def ensure_logging_configured() -> None:
         return
     setup_rollout_insight_logging()
     os.environ[_LOGGING_ENV_FLAG] = "1"
+
+
+# 兼容别名（main.py 直接 setup_logging()）
+setup_logging = setup_rollout_insight_logging
