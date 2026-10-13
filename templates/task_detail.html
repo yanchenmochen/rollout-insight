@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+
+{% block title %}任务 #{{ task.id }} - {{ task.task_name }} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .page-header .meta {
+        font-size: 12px;
+        color: var(--ri-muted);
+    }
+
+    .info-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    .info-table th,
+    .info-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--ri-border);
+        text-align: left;
+        vertical-align: top;
+    }
+
+    .info-table th {
+        width: 160px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        background: #f8fafb;
+    }
+
+    .info-table td.mono {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        word-break: break-all;
+    }
+
+    .layout-split {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+    }
+
+    .layout-split .left-nav {
+        flex: 0 0 180px;
+        background: var(--ri-surface);
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 12px 8px;
+    }
+
+    .layout-split .left-nav h3 {
+        font-size: 12px;
+        color: var(--ri-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin: 4px 6px 8px 6px;
+    }
+
+    .layout-split .left-nav a {
+        display: block;
+        padding: 6px 10px;
+        border-radius: var(--te-radius);
+        color: var(--ri-ink);
+        text-decoration: none;
+        font-size: 14px;
+    }
+
+    .layout-split .left-nav a:hover {
+        background: #eef3f8;
+    }
+
+    .layout-split .left-nav a.active {
+        background: var(--ri-accent);
+        color: #fff;
+    }
+
+    .layout-split .right-main {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .section {
+        background: var(--ri-surface);
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 16px 20px;
+        margin-bottom: 18px;
+    }
+
+    .section h2 {
+        margin: 0 0 12px 0;
+        font-size: 1.15em;
+        color: var(--ri-ink);
+        border-bottom: 1px solid var(--ri-border);
+        padding-bottom: 6px;
+    }
+
+    .section h2 small {
+        color: var(--ri-muted);
+        font-size: 12px;
+        font-weight: 500;
+        margin-left: 8px;
+    }
+
+    table.sub-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .sub-table th,
+    .sub-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+        vertical-align: middle;
+    }
+
+    .sub-table thead {
+        background: #f3f5f8;
+    }
+
+    .sub-table th {
+        font-size: 11px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .sub-table tbody tr:hover {
+        background: #f8fafb;
+    }
+
+    .sub-table .col-id {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--ri-muted);
+    }
+
+    .sub-table .col-num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .sub-table .path-cell {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: var(--ri-muted);
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .empty-row {
+        text-align: center;
+        color: var(--ri-muted);
+        padding: 16px 8px;
+    }
+
+    .status-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #e0e6ec;
+        color: var(--ri-ink);
+    }
+
+    .status-tag.status-pending { background: #f0e2c5; color: #8a5a12; }
+    .status-tag.status-running { background: #c7def5; color: #1e5080; }
+    .status-tag.status-done,
+    .status-tag.status-success { background: #cde7d6; color: var(--ri-success); }
+    .status-tag.status-failed { background: #f3c8c8; color: #9b2c2c; }
+    .status-tag.status-scanning { background: #d5d2f1; color: #4a3f9b; }
+
+    .action-bar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+    }
+
+    .alert {
+        padding: 10px 12px;
+        border-radius: var(--te-radius);
+        border-left: 4px solid;
+        margin-bottom: 14px;
+    }
+
+    .alert-info {
+        background: #e8f0fa;
+        border-color: var(--ri-accent);
+        color: #1e5080;
+    }
+
+    .alert-warning {
+        background: #fff3cd;
+        border-color: #ffc107;
+        color: #856404;
+    }
+
+    @media (max-width: 900px) {
+        .layout-split { flex-direction: column; }
+        .layout-split .left-nav { flex: 1 1 auto; width: 100%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>任务 #{{ task.id }} — {{ task.task_name }}</h1>
+        <div class="page-subtitle">
+            <span class="status-tag status-{{ task.status | lower }}">{{ task.status }}</span>
+            &nbsp;·&nbsp; 来源 <strong>{{ task.source_type or "-" }}</strong>
+            {% if task.nanhu_job_id %}&nbsp;·&nbsp; 南湖 job <code>{{ task.nanhu_job_id }}</code>{% endif %}
+        </div>
+    </div>
+    <div class="action-bar">
+        <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
+        <button type="button" class="btn" id="rescanBtn">重扫</button>
+        <button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>
+    </div>
+</div>
+
+{% if task.description %}
+<div class="alert alert-info">{{ task.description }}</div>
+{% endif %}
+{% if task.error_message %}
+<div class="alert alert-warning"><strong>扫描错误：</strong> {{ task.error_message }}</div>
+{% endif %}
+
+<div class="layout-split">
+    <aside class="left-nav">
+        <h3>本任务导航</h3>
+        <a href="#overview" class="active">概览</a>
+        <a href="#rollouts">Rollout 列表 ({{ rollouts | length }})</a>
+        <a href="#attempts">Attempt 列表 ({{ attempts | length }})</a>
+        <a href="#segments">Segment 列表 ({{ segments | length }})</a>
+    </aside>
+
+    <div class="right-main">
+        <div class="section" id="overview">
+            <h2>概览</h2>
+            <table class="info-table">
+                <tr>
+                    <th>ID</th>
+                    <td class="mono">{{ task.id }}</td>
+                </tr>
+                <tr>
+                    <th>任务名</th>
+                    <td>{{ task.task_name }}</td>
+                </tr>
+                <tr>
+                    <th>状态</th>
+                    <td><span class="status-tag status-{{ task.status | lower }}">{{ task.status }}</span></td>
+                </tr>
+                <tr>
+                    <th>来源</th>
+                    <td>{{ task.source_type or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>南湖 job</th>
+                    <td class="mono">{{ task.nanhu_job_id or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>Rollout 根路径</th>
+                    <td class="mono">{{ task.rollout_root or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>递归扫子目录</th>
+                    <td>{% if task.recursive %}是{% else %}否{% endif %}</td>
+                </tr>
+                <tr>
+                    <th>tokenizer 目录</th>
+                    <td class="mono">{{ task.tokenizer_dir or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>Rollout 数量</th>
+                    <td>{{ task.rollout_count or (rollouts | length) }}</td>
+                </tr>
+                <tr>
+                    <th>Attempt 总数</th>
+                    <td>{{ task.attempt_count or (attempts | length) }}</td>
+                </tr>
+                <tr>
+                    <th>Segment 总数</th>
+                    <td>{{ task.segment_count or (segments | length) }}</td>
+                </tr>
+                <tr>
+                    <th>mean_reward（聚合）</th>
+                    <td>{% if task.mean_reward is not none %}{{ "%.4f"|format(task.mean_reward) }}{% else %}-{% endif %}</td>
+                </tr>
+                <tr>
+                    <th>创建时间</th>
+                    <td>{{ task.create_time or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>更新时间</th>
+                    <td>{{ task.update_time or "-" }}</td>
+                </tr>
+                {% if task.last_scanned_at %}
+                <tr>
+                    <th>最近扫描</th>
+                    <td>{{ task.last_scanned_at }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+
+        <div class="section" id="rollouts">
+            <h2>Rollout 列表 <small>{{ rollouts | length }} 个</small></h2>
+            <table class="sub-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>rollout_id</th>
+                        <th class="col-num">n_samples</th>
+                        <th class="col-num">n_attempts</th>
+                        <th class="col-num">mean_reward</th>
+                        <th>scanned_at</th>
+                        <th>pt_path</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if rollouts %}
+                        {% for r in rollouts %}
+                        <tr>
+                            <td class="col-id">{{ r.id }}</td>
+                            <td class="col-id">{{ r.rollout_id if r.rollout_id is not none else "-" }}</td>
+                            <td class="col-num">{{ r.n_samples if r.n_samples is not none else "-" }}</td>
+                            <td class="col-num">{{ r.n_attempts if r.n_attempts is not none else "-" }}</td>
+                            <td class="col-num">
+                                {% if r.mean_reward is not none %}{{ "%.4f"|format(r.mean_reward) }}{% else %}-{% endif %}
+                            </td>
+                            <td>{{ r.scanned_at or "-" }}</td>
+                            <td class="path-cell" title="{{ r.pt_path or '' }}">{{ r.pt_path or "-" }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section" id="attempts">
+            <h2>Attempt 列表 <small>{{ attempts | length }} 个</small></h2>
+            <table class="sub-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>rollout</th>
+                        <th>group_index</th>
+                        <th>instance_id</th>
+                        <th>segment 数</th>
+                        <th>创建时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if attempts %}
+                        {% for a in attempts %}
+                        <tr>
+                            <td class="col-id">{{ a.id }}</td>
+                            <td class="col-id">{{ a.rollout_id if a.rollout_id is not none else "-" }}</td>
+                            <td>{{ a.group_index if a.group_index is not none else "-" }}</td>
+                            <td class="mono">{{ a.instance_id or "-" }}</td>
+                            <td>{{ a.segment_count if a.segment_count is not none else "-" }}</td>
+                            <td>{{ a.create_time or "-" }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="6" class="empty-row">暂无 attempt</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section" id="segments">
+            <h2>Segment 列表 <small>{{ segments | length }} 个</small></h2>
+            <table class="sub-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>attempt</th>
+                        <th>序号</th>
+                        <th>instance_id</th>
+                        <th class="col-num">reward</th>
+                        <th class="col-num">turns</th>
+                        <th class="col-num">tool_calls</th>
+                        <th>status</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if segments %}
+                        {% for s in segments %}
+                        <tr>
+                            <td class="col-id">{{ s.id }}</td>
+                            <td class="col-id">{{ s.attempt_id if s.attempt_id is not none else "-" }}</td>
+                            <td>{% if s.segment_index is not none and s.segment_count is not none %}{{ s.segment_index }} / {{ s.segment_count }}{% else %}-{% endif %}</td>
+                            <td class="mono">{{ s.instance_id or "-" }}</td>
+                            <td class="col-num">
+                                {% if s.reward is not none %}{{ "%.4f"|format(s.reward) }}{% else %}-{% endif %}
+                            </td>
+                            <td class="col-num">{{ s.agent_turns if s.agent_turns is not none else "-" }}</td>
+                            <td class="col-num">{{ s.tool_calls if s.tool_calls is not none else "-" }}</td>
+                            <td>{{ s.status or "-" }}</td>
+                            <td>
+                                <a class="btn btn-secondary btn-sm" href="/api/segments/{{ s.id }}">查看 transcript</a>
+                            </td>
+                        </tr>
+                    70|                    {% endfor %}
+                    {% else %}
+                        <tr><td colspan="9" class="empty-row">暂无 segment</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const TASK_ID = {{ task.id | tojson }};
+
+    async function postAction(url) {
+        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data;
+    }
+
+    document.getElementById("rescanBtn").addEventListener("click", async function () {
+        const btn = this;
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "扫描中…";
+        try {
+            await postAction("/api/tasks/" + encodeURIComponent(TASK_ID) + "/rescan");
+            window.location.reload();
+        } catch (e) {
+            alert("重扫失败：" + e.message);
+            btn.disabled = false;
+            btn.textContent = original;
+        }
+    });
+
+    document.getElementById("deleteBtn").addEventListener("click", async function () {
+        if (!confirm("确定删除任务 " + TASK_ID + " 吗？此操作会级联删除其 rollout / attempt / segment 记录。")) return;
+        const btn = this;
+        btn.disabled = true;
+        try {
+            await postAction("/api/tasks/" + encodeURIComponent(TASK_ID) + "/delete");
+            window.location.href = "/api/tasks";
+        } catch (e) {
+            alert("删除失败：" + e.message);
+            btn.disabled = false;
+        }
+    });
+
+    // 平滑滚动到锚点
+    document.querySelectorAll(".left-nav a[href^='#']").forEach(function (a) {
+        a.addEventListener("click", function (e) {
+            const target = document.querySelector(a.getAttribute("href"));
+            if (target) {
+                e.preventDefault();
+                document.querySelectorAll(".left-nav a").forEach(function (n) { n.classList.remove("active"); });
+                a.classList.add("active");
+                target.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        });
+    });
+</script>
+{% endblock %}

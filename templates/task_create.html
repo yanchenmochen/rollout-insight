@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}新建 Rollout 任务 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .form-section {
+        background: #fafafa;
+        padding: 20px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+        border-left: 4px solid var(--ri-accent);
+    }
+
+    .form-section h2 {
+        margin: 0 0 12px 0;
+        font-size: 1.1em;
+        color: var(--ri-ink);
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .form-row .form-group {
+        flex: 1 1 280px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        color: var(--ri-ink);
+        font-size: 14px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+        width: 100%;
+        max-width: 720px;
+        padding: 8px 10px;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        font-size: 14px;
+        background: #fff;
+    }
+
+    textarea {
+        min-height: 80px;
+        font-family: inherit;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+        outline: none;
+        border-color: var(--ri-accent);
+        box-shadow: 0 0 0 2px rgba(45, 106, 159, 0.15);
+    }
+
+    input[required],
+    textarea[required] {
+        border-left: 3px solid #8a5a12;
+    }
+
+    .help-text {
+        color: var(--ri-muted);
+        font-size: 12px;
+        margin-top: 4px;
+    }
+
+    .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .checkbox-row input {
+        width: auto;
+        max-width: none;
+    }
+
+    .alert {
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        border-radius: var(--te-radius);
+        border-left: 4px solid;
+    }
+
+    .alert-success {
+        background-color: #d4edda;
+        border-color: #28a745;
+        color: #155724;
+    }
+
+    .alert-error {
+        background-color: #f8d7da;
+        border-color: #dc3545;
+        color: #721c24;
+    }
+
+    .button-group {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .form-message {
+        color: var(--ri-muted);
+        font-size: 13px;
+    }
+
+    .form-message.error { color: #9b2c2c; }
+    .form-message.success { color: var(--ri-success); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>新建 Rollout 任务</h1>
+        <div class="page-subtitle">提供 rollout 落盘根目录，后台会异步扫描并写入 rollout / attempt / segment 元数据</div>
+    </div>
+    <div>
+        <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
+    </div>
+</div>
+
+<div id="formAlert"></div>
+
+<form id="createForm" autocomplete="off">
+    <div class="form-section">
+        <h2>基本信息</h2>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="task_name">任务名 *</label>
+                <input id="task_name" name="task_name" type="text" required maxlength="120" />
+                <div class="help-text">建议与 Slime 训练任务名同名，便于检索</div>
+            </div>
+            <div class="form-group">
+                <label for="source_type">来源类型</label>
+                <select id="source_type" name="source_type">
+                    <option value="local_dump">本地落盘 (local_dump)</option>
+                    <option value="nanhu_job">南湖作业 (nanhu_job)</option>
+                    <option value="manual">手动 (manual)</option>
+                </select>
+                <div class="help-text">仅做记录用途，不会限制扫描逻辑</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="description">任务描述</label>
+            <textarea id="description" name="description" maxlength="1000" placeholder="可选：用途、关联 PR、备注等"></textarea>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h2>扫描设置</h2>
+
+        <div class="form-group">
+            <label for="rollout_root">Rollout 根路径 *</label>
+            <input id="rollout_root" name="rollout_root" type="text" required placeholder="例如：/mnt/data/slime/musa_run/runs" />
+            <div class="help-text">扫描器会在该路径下按 <code>**/rollout_dumps/rollout_*.pt</code> 规则匹配</div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="nanhu_job_id">关联南湖 job_id（可选）</label>
+                <input id="nanhu_job_id" name="nanhu_job_id" type="text" placeholder="例如：j-xxxxxx" />
+                <div class="help-text">若该任务的 rollout 由南湖作业产生，可填入便于溯源</div>
+            </div>
+            <div class="form-group">
+                <label for="tokenizer_dir">tokenizer 目录（可选）</label>
+                <input id="tokenizer_dir" name="tokenizer_dir" type="text" placeholder="例如：/mnt/data/slime/hf" />
+                <div class="help-text">提供后可在 segment 详情中看到完整多轮对话渲染</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <div class="checkbox-row">
+                <input id="recursive" name="recursive" type="checkbox" value="1" checked />
+                <label for="recursive" style="margin: 0; font-weight: 500;">递归扫描子目录</label>
+            </div>
+            <div class="help-text">取消勾选则只在根路径下查找 <code>rollout_dumps/</code></div>
+        </div>
+    </div>
+
+    <div class="button-group">
+        <button type="submit" class="btn" id="submitBtn">创建任务并扫描</button>
+        <a href="/api/tasks" class="btn btn-secondary">取消</a>
+        <span id="formMessage" class="form-message"></span>
+    </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function setMessage(msg, level) {
+        const el = document.getElementById("formMessage");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.className = "form-message" + (level ? " " + level : "");
+    }
+
+    function setAlert(msg, level) {
+        const wrap = document.getElementById("formAlert");
+        if (!msg) {
+            wrap.innerHTML = "";
+            return;
+        }
+        const cls = level === "success" ? "alert-success" : "alert-error";
+        wrap.innerHTML = `<div class="alert ${cls}">${escapeHtml(msg)}</div>`;
+    }
+
+    function escapeHtml(s) {
+        return String(s == null ? "" : s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function valueOf(id) {
+        const el = document.getElementById(id);
+        return el ? (el.value || "").trim() : "";
+    }
+
+    document.getElementById("createForm").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        setMessage("");
+        setAlert("");
+
+        const taskName = valueOf("task_name");
+        const rolloutRoot = valueOf("rollout_root");
+        if (!taskName) {
+            setMessage("请填写任务名", "error");
+            return;
+        }
+        if (!rolloutRoot) {
+            setMessage("请填写 rollout 根路径", "error");
+            return;
+        }
+
+        const payload = new URLSearchParams();
+        payload.set("task_name", taskName);
+        payload.set("description", document.getElementById("description").value || "");
+        payload.set("rollout_root", rolloutRoot);
+        payload.set("tokenizer_dir", valueOf("tokenizer_dir"));
+        payload.set("nanhu_job_id", valueOf("nanhu_job_id"));
+        payload.set("source_type", valueOf("source_type"));
+        if (document.getElementById("recursive").checked) {
+            payload.set("recursive", "1");
+        } else {
+            payload.set("recursive", "0");
+        }
+
+        const submitBtn = document.getElementById("submitBtn");
+        submitBtn.disabled = true;
+        try {
+            const resp = await fetch("/api/tasks", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                body: payload.toString(),
+            });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!data || data.code !== 0) {
+                throw new Error((data && data.msg) || ("HTTP " + resp.status));
+            }
+            const taskId = (data.data && (data.data.id || data.data.task_id)) || null;
+            setMessage("创建成功，3 秒后跳转…", "success");
+            if (taskId) {
+                setTimeout(function () {
+                    window.location.href = "/api/tasks/" + encodeURIComponent(taskId);
+                }, 1200);
+            } else {
+                setTimeout(function () { window.location.href = "/api/tasks"; }, 1200);
+            }
+        } catch (err) {
+            setMessage("创建失败：" + err.message, "error");
+            submitBtn.disabled = false;
+        }
+    });
+</script>
+{% endblock %}

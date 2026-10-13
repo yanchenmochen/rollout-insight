@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Rollout 任务列表 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .page-subtitle {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .filter-panel {
+        background: #f4f6f8;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .filter-panel .form-group {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 140px;
+    }
+
+    .filter-panel label {
+        font-size: 12px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .filter-panel input {
+        padding: 6px 8px;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        font-size: 14px;
+    }
+
+    table.task-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .task-table thead {
+        background: #2a3542;
+        color: #e8ecf0;
+    }
+
+    .task-table th,
+    .task-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #e4e8ec;
+        text-align: left;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .task-table th {
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .task-table tbody tr:hover {
+        background: #f8fafb;
+    }
+
+    .task-table .col-id {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--ri-muted);
+    }
+
+    .task-table .col-actions {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .task-table .col-actions a,
+    .task-table .col-actions button {
+        margin-left: 4px;
+    }
+
+    .empty-row,
+    .loading-row {
+        text-align: center;
+        color: var(--ri-muted);
+        padding: 24px 8px;
+        font-size: 14px;
+    }
+
+    .status-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #e0e6ec;
+        color: var(--ri-ink);
+    }
+
+    .status-tag.status-pending { background: #f0e2c5; color: #8a5a12; }
+    .status-tag.status-running { background: #c7def5; color: #1e5080; }
+    .status-tag.status-done,
+    .status-tag.status-success { background: #cde7d6; color: var(--ri-success); }
+    .status-tag.status-failed { background: #f3c8c8; color: #9b2c2c; }
+    .status-tag.status-scanning { background: #d5d2f1; color: #4a3f9b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Rollout 任务</h1>
+        <div class="page-subtitle">扫描 Slime rollout 落盘并提供多轮对话 / 检索入口</div>
+    </div>
+    <div>
+        <a href="/api/tasks/create" class="btn">新建任务</a>
+        <a href="/api/segments/search" class="btn btn-secondary">Segment 检索</a>
+    </div>
+</div>
+
+<div class="filter-panel">
+    <div class="form-group">
+        <label for="nameFilter">任务名</label>
+        <input id="nameFilter" placeholder="模糊匹配" />
+    </div>
+    <div class="form-group">
+        <label for="statusFilter">状态</label>
+        <input id="statusFilter" placeholder="如 PENDING / SCANNING" />
+    </div>
+    <div class="form-group">
+        <label for="limitFilter">条数</label>
+        <input id="limitFilter" type="number" min="1" max="500" value="100" />
+    </div>
+    <div class="form-group">
+        <label>&nbsp;</label>
+        <button type="button" class="btn" id="reloadBtn">刷新</button>
+    </div>
+</div>
+
+<table class="task-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>任务名</th>
+            <th>状态</th>
+            <th>来源</th>
+            <th>南湖 job</th>
+            <th>Rollout 数量</th>
+            <th>mean_reward</th>
+            <th>创建时间</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="taskTableBody">
+        <tr><td colspan="9" class="loading-row">加载中…</td></tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function escapeHtml(s) {
+        return String(s == null ? "" : s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function formatTime(raw) {
+        if (raw == null || raw === "") return "-";
+        const s = String(raw);
+        // 兼容 ISO 时间串
+        return s.length >= 19 ? s.substring(0, 19).replace("T", " ") : s;
+    }
+
+    function statusClass(s) {
+        const v = String(s || "").toLowerCase();
+        if (v.includes("scan")) return "status-scanning";
+        if (v.includes("fail") || v.includes("error")) return "status-failed";
+        if (v.includes("done") || v.includes("success") || v.includes("complete")) return "status-done";
+        if (v.includes("run")) return "status-running";
+        return "status-pending";
+    }
+
+    function fmtNumber(v) {
+        if (v == null || v === "") return "-";
+        const n = Number(v);
+        if (!isFinite(n)) return escapeHtml(v);
+        return n.toFixed(4).replace(/\.?0+$/, "");
+    }
+
+    function actionButtons(task) {
+        const id = escapeHtml(task.id);
+        const html = [];
+        html.push(`<button type="button" class="btn btn-secondary btn-sm js-rescan" data-id="${id}">重扫</button>`);
+        html.push(`<a class="btn btn-secondary btn-sm" href="/api/tasks/${id}">详情</a>`);
+        html.push(`<button type="button" class="btn btn-secondary btn-sm js-delete" data-id="${id}" data-name="${escapeHtml(task.task_name)}">删除</button>`);
+        return html.join(" ");
+    }
+
+    function rowHtml(task) {
+        return `
+            <tr>
+                <td class="col-id">${escapeHtml(task.id)}</td>
+                <td>${escapeHtml(task.task_name)}</td>
+                <td><span class="status-tag ${statusClass(task.status)}">${escapeHtml(task.status || "-")}</span></td>
+                <td>${escapeHtml(task.source_type || "-")}</td>
+                <td>${escapeHtml(task.nanhu_job_id || "-")}</td>
+                <td>${escapeHtml(task.rollout_count == null ? "-" : task.rollout_count)}</td>
+                <td>${fmtNumber(task.mean_reward)}</td>
+                <td>${escapeHtml(formatTime(task.create_time))}</td>
+                <td class="col-actions">${actionButtons(task)}</td>
+            </tr>
+        `;
+    }
+
+    async function reloadTasks() {
+        const tbody = document.getElementById("taskTableBody");
+        const params = new URLSearchParams();
+        const name = document.getElementById("nameFilter").value.trim();
+        const status = document.getElementById("statusFilter").value.trim();
+        const limit = document.getElementById("limitFilter").value || "100";
+        if (name) params.set("task_name", name);
+        if (status) params.set("status", status);
+        params.set("limit", limit);
+        try {
+            const resp = await fetch("/api/tasks?" + params.toString(), {
+                headers: { "Accept": "application/json" },
+            });
+            const data = await resp.json();
+            if (!data || data.code !== 0) {
+                throw new Error((data && data.msg) || "查询失败");
+            }
+            const list = (data.data && data.data.tasks) || [];
+            if (!list.length) {
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-row">暂无 Rollout 任务，点击右上角「新建任务」开始</td></tr>';
+                return;
+            }
+            tbody.innerHTML = list.map(rowHtml).join("");
+        } catch (e) {
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
+        }
+    }
+
+    async function postAction(url) {
+        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        const data = await resp.json().catch(() => ({}));
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data;
+    }
+
+    document.addEventListener("click", function (event) {
+        const t = event.target;
+        if (!(t instanceof HTMLElement)) return;
+        if (t.classList.contains("js-rescan")) {
+            const id = t.getAttribute("data-id");
+            if (!id) return;
+            t.disabled = true;
+            postAction("/api/tasks/" + encodeURIComponent(id) + "/rescan")
+                .then(function () { reloadTasks(); })
+                .catch(function (e) { alert("重扫失败：" + e.message); t.disabled = false; });
+        } else if (t.classList.contains("js-delete")) {
+            const id = t.getAttribute("data-id");
+            const name = t.getAttribute("data-name") || id;
+            if (!id) return;
+            if (!confirm("确定删除任务「" + name + "」吗？此操作会级联删除其 rollout / attempt / segment 记录。")) return;
+            t.disabled = true;
+            postAction("/api/tasks/" + encodeURIComponent(id) + "/delete")
+                .then(function () { reloadTasks(); })
+                .catch(function (e) { alert("删除失败：" + e.message); t.disabled = false; });
+        }
+    });
+
+    document.getElementById("reloadBtn").addEventListener("click", reloadTasks);
+    reloadTasks();
+</script>
+{% endblock %}
