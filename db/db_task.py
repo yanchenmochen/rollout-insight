@@ -30,6 +30,17 @@ class DBTask(Base):
     # 'manual' 表示用户在页面手动创建；'nanhu' 表示由南湖调度触发（v0.3 启用）
     source_type = Column(String, nullable=False, default="manual")
     nanhu_job_id = Column(String, nullable=False, default="")
+    # 扫描根路径（页面创建任务时填）；递归扫子目录标志位
+    rollout_root = Column(String, nullable=False, default="")
+    recursive = Column(Integer, nullable=False, default=1)
+    tokenizer_dir = Column(String, nullable=False, default="")
+    # 扫描结果摘要
+    rollout_count = Column(Integer, nullable=False, default=0)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    segment_count = Column(Integer, nullable=False, default=0)
+    mean_reward = Column(Integer, nullable=False, default=0)
+    last_scanned_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=False, default="")
     status = Column(String, nullable=False, default="PENDING")
     created_by = Column(String, nullable=False, default="")
     create_time = Column(DateTime, nullable=False, default=datetime.now)
@@ -47,10 +58,20 @@ class DBTask(Base):
         """导出为字典，便于序列化到模板/JSON。"""
         return {
             "primary_id": self.primary_id,
+            "id": self.primary_id,  # 兼容 controller/模板
             "task_name": self.task_name,
             "description": self.description or "",
             "source_type": self.source_type,
             "nanhu_job_id": self.nanhu_job_id or "",
+            "rollout_root": self.rollout_root or "",
+            "recursive": bool(self.recursive),
+            "tokenizer_dir": self.tokenizer_dir or "",
+            "rollout_count": self.rollout_count or 0,
+            "attempt_count": self.attempt_count or 0,
+            "segment_count": self.segment_count or 0,
+            "mean_reward": float(self.mean_reward or 0),
+            "last_scanned_at": self._dt_iso(self.last_scanned_at),
+            "error_message": self.error_message or "",
             "status": self.status,
             "created_by": self.created_by or "",
             "create_time": self._dt_iso(self.create_time),

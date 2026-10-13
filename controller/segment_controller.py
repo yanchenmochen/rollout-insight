@@ -271,8 +271,8 @@ async def api_segments_search(
         with Session() as session:
             q = session.query(Segment)
             if Attempt is not None and Rollout is not None:
-                q = q.join(Attempt, Segment.attempt_id == Attempt.id)
-                q = q.join(Rollout, Attempt.rollout_id == Rollout.id)
+                q = q.join(Attempt, Segment.attempt_id == Attempt.primary_id)
+                q = q.join(Rollout, Attempt.rollout_id == Rollout.primary_id)
                 q = q.filter(Rollout.task_id == task_id)
             if min_reward is not None:
                 q = q.filter(Segment.reward >= min_reward)
@@ -285,7 +285,7 @@ async def api_segments_search(
 
             total = q.count()
             rows = (
-                q.order_by(Segment.id.asc())
+                q.order_by(Segment.primary_id.asc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
                 .all()
@@ -326,7 +326,7 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
     else:
         try:
             with Session() as session:
-                obj = session.query(Segment).filter(Segment.id == segment_id).first()
+                obj = session.query(Segment).filter(Segment.primary_id == segment_id).first()
                 if obj is None:
                     warning = f"segment #{segment_id} 不存在"
                 else:
@@ -338,11 +338,11 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
                         and Task is not None
                         and getattr(obj, "attempt_id", None) is not None
                     ):
-                        attempt_obj = session.query(Attempt).filter(Attempt.id == obj.attempt_id).first()
+                        attempt_obj = session.query(Attempt).filter(Attempt.primary_id == obj.attempt_id).first()
                         if attempt_obj is not None and getattr(attempt_obj, "rollout_id", None) is not None:
                             rollout_obj = (
                                 session.query(Rollout)
-                                .filter(Rollout.id == attempt_obj.rollout_id)
+                                .filter(Rollout.primary_id == attempt_obj.rollout_id)
                                 .first()
                             )
                             if rollout_obj is not None and getattr(rollout_obj, "task_id", None) is not None:
@@ -396,7 +396,7 @@ async def api_segment_transcript_json(segment_id: int) -> Response:
         )
 
     with Session() as session:
-        obj = session.query(Segment).filter(Segment.id == segment_id).first()
+        obj = session.query(Segment).filter(Segment.primary_id == segment_id).first()
         if obj is None:
             raise RolloutInsightException(
                 RolloutInsightException.PARSE_DUMP_NOT_FOUND,

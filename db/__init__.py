@@ -12,6 +12,15 @@ from db.db_segment_transcript import DBSegmentTranscript
 from db.db_nanhu_job import DBNanhuJob
 from db.db_nanhu_restart import DBNanhuRestart
 
+# 别名：让 controller 通过 db.models.Task / db.Task 也能找到（兼容 v0.2 阶段 2C 的延迟导入）
+Task = DBTask
+Rollout = DBRollout
+Attempt = DBAttempt
+Segment = DBSegment
+SegmentTranscript = DBSegmentTranscript
+NanhuJob = DBNanhuJob
+NanhuRestart = DBNanhuRestart
+
 __all__ = [
     "Base",
     "Session",
@@ -24,4 +33,12 @@ __all__ = [
     "DBSegmentTranscript",
     "DBNanhuJob",
     "DBNanhuRestart",
+    # 兼容别名
+    "Task",
+    "Rollout",
+    "Attempt",
+    "Segment",
+    "SegmentTranscript",
+    "NanhuJob",
+    "NanhuRestart",
 ]

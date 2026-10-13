@@ -93,7 +93,8 @@ def _task_to_dict(task: Any) -> Dict[str, Any]:
     if task is None:
         return {}
     return {
-        "id": getattr(task, "id", None),
+        "id": getattr(task, "id", None) or getattr(task, "primary_id", None),
+        "primary_id": getattr(task, "primary_id", None) or getattr(task, "id", None),
         "task_name": getattr(task, "task_name", None),
         "status": getattr(task, "status", None),
         "source_type": getattr(task, "source_type", None),
@@ -257,7 +258,7 @@ async def api_list_tasks(
 
             total = q.count()
             rows: List[Any] = (
-                q.order_by(Task.id.desc())
+                q.order_by(Task.primary_id.desc())
                 .offset(offset)
                 .limit(effective_size)
                 .all()
@@ -399,7 +400,7 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
 
     try:
         with Session() as session:
-            obj = session.query(Task).filter(Task.id == task_id).first()
+            obj = session.query(Task).filter(Task.primary_id == task_id).first()
             if obj is None:
                 # 渲染一个"未找到"占位
                 placeholder = _empty_task_dict(task_id)
@@ -426,7 +427,7 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                 for r in (
                     session.query(Rollout)
                     .filter(Rollout.task_id == task_id)
-                    .order_by(Rollout.id.asc())
+                    .order_by(Rollout.primary_id.asc())
                     .all()
                 ):
                     rollouts.append(_rollout_to_dict(r))
@@ -438,7 +439,7 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                         for a in (
                             session.query(Attempt)
                             .filter(Attempt.rollout_id.in_(rollout_ids))
-                            .order_by(Attempt.id.asc())
+                            .order_by(Attempt.primary_id.asc())
                             .limit(500)
                             .all()
                         ):
@@ -521,7 +522,7 @@ async def api_delete_task(task_id: int) -> Response:
 
     try:
         with Session() as session:
-            obj = session.query(Task).filter(Task.id == task_id).first()
+            obj = session.query(Task).filter(Task.primary_id == task_id).first()
             if obj is None:
                 raise RolloutInsightException(
                     RolloutInsightException.TASK_NOT_FOUND, f"任务 #{task_id} 不存在"
@@ -530,11 +531,11 @@ async def api_delete_task(task_id: int) -> Response:
             # 防御性：按子表顺序级联删除（即使 ORM 已配 cascade，这里也兜底）
             if Rollout is not None and Attempt is not None and Segment is not None:
                 rollout_ids = [
-                    rid for (rid,) in session.query(Rollout.id).filter(Rollout.task_id == task_id).all()
+                    rid for (rid,) in session.query(Rollout.primary_id).filter(Rollout.task_id == task_id).all()
                 ]
                 if rollout_ids:
                     attempt_ids = [
-                        aid for (aid,) in session.query(Attempt.id).filter(Attempt.rollout_id.in_(rollout_ids)).all()
+                        aid for (aid,) in session.query(Attempt.primary_id).filter(Attempt.rollout_id.in_(rollout_ids)).all()
                     ]
                     if attempt_ids:
                         session.query(Segment).filter(Segment.attempt_id.in_(attempt_ids)).delete(synchronize_session=False)
