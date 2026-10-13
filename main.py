@@ -5,7 +5,7 @@
 - 监听端口由环境变量 ROLLOUT_INSIGHT_PORT 控制，默认 39998（避免与 automate 39999 冲突）
 - 启动时自动 include controller/ 下所有 router
 - 全局捕获 RolloutInsightException，转为统一 Response.error
-- 根路径 / 重定向到 /api/tasks
+- 根路径 / 由 controller/task_controller.py 的 page_task_list 渲染 task_list.html
 """
 import importlib
 import os
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
@@ -80,12 +80,6 @@ async def rollout_exception_handler(request: Request, exc: RolloutInsightExcepti
         status_code=200,
         content=Response.error(msg=exc.message, code=exc.code).model_dump(),
     )
-
-
-@app.get("/", include_in_schema=False)
-async def root_to_tasks():
-    """根路径重定向到任务列表。"""
-    return RedirectResponse(url="/api/tasks", status_code=302)
 
 
 @app.get("/healthz", include_in_schema=False)

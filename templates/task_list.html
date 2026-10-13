@@ -55,11 +55,19 @@
         margin-bottom: 4px;
     }
 
-    .filter-panel input {
+    .filter-panel input,
+    .filter-panel select {
         padding: 6px 8px;
         border: 1px solid var(--ri-border);
         border-radius: var(--te-radius);
         font-size: 14px;
+        background: white;
+    }
+
+    .filter-summary {
+        font-size: 12px;
+        color: var(--ri-muted);
+        margin-bottom: 8px;
     }
 
     table.task-table {
@@ -148,24 +156,44 @@
     </div>
 </div>
 
-<div class="filter-panel">
+<form method="get" action="/" class="filter-panel" id="filterForm">
     <div class="form-group">
-        <label for="nameFilter">任务名</label>
-        <input id="nameFilter" placeholder="模糊匹配" />
+        <label for="task_name">任务名（模糊）</label>
+        <input id="task_name" name="task_name" type="text"
+               value="{{ filter_task_name or '' }}"
+               placeholder="如 slime-021" />
     </div>
     <div class="form-group">
-        <label for="statusFilter">状态</label>
-        <input id="statusFilter" placeholder="如 PENDING / SCANNING" />
-    </div>
-    <div class="form-group">
-        <label for="limitFilter">条数</label>
-        <input id="limitFilter" type="number" min="1" max="500" value="100" />
+        <label for="status">状态</label>
+        <select id="status" name="status">
+            <option value="">（全部）</option>
+            {% for opt in status_options %}
+            <option value="{{ opt }}" {% if filter_status == opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+        </select>
     </div>
     <div class="form-group">
         <label>&nbsp;</label>
-        <button type="button" class="btn" id="reloadBtn">刷新</button>
+        <div>
+            <button type="submit" class="btn">应用过滤</button>
+            <a class="btn btn-secondary" href="/">重置</a>
+        </div>
     </div>
+</form>
+
+{% if warning %}
+<div class="filter-summary" style="color:#9b2c2c;">⚠ {{ warning }}</div>
+{% else %}
+<div class="filter-summary">
+    共 <strong>{{ total }}</strong> 条任务
+    {% if filter_status or filter_task_name %}
+    （过滤：
+    {% if filter_status %}status=<code>{{ filter_status }}</code>{% endif %}
+    {% if filter_task_name %}{% if filter_status %}，{% endif %}task_name 包含 <code>{{ filter_task_name }}</code>{% endif %}
+    ）
+    {% endif %}
 </div>
+{% endif %}
 
 <table class="task-table">
     <thead>
@@ -174,21 +202,67 @@
             <th>任务名</th>
             <th>状态</th>
             <th>来源</th>
-            <th>南湖 job</th>
-            <th>Rollout 数量</th>
+            <th>rollout · attempt · segment</th>
             <th>mean_reward</th>
-            <th>创建时间</th>
+            <th>最后扫描</th>
             <th>操作</th>
         </tr>
     </thead>
     <tbody id="taskTableBody">
-        <tr><td colspan="9" class="loading-row">加载中…</td></tr>
+        {% if tasks %}
+            {% for task in tasks %}
+            <tr>
+                <td class="col-id">{{ task.id }}</td>
+                <td>
+                    <a href="/api/tasks/{{ task.id }}">{{ task.task_name or '-' }}</a>
+                </td>
+                <td>
+                    <span class="status-tag status-{{ (task.status or 'pending')|lower }}">
+                        {{ task.status or '-' }}
+                    </span>
+                </td>
+                <td>{{ task.source_type or '-' }}</td>
+                <td>
+                    {{ task.rollout_count if task.rollout_count is not none else '-' }}
+                    ·
+                    {{ task.attempt_count if task.attempt_count is not none else '-' }}
+                    ·
+                    {{ task.segment_count if task.segment_count is not none else '-' }}
+                </td>
+                <td>
+                    {% if task.mean_reward is not none %}
+                        {{ '%.4f'|format(task.mean_reward) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>{{ task.last_scanned_at or '-' }}</td>
+                <td class="col-actions">
+                    <a class="btn btn-secondary btn-sm" href="/api/tasks/{{ task.id }}">查看</a>
+                    <button type="button"
+                            class="btn btn-secondary btn-sm js-rescan"
+                            data-id="{{ task.id }}">重扫</button>
+                </td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr>
+                <td colspan="8" class="empty-row">
+                    {% if filter_status or filter_task_name %}
+                        没有匹配的任务。<a href="/">查看全部</a>
+                    {% else %}
+                        暂无 Rollout 任务，点击右上角「新建任务」开始
+                    {% endif %}
+                </td>
+            </tr>
+        {% endif %}
     </tbody>
 </table>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    // 任务列表已由 server-side 渲染；JS 只负责「重扫」按钮交互。
     function escapeHtml(s) {
         return String(s == null ? "" : s)
             .replace(/&/g, "&amp;")
@@ -198,84 +272,11 @@
             .replace(/'/g, "&#39;");
     }
 
-    function formatTime(raw) {
-        if (raw == null || raw === "") return "-";
-        const s = String(raw);
-        // 兼容 ISO 时间串
-        return s.length >= 19 ? s.substring(0, 19).replace("T", " ") : s;
-    }
-
-    function statusClass(s) {
-        const v = String(s || "").toLowerCase();
-        if (v.includes("scan")) return "status-scanning";
-        if (v.includes("fail") || v.includes("error")) return "status-failed";
-        if (v.includes("done") || v.includes("success") || v.includes("complete")) return "status-done";
-        if (v.includes("run")) return "status-running";
-        return "status-pending";
-    }
-
-    function fmtNumber(v) {
-        if (v == null || v === "") return "-";
-        const n = Number(v);
-        if (!isFinite(n)) return escapeHtml(v);
-        return n.toFixed(4).replace(/\.?0+$/, "");
-    }
-
-    function actionButtons(task) {
-        const id = escapeHtml(task.id);
-        const html = [];
-        html.push(`<button type="button" class="btn btn-secondary btn-sm js-rescan" data-id="${id}">重扫</button>`);
-        html.push(`<a class="btn btn-secondary btn-sm" href="/api/tasks/${id}">详情</a>`);
-        html.push(`<button type="button" class="btn btn-secondary btn-sm js-delete" data-id="${id}" data-name="${escapeHtml(task.task_name)}">删除</button>`);
-        return html.join(" ");
-    }
-
-    function rowHtml(task) {
-        return `
-            <tr>
-                <td class="col-id">${escapeHtml(task.id)}</td>
-                <td>${escapeHtml(task.task_name)}</td>
-                <td><span class="status-tag ${statusClass(task.status)}">${escapeHtml(task.status || "-")}</span></td>
-                <td>${escapeHtml(task.source_type || "-")}</td>
-                <td>${escapeHtml(task.nanhu_job_id || "-")}</td>
-                <td>${escapeHtml(task.rollout_count == null ? "-" : task.rollout_count)}</td>
-                <td>${fmtNumber(task.mean_reward)}</td>
-                <td>${escapeHtml(formatTime(task.create_time))}</td>
-                <td class="col-actions">${actionButtons(task)}</td>
-            </tr>
-        `;
-    }
-
-    async function reloadTasks() {
-        const tbody = document.getElementById("taskTableBody");
-        const params = new URLSearchParams();
-        const name = document.getElementById("nameFilter").value.trim();
-        const status = document.getElementById("statusFilter").value.trim();
-        const limit = document.getElementById("limitFilter").value || "100";
-        if (name) params.set("task_name", name);
-        if (status) params.set("status", status);
-        params.set("limit", limit);
-        try {
-            const resp = await fetch("/api/tasks?" + params.toString(), {
-                headers: { "Accept": "application/json" },
-            });
-            const data = await resp.json();
-            if (!data || data.code !== 0) {
-                throw new Error((data && data.msg) || "查询失败");
-            }
-            const list = (data.data && data.data.tasks) || [];
-            if (!list.length) {
-                tbody.innerHTML = '<tr><td colspan="9" class="empty-row">暂无 Rollout 任务，点击右上角「新建任务」开始</td></tr>';
-                return;
-            }
-            tbody.innerHTML = list.map(rowHtml).join("");
-        } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="9" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
-        }
-    }
-
     async function postAction(url) {
-        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        const resp = await fetch(url, {
+            method: "POST",
+            headers: { "Accept": "application/json" },
+        });
         const data = await resp.json().catch(() => ({}));
         if (!data || data.code !== 0) {
             throw new Error((data && data.msg) || ("HTTP " + resp.status));
@@ -290,22 +291,19 @@
             const id = t.getAttribute("data-id");
             if (!id) return;
             t.disabled = true;
+            const originalText = t.textContent;
+            t.textContent = "重扫中…";
             postAction("/api/tasks/" + encodeURIComponent(id) + "/rescan")
-                .then(function () { reloadTasks(); })
-                .catch(function (e) { alert("重扫失败：" + e.message); t.disabled = false; });
-        } else if (t.classList.contains("js-delete")) {
-            const id = t.getAttribute("data-id");
-            const name = t.getAttribute("data-name") || id;
-            if (!id) return;
-            if (!confirm("确定删除任务「" + name + "」吗？此操作会级联删除其 rollout / attempt / segment 记录。")) return;
-            t.disabled = true;
-            postAction("/api/tasks/" + encodeURIComponent(id) + "/delete")
-                .then(function () { reloadTasks(); })
-                .catch(function (e) { alert("删除失败：" + e.message); t.disabled = false; });
+                .then(function () {
+                    // 简单刷新当前页（带原过滤条件）
+                    window.location.reload();
+                })
+                .catch(function (e) {
+                    alert("重扫失败：" + e.message);
+                    t.disabled = false;
+                    t.textContent = originalText;
+                });
         }
     });
-
-    document.getElementById("reloadBtn").addEventListener("click", reloadTasks);
-    reloadTasks();
 </script>
 {% endblock %}

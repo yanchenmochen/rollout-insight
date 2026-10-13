@@ -195,55 +195,54 @@ def _empty_task_dict(task_id: Optional[int] = None) -> Dict[str, Any]:
     }
 
 
+def _looks_like_browser(request: Request) -> bool:
+    """基于 User-Agent 粗判：是否是浏览器。
+
+    `Accept: */*` 常见于 curl（curl 默认带 `Accept: */*`），但 curl 默认还会带
+    `User-Agent: curl/...`，所以看 UA 含 'mozilla' / 'chrome' / 'safari' 等
+    才视作浏览器。避免 curl 直接访问 /api/tasks 拿到 HTML 模板。
+    """
+    ua = (request.headers.get("user-agent") or "").lower()
+    if not ua:
+        return False
+    # 显式排除常见 CLI 工具
+    if ua.startswith("curl/") or ua.startswith("wget/") or ua.startswith("python-requests"):
+        return False
+    return any(tok in ua for tok in ("mozilla", "chrome", "safari", "firefox", "edge", "opera"))
+
+
 # ---------------------------------------------------------------------------
 # 路由
 # ---------------------------------------------------------------------------
 
-@router.get("/", include_in_schema=False)
-async def page_task_list(request: Request) -> HTMLResponse:
-    """根路径 → task_list.html（覆盖 main.py 里的 RedirectResponse 行为）。
 
-    main.py 已经有 `@app.get("/")` 走 RedirectResponse；这里 router 的同路径
-    会因为 include 顺序在后生效。不过为防御性，我们仍然接受 GET / 的渲染请求。
+def _list_tasks_for_display(
+    task_name: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """共享查询逻辑：从 DB 取 task 列表（含分页/过滤），返回 dict 给 JSON 或模板。
+
+    返回字段：
+        {"tasks": List[Dict], "total": int, "limit": int, "offset": int,
+         "task_name": str|None, "status": str|None, "warning": str|None}
     """
-    return templates.TemplateResponse(
-        request,
-        "task_list.html",
-        {"page_title": "Rollout 任务列表"},
-    )
-
-
-@router.get("/api/tasks", response_model=None)
-async def api_list_tasks(
-    request: Request,
-    task_name: Optional[str] = Query(default=None, description="模糊匹配任务名"),
-    status: Optional[str] = Query(default=None, description="按状态过滤"),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    page: Optional[int] = Query(default=None, ge=1, description="页码（1-based）"),
-    page_size: Optional[int] = Query(default=None, ge=1, le=500),
-):
-    """JSON 列表接口；同时供 task_list.html 的 JS 拉数据。"""
-    # 兼容 page/page_size
-    if page is not None:
-        offset = (page - 1) * (page_size or 20)
-    effective_size = page_size or limit
+    result: Dict[str, Any] = {
+        "tasks": [],
+        "total": 0,
+        "limit": limit,
+        "offset": offset,
+        "task_name": task_name,
+        "status": status,
+        "warning": None,
+    }
 
     Task = _task_model()
     if Task is None:
-        # 2A 还没落地模型：返回空数据 + 友好提示
+        result["warning"] = "任务模型尚未就绪（2A 阶段未完成）"
         logger.warning("db.models.Task 不可用，返回空列表占位")
-        return Response.success(
-            msg="ok（Task 模型尚未就绪）",
-            data={
-                "tasks": [],
-                "total": 0,
-                "limit": effective_size,
-                "offset": offset,
-                "page": page,
-                "page_size": page_size,
-            },
-        )
+        return result
 
     Session = _session_factory()
     if Session is None:
@@ -260,29 +259,123 @@ async def api_list_tasks(
             if status:
                 q = q.filter(Task.status == status)
 
-            total = q.count()
+            result["total"] = q.count()
             rows: List[Any] = (
                 q.order_by(Task.primary_id.desc())
                 .offset(offset)
-                .limit(effective_size)
+                .limit(limit)
                 .all()
             )
-            tasks = [_task_to_dict(r) for r in rows]
-        return Response.success(
-            data={
-                "tasks": tasks,
-                "total": total,
-                "limit": effective_size,
-                "offset": offset,
-                "page": page,
-                "page_size": page_size,
-            },
-        )
+            result["tasks"] = [_task_to_dict(r) for r in rows]
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("查询任务列表失败: {}", exc)
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"查询任务失败: {exc}"
         ) from exc
+
+
+# 已知 status 值（供模板下拉框渲染）
+_TASK_STATUS_OPTIONS: tuple = (
+    "PENDING",
+    "SCANNING",
+    "READY",
+    "FAILED",
+    "PENDING_SCAN",
+)
+
+
+@router.get("/", include_in_schema=False)
+async def page_task_list(
+    request: Request,
+    task_name: Optional[str] = Query(default=None, description="模糊匹配任务名"),
+    status: Optional[str] = Query(default=None, description="按状态过滤"),
+) -> HTMLResponse:
+    """根路径 → task_list.html（直接注入任务列表到模板上下文）。
+
+    浏览器/curl 带 Accept: text/html 访问 / 时直接渲染带表格的 HTML。
+    走 GET 表单过滤：query string `?status=READY&task_name=foo` 触发 server-side
+    查询，不再依赖前端 fetch。
+    """
+    data = _list_tasks_for_display(task_name=task_name, status=status, limit=200)
+    return templates.TemplateResponse(
+        request,
+        "task_list.html",
+        {
+            "page_title": "Rollout 任务列表",
+            "tasks": data["tasks"],
+            "total": data["total"],
+            "filter_task_name": data["task_name"] or "",
+            "filter_status": data["status"] or "",
+            "status_options": _TASK_STATUS_OPTIONS,
+            "warning": data["warning"],
+        },
+    )
+
+
+@router.get("/api/tasks", response_model=None)
+async def api_list_tasks(
+    request: Request,
+    task_name: Optional[str] = Query(default=None, description="模糊匹配任务名"),
+    status: Optional[str] = Query(default=None, description="按状态过滤"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    page: Optional[int] = Query(default=None, ge=1, description="页码（1-based）"),
+    page_size: Optional[int] = Query(default=None, ge=1, le=500),
+):
+    """任务列表端点。
+
+    行为分流（基于 Accept 头）：
+    - `Accept: text/html`（或 `text/*`、`*/*` + 浏览器 UA 提示）→ 返回 task_list.html，
+      任务列表注入模板上下文，浏览器直接看到表格。
+    - 其他（含 `Accept: application/json`）→ 返回 JSON（curl / API 客户端）。
+
+    这样：
+    - `curl -H 'Accept: text/html' /api/tasks` 和访问 / 一样看到表格
+    - `curl -H 'Accept: application/json' /api/tasks` 仍返回 JSON（不破坏现有客户端）
+    """
+    # 兼容 page/page_size
+    if page is not None:
+        offset = (page - 1) * (page_size or 20)
+    effective_size = page_size or limit
+
+    data = _list_tasks_for_display(
+        task_name=task_name, status=status, limit=effective_size, offset=offset
+    )
+
+    # Accept 头分流：浏览器（text/html）→ HTML 模板；其他 → JSON
+    accept = (request.headers.get("accept") or "").lower()
+    wants_html = (
+        "text/html" in accept
+        or "text/*" in accept
+        or (accept == "*/*" and _looks_like_browser(request))
+    )
+
+    if wants_html:
+        return templates.TemplateResponse(
+            request,
+            "task_list.html",
+            {
+                "page_title": "Rollout 任务列表",
+                "tasks": data["tasks"],
+                "total": data["total"],
+                "filter_task_name": data["task_name"] or "",
+                "filter_status": data["status"] or "",
+                "status_options": _TASK_STATUS_OPTIONS,
+                "warning": data["warning"],
+            },
+        )
+
+    return Response.success(
+        data={
+            "tasks": data["tasks"],
+            "total": data["total"],
+            "limit": effective_size,
+            "offset": offset,
+            "page": page,
+            "page_size": page_size,
+        },
+    )
 
 
 @router.get("/api/tasks/create", include_in_schema=False)
