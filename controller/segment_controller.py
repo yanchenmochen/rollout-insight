@@ -50,19 +50,19 @@ def _session_factory():
 
 
 def _segment_model():
-    return _safe_import_attr("db.models", "Segment") or _safe_import_attr("db", "Segment")
+    return _safe_import_attr("db", "Segment") or _safe_import_attr("db.models", "Segment")
 
 
 def _attempt_model():
-    return _safe_import_attr("db.models", "Attempt") or _safe_import_attr("db", "Attempt")
+    return _safe_import_attr("db", "Attempt") or _safe_import_attr("db.models", "Attempt")
 
 
 def _rollout_model():
-    return _safe_import_attr("db.models", "Rollout") or _safe_import_attr("db", "Rollout")
+    return _safe_import_attr("db", "Rollout") or _safe_import_attr("db.models", "Rollout")
 
 
 def _task_model():
-    return _safe_import_attr("db.models", "Task") or _safe_import_attr("db", "Task")
+    return _safe_import_attr("db", "Task") or _safe_import_attr("db.models", "Task")
 
 
 def _ensure_transcript_fn():
