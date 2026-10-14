@@ -4,100 +4,111 @@
 
 {% block extra_css %}
 <style>
-    .breadcrumb {
-        font-size: 13px;
-        color: var(--ri-muted);
-        margin-bottom: 10px;
-    }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
     .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
     .breadcrumb a:hover { text-decoration: underline; }
 
     .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 18px;
-        flex-wrap: wrap;
-        gap: 14px;
-        padding-bottom: 14px;
-        border-bottom: 2px solid var(--ri-border);
+        display: flex; justify-content: space-between; align-items: flex-start;
+        margin-bottom: 18px; flex-wrap: wrap; gap: 14px;
+        padding-bottom: 14px; border-bottom: 2px solid var(--ri-border);
     }
-
-    .page-header h1 {
-        margin: 0;
-        font-size: 22px;
-        font-weight: 700;
-        border-bottom: none;
-        padding-bottom: 0;
-    }
-
+    .page-header h1 { margin: 0; font-size: 22px; font-weight: 700; border-bottom: none; padding-bottom: 0; }
     .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
 
     .section {
-        background: var(--ri-surface);
-        border: 1px solid var(--ri-border);
-        border-radius: var(--te-radius);
-        padding: 16px 20px;
-        margin-bottom: 18px;
+        background: var(--ri-surface); border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); padding: 16px 20px; margin-bottom: 18px;
     }
-
-    .section h2 {
-        margin: 0 0 12px 0;
-        font-size: 1.15em;
-        color: var(--ri-ink);
-        border-bottom: 1px solid var(--ri-border);
-        padding-bottom: 6px;
-    }
-
-    .section h2 small {
-        color: var(--ri-muted);
-        font-size: 12px;
-        font-weight: 500;
-        margin-left: 8px;
-    }
+    .section h2 { margin: 0 0 12px 0; font-size: 1.15em; color: var(--ri-ink);
+        border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
 
     .info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .info-table th, .info-table td {
-        padding: 5px 10px;
-        border-bottom: 1px solid #e4e8ec;
-        text-align: left;
-        vertical-align: top;
-    }
-    .info-table th {
-        width: 160px;
-        color: var(--ri-muted);
-        font-weight: 600;
-        background: #f8fafb;
-    }
-    .info-table td.mono {
-        font-family: ui-monospace, monospace;
-        font-size: 12px;
-        word-break: break-all;
-    }
+    .info-table th, .info-table td { padding: 5px 10px; border-bottom: 1px solid #e4e8ec; text-align: left; vertical-align: top; }
+    .info-table th { width: 160px; color: var(--ri-muted); font-weight: 600; background: #f8fafb; }
+    .info-table td.mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
 
-    table.sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .sub-table th, .sub-table td {
-        padding: 6px 10px;
-        border-bottom: 1px solid #e4e8ec;
-        text-align: left;
-    }
-    .sub-table thead { background: #f3f5f8; }
-    .sub-table th {
-        font-size: 11px;
-        color: var(--ri-muted);
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-    .sub-table .col-num { text-align: right; font-variant-numeric: tabular-nums; }
-    .sub-table .col-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ri-muted); }
-    .sub-table tbody tr:hover { background: #f8fafb; }
-
-    .empty-row { text-align: center; color: var(--ri-muted); padding: 16px 8px; }
     .action-bar { display: flex; gap: 8px; flex-wrap: wrap; }
     .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 14px; }
     .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
     .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
+    /* ------- 四层手风琴 ------- */
+    details.tree {
+        background: #fafbfc; border: 1px solid #e4e8ec; border-radius: var(--te-radius);
+        margin-bottom: 8px; overflow: hidden;
+    }
+    details.tree[open] { background: #ffffff; }
+
+    details.tree > summary {
+        list-style: none; cursor: pointer; padding: 10px 14px;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        font-size: 13px; color: var(--ri-ink); user-select: none;
+    }
+    details.tree > summary::-webkit-details-marker { display: none; }
+    details.tree > summary::before {
+        content: "▶"; font-size: 10px; color: var(--ri-muted);
+        transition: transform 0.2s; display: inline-block; width: 12px;
+    }
+    details.tree[open] > summary::before { transform: rotate(90deg); }
+
+    /* attempt 颜色标 */
+    details.tree.attempt-row { border-left: 4px solid #5e35b1; }
+    details.tree.segment-row { border-left: 4px solid #1e88e5; margin-left: 22px; }
+    details.tree.turn-row { border-left: 4px solid #2d6a4f; margin-left: 44px; }
+
+    .sum-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ri-muted); }
+    .sum-title { font-weight: 600; color: var(--ri-ink); }
+    .sum-meta { font-size: 12px; color: var(--ri-muted); margin-left: auto; }
+
+    .badge {
+        display: inline-block; font-size: 11px; font-weight: 700;
+        text-transform: uppercase; padding: 2px 8px; border-radius: 10px;
+        background: #e0e6ec; color: var(--ri-ink);
+    }
+    .badge.role-system { background: #f0e2c5; color: #8a5a12; }
+    .badge.role-user { background: #c7def5; color: #1e5080; }
+    .badge.role-assistant { background: #cde7d6; color: var(--ri-success); }
+    .badge.role-tool { background: #e0e0e0; color: #424242; }
+    .badge.role-unknown { background: #f3c8c8; color: #9b2c2c; }
+    .badge.reward-hi { background: #cde7d6; color: var(--ri-success); }
+    .badge.reward-lo { background: #f3c8c8; color: #9b2c2c; }
+    .badge.reward-mid { background: #f0e2c5; color: #8a5a12; }
+
+    .tree-body { padding: 10px 16px 14px; border-top: 1px dashed #e4e8ec; background: #ffffff; }
+    .empty-inline { color: var(--ri-muted); font-size: 12px; padding: 6px 4px; }
+
+    .summary-line {
+        font-size: 12.5px; color: #445566; padding: 4px 8px 4px 14px;
+        border-left: 2px solid #e4e8ec; margin: 4px 0;
+        background: #fbfcfd; border-radius: 0 4px 4px 0;
+        word-break: break-word;
+    }
+
+    pre.turn-body {
+        background: #ffffff; border: 1px solid #e4e8ec; border-radius: var(--te-radius);
+        padding: 10px 12px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 12.5px; line-height: 1.55;
+        white-space: pre-wrap; word-break: break-word; margin: 8px 0 4px;
+        max-height: 600px; overflow: auto;
+    }
+    pre.turn-body .marker-start, pre.turn-body .marker-end {
+        background: #fff3cd; color: #856404; padding: 0 2px; border-radius: 2px; font-weight: 700;
+    }
+    pre.turn-body .marker-end { background: #cde7d6; color: var(--ri-success); }
+    pre.turn-body .tool-call { background: #e8f0fa; color: #1e5080; padding: 0 2px; border-radius: 2px; }
+    pre.turn-body .tool-result { background: #f0e2c5; color: #8a5a12; padding: 0 2px; border-radius: 2px; }
+
+    .tool-chip {
+        display: inline-block; background: #e8f0fa; color: #1e5080;
+        border: 1px solid #c7def5; padding: 1px 6px; border-radius: 8px;
+        font-family: ui-monospace, monospace; font-size: 11px; margin: 1px 3px 1px 0;
+    }
+    .tool-chip-row { padding: 4px 14px; font-size: 12px; background: #f4f8fc; border-top: 1px dashed #c7def5; }
+    .loading-hint { color: var(--ri-muted); font-size: 12px; padding: 8px 12px; }
 </style>
 {% endblock %}
 
@@ -135,24 +146,15 @@
 <div class="section">
     <h2>概览</h2>
     <table class="info-table">
-        <tr>
-            <th>rollout 主键 ID</th>
-            <td class="mono">{{ rollout.id if rollout.id is not none else '-' }}</td>
-        </tr>
-        <tr>
-            <th>业务 rollout_id</th>
-            <td class="mono">{{ rollout.rollout_id if rollout.rollout_id is not none else '-' }}</td>
-        </tr>
+        <tr><th>rollout 主键 ID</th><td class="mono">{{ rollout.id if rollout.id is not none else '-' }}</td></tr>
+        <tr><th>业务 rollout_id</th><td class="mono">{{ rollout.rollout_id if rollout.rollout_id is not none else '-' }}</td></tr>
         <tr>
             <th>任务 ID</th>
             <td class="mono">
                 {% if task %}<a href="/api/tasks/{{ task.id }}">{{ task.id }}</a>{% else %}-{% endif %}
             </td>
         </tr>
-        <tr>
-            <th>pt_path</th>
-            <td class="mono">{{ rollout.pt_path or '-' }}</td>
-        </tr>
+        <tr><th>pt_path</th><td class="mono">{{ rollout.pt_path or '-' }}</td></tr>
         <tr>
             <th>pt_size / mtime</th>
             <td class="mono">
@@ -160,78 +162,76 @@
                 {% if rollout.pt_mtime %}&nbsp;·&nbsp; mtime {{ "%.0f"|format(rollout.pt_mtime) }}{% endif %}
             </td>
         </tr>
-        <tr>
-            <th>n_samples</th>
-            <td>{{ rollout.n_samples if rollout.n_samples is not none else '-' }}</td>
-        </tr>
-        <tr>
-            <th>n_attempts</th>
-            <td>{{ rollout.n_attempts if rollout.n_attempts is not none else '-' }}</td>
-        </tr>
+        <tr><th>n_samples</th><td>{{ rollout.n_samples if rollout.n_samples is not none else '-' }}</td></tr>
+        <tr><th>n_attempts</th><td>{{ rollout.n_attempts if rollout.n_attempts is not none else '-' }}</td></tr>
         <tr>
             <th>mean_reward</th>
-            <td>
-                {% if rollout.mean_reward is not none %}
-                    <strong>{{ "%.4f"|format(rollout.mean_reward) }}</strong>
-                {% else %}-{% endif %}
-            </td>
+            <td>{% if rollout.mean_reward is not none %}<strong>{{ "%.4f"|format(rollout.mean_reward) }}</strong>{% else %}-{% endif %}</td>
         </tr>
-        <tr>
-            <th>instance_count</th>
-            <td>{{ rollout.instance_count if rollout.instance_count is not none else '-' }}</td>
-        </tr>
-        <tr>
-            <th>scanned_at</th>
-            <td>{{ rollout.scanned_at or '-' }}</td>
-        </tr>
+        <tr><th>instance_count</th><td>{{ rollout.instance_count if rollout.instance_count is not none else '-' }}</td></tr>
+        <tr><th>scanned_at</th><td>{{ rollout.scanned_at or '-' }}</td></tr>
     </table>
 </div>
 
 <div class="section">
-    <h2>Attempts <small>{{ attempts | length }} 个</small></h2>
-    <table class="sub-table">
-        <thead>
-            <tr>
-                <th>primary_id</th>
-                <th>group_index</th>
-                <th>attempt_id</th>
-                <th>instance_id</th>
-                <th class="col-num">segment_count</th>
-                <th class="col-num">mean_reward</th>
-                <th>status</th>
-                <th>第一个 segment</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% if attempts %}
-                {% for a in attempts %}
-                <tr>
-                    <td class="col-id">{{ a.primary_id }}</td>
-                    <td>{{ a.group_index if a.group_index is not none else '-' }}</td>
-                    <td class="col-id">{{ a.attempt_id if a.attempt_id is not none else '-' }}</td>
-                    <td class="mono">{{ a.instance_id or '-' }}</td>
-                    <td class="col-num">{{ a.segment_count }}</td>
-                    <td class="col-num">
-                        {% if a.mean_reward %}{{ "%.4f"|format(a.mean_reward) }}{% else %}0.0000{% endif %}
-                    </td>
-                    <td>{{ a.status or '-' }}</td>
-                    <td>
-                        {% if a.segments and a.segments[0] %}
-                            <a href="/api/segments/{{ a.segments[0].primary_id }}">
-                                segment #{{ a.segments[0].primary_id }}
-                            </a>
-                            {% if a.segments[0].segment_index is not none %}
-                                (idx {{ a.segments[0].segment_index }})
-                            {% endif %}
-                        {% else %}-{% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            {% else %}
-                <tr><td colspan="8" class="empty-row">暂无 attempt 数据</td></tr>
-            {% endif %}
-        </tbody>
-    </table>
+    <h2>Attempts / Segments / Turns <small>{{ attempts | length }} 个 attempt</small></h2>
+
+    <div class="toolbar">
+        <button type="button" class="btn btn-secondary" id="expandAllBtn">展开全部</button>
+        <button type="button" class="btn btn-secondary" id="collapseAllBtn">折叠全部</button>
+        <a href="/api/rollouts/{{ rollout.id }}" class="btn btn-secondary" target="_blank">查看 JSON</a>
+    </div>
+
+    {% if attempts %}
+        <div id="treeRoot">
+            {% for a in attempts %}
+            <details class="tree attempt-row" data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
+                <summary>
+                    <span class="sum-id">attempt #{{ a.primary_id }}</span>
+                    <span class="sum-title">
+                        group <strong>{{ a.group_index if a.group_index is not none else '-' }}</strong>
+                        &nbsp;·&nbsp; attempt_id <strong>{{ a.attempt_id if a.attempt_id is not none else '-' }}</strong>
+                    </span>
+                    <span class="sum-meta">
+                        segments <strong>{{ a.segment_count }}</strong>
+                        &nbsp;·&nbsp; mean_reward <strong>{{ "%.4f"|format(a.mean_reward) }}</strong>
+                        {% if a.status %}&nbsp;·&nbsp; {{ a.status }}{% endif %}
+                    </span>
+                </summary>
+                <div class="tree-body">
+                    <div style="font-size: 12px; color: var(--ri-muted); margin-bottom: 8px;">
+                        instance_id: <code class="sum-id">{{ a.instance_id or '-' }}</code>
+                        &nbsp;·&nbsp; sandbox_id: <code class="sum-id">{{ a.sandbox_id or '-' }}</code>
+                    </div>
+
+                    {% if a.segments %}
+                        {% for s in a.segments %}
+                        <details class="tree segment-row" data-segment-id="{{ s.primary_id }}">
+                            <summary>
+                                <span class="sum-id">segment #{{ s.primary_id }}</span>
+                                <span class="sum-title">
+                                    index <strong>{{ s.segment_index if s.segment_index is not none else '-' }}</strong>
+                                </span>
+                                <span class="sum-meta">
+                                    status <strong>{{ s.status or '-' }}</strong>
+                                    &nbsp;·&nbsp; reward <strong>{% if s.reward is not none %}{{ "%.4f"|format(s.reward) }}{% else %}-{% endif %}</strong>
+                                </span>
+                            </summary>
+                            <div class="tree-body" data-segment-body="{{ s.primary_id }}">
+                                <div class="loading-hint">点击展开以加载 turns…</div>
+                            </div>
+                        </details>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-inline">该 attempt 暂无 segment</div>
+                    {% endif %}
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-inline">暂无 attempt 数据</div>
+    {% endif %}
 </div>
 
 <div class="section">
@@ -245,7 +245,126 @@
 {% block extra_js %}
 <script>
     const ROLLOUT_ID = {{ (rollout.id or 0) | tojson }};
+    const SEG_TURNS_URL = (sid) => `/api/segments/${encodeURIComponent(sid)}/turns.json`;
 
+    function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function shortSummary(s, limit) {
+        if (!s) return '';
+        const flat = String(s).replace(/\s+/g, ' ').trim();
+        if (flat.length <= limit) return flat;
+        return flat.slice(0, limit) + '…';
+    }
+
+    function rewardBadge(r) {
+        if (r == null) return '';
+        const v = Number(r);
+        if (Number.isNaN(v)) return '';
+        let cls = 'reward-mid';
+        if (v >= 0.7) cls = 'reward-hi';
+        else if (v <= 0.3) cls = 'reward-lo';
+        return `<span class="badge ${cls}" title="reward">R ${v.toFixed(3)}</span>`;
+    }
+
+    function renderTurns(segmentId, data) {
+        const root = document.querySelector(`[data-segment-body="${segmentId}"]`);
+        if (!root) return;
+        const turns = (data && data.turns) || [];
+        if (!turns.length) {
+            root.innerHTML = '<div class="empty-inline">该 segment 暂无 turn 文本（可能 .pt 还未解析）</div>';
+            return;
+        }
+        const sourceTag = data.source ? `<span class="sum-meta">source: ${escapeHtml(data.source)}</span>` : '';
+        const header = `<div class="toolbar" style="margin-bottom:8px;">
+            <span class="sum-title">Turns <small style="color:var(--ri-muted);">${turns.length} turn(s)</small></span>
+            ${sourceTag}
+            <button type="button" class="btn btn-secondary btn-sm toggle-all-turns" data-action="expand">展开所有 turn</button>
+            <button type="button" class="btn btn-secondary btn-sm toggle-all-turns" data-action="collapse">折叠所有 turn</button>
+        </div>`;
+        const list = turns.map((t) => {
+            const role = escapeHtml(t.role_label || t.role || 'unknown');
+            const idx = t.turn_index;
+            const chars = t.body_char_count || 0;
+            const tok = t.token_estimate || 0;
+            const toolTag = t.has_tool_call ? '🔧' : '';
+            const thinkTag = t.has_think ? '💭' : '';
+            const toolList = (t.tool_call_names || []).map((n) => `<span class="tool-chip">${escapeHtml(n)}</span>`).join('');
+            const summary = escapeHtml(t.prompt_summary || shortSummary(t.body_text || '', 120));
+            const toolRow = toolList ? `<div class="tool-chip-row">tools: ${toolList}</div>` : '';
+            return `<details class="tree turn-row" data-turn-id="${t.primary_id || ''}">
+                <summary>
+                    <span class="sum-id">turn #${idx}</span>
+                    <span class="badge role-${escapeHtml(t.role_label || t.role || 'unknown')}">${role}</span>
+                    ${toolTag ? `<span title="包含 tool call">🔧</span>` : ''}
+                    ${thinkTag ? `<span title="包含 think 块">💭</span>` : ''}
+                    <span class="sum-meta">${chars} chars${tok ? ' · ~' + tok + ' tok' : ''}</span>
+                </summary>
+                ${toolRow}
+                <div class="tree-body">
+                    <div class="summary-line">${summary || '<span style="color:var(--ri-muted);">(空)</span>'}</div>
+                    <pre class="turn-body">${t.html || ''}</pre>
+                </div>
+            </details>`;
+        }).join('');
+        root.innerHTML = header + list;
+
+        // 展开/折叠所有 turn
+        root.querySelectorAll('.toggle-all-turns').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const open = btn.dataset.action === 'expand';
+                root.querySelectorAll('details.turn-row').forEach((d) => { d.open = open; });
+            });
+        });
+    }
+
+    function showLoadError(segmentId, msg) {
+        const root = document.querySelector(`[data-segment-body="${segmentId}"]`);
+        if (!root) return;
+        root.innerHTML = `<div class="alert alert-warning" style="margin:0;">加载 turn 失败：${escapeHtml(msg)}</div>`;
+    }
+
+    // segment 展开时按需加载 turns
+    const segmentLoaded = new Set();
+    document.querySelectorAll('details.segment-row').forEach((seg) => {
+        seg.addEventListener('toggle', async () => {
+            if (!seg.open) return;
+            const sid = seg.dataset.segmentId;
+            if (!sid || segmentLoaded.has(sid)) return;
+            const body = seg.querySelector(`[data-segment-body="${sid}"]`);
+            if (body) body.innerHTML = '<div class="loading-hint">正在加载 turns…</div>';
+            try {
+                const resp = await fetch(SEG_TURNS_URL(sid), { headers: { Accept: 'application/json' } });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || (data && data.code !== 0)) {
+                    throw new Error((data && data.msg) || ('HTTP ' + resp.status));
+                }
+                renderTurns(sid, data.data || {});
+                segmentLoaded.add(sid);
+            } catch (e) {
+                showLoadError(sid, e.message || String(e));
+            }
+        });
+    });
+
+    // 全部展开/折叠
+    document.getElementById('expandAllBtn').addEventListener('click', () => {
+        document.querySelectorAll('#treeRoot details.tree').forEach((d) => { d.open = true; });
+    });
+    document.getElementById('collapseAllBtn').addEventListener('click', () => {
+        document.querySelectorAll('#treeRoot details.tree').forEach((d) => { d.open = false; });
+    });
+
+    // 重解析按钮（沿用原行为）
     document.getElementById("reparseBtn").addEventListener("click", async function () {
         const btn = this;
         if (!confirm("确定要重新解析该 rollout 对应的 .pt 文件吗？\n会按 T3 规则重新切分 attempt / segment / turn，并刷新 turn 表。")) return;
@@ -257,7 +376,7 @@
                 method: "POST",
                 headers: { "Accept": "application/json" },
             });
-            const data = await resp.json().catch(function () { return {}; });
+            const data = await resp.json().catch(() => ({}));
             if (!data || data.code !== 0) {
                 throw new Error((data && data.msg) || ("HTTP " + resp.status));
             }

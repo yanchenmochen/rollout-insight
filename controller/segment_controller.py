@@ -685,6 +685,134 @@ async def api_segment_transcript_json(segment_id: int) -> Response:
     )
 
 
+@router.get("/api/segments/{segment_id}/turns.json", response_model=None)
+async def api_segment_turns_json(segment_id: int) -> Response:
+    """按需返回某个 segment 的 turn 列表（供 rollout 详情页懒加载）。
+
+    优先从 ``ri_segment_turn_table`` 取；若表里没数据，再尝试通过
+    ``ensure_transcript`` 触发 T3 切分并落库一次，之后命中 turn 表。
+    """
+    Segment = _segment_model()
+    Session = _session_factory()
+    if Segment is None or Session is None:
+        raise RolloutInsightException(
+            RolloutInsightException.NOT_IMPLEMENTED, "Segment 模型尚未就绪"
+        )
+
+    with Session() as session:
+        seg_obj = (
+            session.query(Segment)
+            .filter(Segment.primary_id == segment_id)
+            .first()
+        )
+        if seg_obj is None:
+            raise RolloutInsightException(
+                RolloutInsightException.PARSE_DUMP_NOT_FOUND,
+                f"segment #{segment_id} 不存在",
+            )
+
+    turns: List[Dict[str, Any]] = []
+    # 1) 优先从 turn 表读
+    try:
+        from db.db_segment_turn_service import DBSegmentTurnService
+
+        turns = DBSegmentTurnService.list_turns(int(segment_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_turns 失败 segment_id={}: {}", segment_id, exc)
+
+    # 2) 落表为空时，懒触发 ensure_transcript + split_response_to_turns
+    source = "turn_table"
+    if not turns:
+        transcript_text = ""
+        try:
+            ensure_fn = _ensure_transcript_fn()
+            if callable(ensure_fn):
+                r = ensure_fn(segment_id)
+                if isinstance(r, dict):
+                    transcript_text = (
+                        r.get("transcript")
+                        or r.get("text")
+                        or r.get("response_text")
+                        or ""
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
+        if not transcript_text:
+            # 兜底：直接从 segment ORM 字段读
+            try:
+                with Session() as session:
+                    seg_obj = (
+                        session.query(Segment)
+                        .filter(Segment.primary_id == segment_id)
+                        .first()
+                    )
+                    if seg_obj is not None:
+                        transcript_text = _load_transcript_text(seg_obj, {})
+            except Exception:
+                transcript_text = ""
+
+        if transcript_text:
+            try:
+                from db.db_segment_turn_service import DBSegmentTurnService
+                from utils.rollout_pt_parser import split_response_to_turns
+
+                parsed = split_response_to_turns(transcript_text)
+                if parsed:
+                    DBSegmentTurnService.upsert_segment_turns(
+                        segment_id=int(segment_id), turns=parsed, force=True
+                    )
+                    turns = DBSegmentTurnService.list_turns(int(segment_id))
+                    source = "parsed_on_demand"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("懒切分 turn 失败 segment_id={}: {}", segment_id, exc)
+
+    # 渲染时附带预计算的高亮 HTML & 摘要，便于前端直接渲染
+    items: List[Dict[str, Any]] = []
+    for t in turns:
+        body = t.get("body_text") or ""
+        summary = _make_turn_summary(body)
+        items.append(
+            {
+                "primary_id": t.get("primary_id"),
+                "turn_index": t.get("turn_index"),
+                "role": t.get("role") or "unknown",
+                "role_label": t.get("role") or "unknown",
+                "has_tool_call": bool(t.get("has_tool_call")),
+                "has_think": bool(t.get("has_think")),
+                "tool_call_names": t.get("tool_call_names") or [],
+                "body_char_count": int(t.get("body_char_count") or len(body)),
+                "token_estimate": int(t.get("token_estimate") or 0),
+                "prompt_summary": t.get("prompt_summary") or summary,
+                "html": _highlight_html(body),
+                "body_text": body,  # 默认折叠时仅用前 N 字，全文只在「展开」时用到
+            }
+        )
+
+    return Response.success(
+        data={
+            "segment_id": int(segment_id),
+            "turn_count": len(items),
+            "turns": items,
+            "source": source,
+        }
+    )
+
+
+def _make_turn_summary(body: str, limit: int = 120) -> str:
+    """根据 body 生成一行摘要（用于折叠态展示）。
+
+    - 去除首尾空白
+    - 把换行/多个空白压成一个空格
+    - 超过 limit 截断并加 …
+    """
+    if not body:
+        return ""
+    flat = " ".join(body.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit] + "…"
+
+
 def _load_transcript_text(seg_obj: Any, seg_dict: Dict[str, Any]) -> str:
     """从 segment ORM/字段里尝试取出 transcript 文本。
 
