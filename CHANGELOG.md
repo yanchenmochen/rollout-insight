@@ -1,5 +1,104 @@
 # rollout-insight CHANGELOG
 
+## v0.5.2 — func.md 自动扫描 + skill 指引
+
+发布日期：2026-10-15
+
+### 概述
+
+v0.5.2 是 v0.5 系列的最后一个 tag：交付一份**自动生成**的 `func.md` 能力索引（覆盖
+`controller/`、`service/`、`db/`、`utils/`、`data/` 五个目录的公开符号），并配套
+AI agent 的编码约定 + skill 指引，让后续新增 / 修改业务能力时能避免重复造轮子。
+
+`func.md` 由 `python scripts/scan_func_md.py` 全量扫描得出，**禁止手改**；
+CI 阶段跑 `python scripts/scan_func_md.py --check` 校验一致性，不一致直接失败。
+
+### 完成情况（按子任务）
+
+| 子任务 | 内容 | commit |
+| --- | --- | --- |
+| T14 | `scripts/scan_func_md.py` —— AST 扫描 + 渲染 controller/service/db/utils/data 公开能力；`--check` 模式提供 CI 门禁 | 本 tag 内 |
+| T14 | `scripts/make_func_md.sh` —— bash 包装脚本（自动 cd 到 repo 根），供本地"一键重生成" | 本 tag 内 |
+| T14 | 首次 `func.md`（基于 main 分支当前代码，覆盖 5 个目录的全部公开类 / 静态方法 / 路由 / 错误码） | 本 tag 内 |
+| T15 | 新规则文件 `.cursor/rules/rollout-insight-conventions.mdc`（alwaysApply=true）—— "改前先查 func.md / 改后重生成 func.md" | 本 tag 内 |
+| T15 | `skill/SKILL.md` 顶部加 "改前先读 func.md / 改后重生成 func.md"，末尾加 "维护 func.md" 排障 | 本 tag 内 |
+| T15 | `skill/recipes.md` 新增 "场景 0：新增 controller / service / db 表 / utils 函数的标准流程"（三步走 + 反例表） | 本 tag 内 |
+
+### 文件变更（vs v0.4.0 → v0.5.2 之间已落地的 v0.5.0 / v0.5.1）
+
+> 本节说明 v0.5.2 仅负责**索引层**（v0.5.0 turn 重写 + v0.5.1 用户/登录 的代码
+> 与本 tag 无关）。v0.5.0/v0.5.1 的实际代码改动在 commit `97f5bfe` 之前已落到 main。
+
+#### 新建文件（3 个）
+
+- `func.md` —— 自动生成的公开能力索引（**禁止手改**，下次扫描会被覆盖）
+- `scripts/scan_func_md.py` —— AST 扫描 + 渲染器；支持 `--check` / `--output`
+- `scripts/make_func_md.sh` —— bash 包装（默认 cd 到 repo 根后调 scan_func_md.py）
+
+#### 修改文件（3 个）
+
+- `.cursor/rules/rollout-insight-conventions.mdc`（new file, but in `.cursor/rules/` —— 见下条）
+- `skill/SKILL.md` —— 顶部"## 改前先读 func.md" 段 + 末尾"## 维护 func.md" 段
+- `skill/recipes.md` —— 顶部"## 场景 0：新增 controller/service/db/utils 函数的标准流程"
+
+#### 新建规则（1 个）
+
+- `.cursor/rules/rollout-insight-conventions.mdc` —— alwaysApply；强制 "改前查 func.md → 实现 → 跑 scan_func_md.py 重新生成"
+
+### 升级指南
+
+1. **重新生成 func.md（CI 已经能校验）**
+
+   ```bash
+   cd /path/to/rollout-insight
+   python scripts/scan_func_md.py --check   # 应输出 "[scan_func_md] --check OK"
+   ```
+
+2. **更新 skill 软链**
+
+   ```bash
+   bash skill/install.sh
+   # 或强制覆盖：OVERRIDE=1 bash skill/install.sh
+   ```
+
+3. **新规则文件**
+
+   `.cursor/rules/rollout-insight-conventions.mdc` 与 v0.5.2 一同发布；
+   Cursor 会自动加载，无需手动复制。
+
+### 新功能速查
+
+- `python scripts/scan_func_md.py` —— 全量覆盖 `func.md`。
+- `python scripts/scan_func_md.py --check` —— CI 防漂移：与现有 func.md 不一致则退出码 1。
+- `bash scripts/make_func_md.sh [--check]` —— 同上，但自动切换到仓库根目录。
+- func.md 覆盖：
+  - `data/` — 枚举、DTO、异常；错误码常量（table 化）。
+  - `utils/` — 模块级公开函数 + docstring 首行。
+  - `db/` — ORM 模型 (class / `__tablename__`)；数据访问 service（`@staticmethod` / `@classmethod`）。
+  - `service/` — 公开 class（含实例方法与 module-level 函数）+ 入口签名。
+  - `controller/` — FastAPI 路由 (`@router.get/post/...`) Method / Path / Function / docstring。
+
+### 已知问题（v0.5.2 不修，留 v0.5.3+ 处理）
+
+1. **`func.md` 不解析函数 docstring 内部示例代码块**
+
+   只取 signature + 首行注释（避免正则误判代码块 / 多行 noqa）。
+   完整 docstring 见 `Read` 原文件。
+
+2. **`DBUserService` 等未提交文件被一并索引**
+
+   `db/db_user*.py` 与 v0.5.1 用户/登录相关，目前在 working tree 但尚未
+   commit。`func.md` 会自动收录它们，commit 上来后会保持一致。
+   不影响 CI：`--check` 只关心 working tree 与 func.md 的字节级一致。
+
+3. **service 段的 `instance method` 与 `module-level function` 可能重复**
+
+   如 `RolloutParseService.parse_rollout` 同时是 class 方法，又作为 module-level
+   包装函数存在（v0.5.0 T2 把入口提到 module 层）。`func.md` 会同时收录两处，
+   索引更全但读者需注意调用入口是 module-level 那个。
+
+---
+
 ## v0.4.0 — 树状浏览 + .pt 深度解析 + agent-transcripts 报告
 
 发布日期：2026-10-13
