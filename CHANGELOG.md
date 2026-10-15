@@ -1,5 +1,114 @@
 # rollout-insight CHANGELOG
 
+## v0.5.1 — 用户登录 / 注册 / per-user 集群配置
+
+发布日期：2026-10-15
+
+### 概述
+
+v0.5.1 是 v0.5.0 的**安全与多用户增强**：把启动期 seed 的 admin 用户正式接入
+cookie session（`SessionMiddleware` + bcrypt），开放 `/api/auth/login` /
+`/api/auth/register` / `/api/auth/logout` / `/api/auth/me` 四个路由；所有**业务**
+router 强制 `Depends(require_login)`，未登录时 HTML 路径 302 → `/api/auth/login?next=...`，
+JSON / CLI 路径返回 `401 {code:401, msg:"login required"}`。
+
+同步交付 per-user 集群配置 CRUD（`ri_user_cluster_config_table`）：每个登录用户可以
+在 `/api/me/cluster-configs` 维护自己的南湖集群凭据（cluster_key / display_label /
+api_base_url / user_id_field / app_key / app_secret / OAuth2 token 配置），**不**
+影响他人，也不接入 nanhu-cli（v0.5.3+ 才切）。
+
+**关键边界**：v0.5.1 **不**动 v0.5.0 turn 解析代码、**不**动 nanhu-cli / `DBNanhuJob`
+/ `service/nanhu_*` —— nanhu 调度仍是全局共享。
+
+### 完成情况（按子任务）
+
+| 子任务 | 内容 | commit |
+| --- | --- | --- |
+| T7 | 扩展 `db/db_user_service.py` —— `create_user / authenticate / get_by_username / get_by_id / list_users / update_password / set_active / set_last_login / count_users / is_username_taken`（保留 v0.5.0 `ensure_admin_seed` + bcrypt 工具） | 本 tag 内 |
+| T7 | 新建 `db/db_user_cluster_config_service.py` —— `list_by_user / get_by_user_and_key / get_by_id / upsert / delete_by_id / delete_by_user_and_key / list_need_token_refresh`（v0.5.3 备用） | 本 tag 内 |
+| T8 | 新建 `utils/auth_session.py` —— `get_session_secret`（config.json 自动生成 / 落盘）/ `install_session_middleware` / `current_user` / `require_login`（HTTPException 短路，区分 HTML/JSON）/ `require_admin` / `set_login_session` / `clear_session` / `wants_json_response` | 本 tag 内 |
+| T8 | `main.py` 改：`install_session_middleware(app)` 在 `include_all_routers()` 前；全局中间件注入 `request.state.current_user`；全局 `HTTPException` handler 把 `{code, msg}` 透传到 body | 本 tag 内 |
+| T8 | 5 个业务 router 顶部加 `dependencies=[Depends(require_login)]`：task / rollout / segment / nanhu / agent_transcript | 本 tag 内 |
+| T9 | 新建 `controller/auth_controller.py` —— login / register / logout / me（兼容 form + JSON；register 仅在 user_count==1 开放） | 本 tag 内 |
+| T9 | 新建 `templates/login.html` + `templates/register.html` —— 极简风格，复用 base.html CSS 变量 | 本 tag 内 |
+| T10 | 新建 `controller/user_cluster_config_controller.py` —— list / new / edit / upsert / delete（按 `user_id` 隔离，cluster_key 校验 `^[a-z][a-z0-9._-]*$`） | 本 tag 内 |
+| T10 | 新建 `templates/user_cluster_config.html` —— 列表 / 新建 / 编辑三模式；token_request_body 用 `<textarea>`，token_enabled 单独 checkbox | 本 tag 内 |
+| T11 | `templates/base.html` 顶栏加登录态（`navbar-auth`）：已登录显示 `[username (role)] [设置] [退出]`，未登录显示 `[登录] [注册]` | 本 tag 内 |
+| T12 | 新建 `cli/users_cmd.py` + 注册 `users` 子命令到 `cli/rollout_insight.py` —— `list / create / set-password / activate / deactivate`（写操作默认 dry-run） | 本 tag 内 |
+| T13 | `CHANGELOG.md` 加 v0.5.1 节 + `git tag v0.5.1` | 本 tag 内 |
+
+### 文件变更（vs v0.5.0）
+
+#### 新建文件（6 个）
+
+- `db/db_user_cluster_config_service.py` —— `DBUserClusterConfigService` 完整 CRUD
+- `utils/auth_session.py` —— Session 密钥、依赖、`install_session_middleware`
+- `controller/auth_controller.py` —— login/register/logout/me 路由
+- `controller/user_cluster_config_controller.py` —— per-user cluster CRUD 路由
+- `templates/login.html` / `templates/register.html` / `templates/user_cluster_config.html` —— 模板
+- `cli/users_cmd.py` —— users 子命令实现
+
+#### 修改文件（9 个）
+
+- `db/db_user_service.py` —— 加 10 个静态方法（CRUD）；保留原有 `hash_password / verify_password / ensure_admin_seed`
+- `main.py` —— 装 SessionMiddleware + 全局 current_user 中间件 + HTTPException handler 把 `{code, msg}` 透传
+- `controller/{task,rollout,segment,nanhu,agent_transcript}_controller.py` —— 顶部加 `dependencies=[Depends(require_login)]`
+- `templates/base.html` —— 顶栏登录态
+- `cli/rollout_insight.py` —— 注册 `users` 子命令；dispatch 加 `if args.command == "users"` 分支
+- `config.json` —— 加 `session_secret` 字段（首次启动随机生成，自动落盘）；`rollout_insight_version` 更新为 `0.5.1`
+
+### 字段顺序（per-user cluster_config）
+
+为方便 v0.5.3+ 把 nanhu-cli 切到读这张表，本 tag 的字段顺序与
+`Shell-dsv2/automate/db/db_cluster_config.py` 对齐：
+
+| 字段 | 类型 | 备注 |
+| --- | --- | --- |
+| `cluster_key` | str(32) | UNIQUE per user；正则 `^[a-z][a-z0-9._-]*$` |
+| `display_label` | str(128) | 新建必填 |
+| `api_base_url` | str(512) | 新建必填 |
+| `user_id_field` | str(64) | 南湖 userId query 参数 |
+| `app_key` / `app_secret` | str | OAuth2 凭据 |
+| `auth_token_url` | str(512) | token 刷新 URL |
+| `token_http_method` | str(8) | GET/POST/PUT/PATCH/DELETE，默认 POST |
+| `token_request_body` | text | 裸 JSON 文本（与 automate 一致） |
+| `token_enabled` | bool | 默认 false（v0.5.1 仅记录开关；v0.5.3+ 才接调度） |
+
+### 升级指南
+
+```bash
+# 1. 拉新代码
+cd /mnt/zj-data/data/songquanheng/rollout-insight
+git pull   # 或者从 tag v0.5.1 checkout
+
+# 2. 重启服务（v0.5.0 → v0.5.1 仅换二进制版本；schema 没动，data/rollout_insight.db 直接复用）
+python main.py   # 启动时会自动 create_all + ensure_admin_seed + 生成 session_secret
+```
+
+**注意**：
+- 旧浏览器/curl 调用 `/api/tasks` 等业务路由会**多一层 302/401** —— 这是预期行为，请登录或带 `Accept: application/json`。
+- 第一个注册的用户拿 `admin` 角色（plan "首位 = admin" 约定）；注册通道仅在 user_count == 1 时开放，后续用户由 admin 通过 CLI 创建：`rollout-insight users create --username X --password Y --role user --submit`
+- **不要**把 `config.json` 的 `session_secret` 提交到公开仓库（已 dev-ignore）：cookie 一旦泄漏，攻击者就能伪造任意 user_id。
+
+### 验收口径（全部通过 ✅）
+
+- 未登录 `curl -i http://localhost:39998/api/tasks` → 302 → `/api/auth/login?next=/api/tasks`（HTML UA）
+- 未登录 `curl -H "Accept: application/json" /api/tasks` → 401 `{"code":401,"msg":"login required"}`
+- `curl -c /tmp/c.txt -X POST -d "username=admin&password=admin123" /api/auth/login` → 302 + Set-Cookie `session=...`
+- `curl -b /tmp/c.txt /api/me/cluster-configs` → 200 + `{"configs":[], "count":0}`
+- 新建 `cluster_key=wuxi-test&display_label=...&api_base_url=...` → 落库后 list 包含 `wuxi-test`
+- `POST /api/me/cluster-configs/wuxi-test/delete` → 200 + 列表为空
+- `POST /api/auth/logout` → 清 cookie；后续业务路由 → 401
+- `users create --submit` → 新建用户成功；`users list --format table` 渲染 markdown 表
+- 注册仅在 user_count == 1 时开放；第二个 user 注册 → 403
+
+### 已知遗留（v0.5.1 不做）
+
+- `func.md` 已扫描本 tag 新增的 6 个公开文件（v0.5.2 T14 自动包含）；不需要手动跑 scan_func_md。
+- nanhu-cli 仍走 `DBNanhuJob`（v0.5.0 行为）；v0.5.3+ 才切到读 `ri_user_cluster_config_table`。
+- 注册用户名仅做 ASCII 字符 + 长度校验；不做国际化（如中文用户名）。
+- 第一次自动注册拿 admin 是 v0.5.1 临时约定 —— 后续 v0.5.4+ 计划改成"只有 admin 能 invite 新 user"。
+
 ## v0.5.2 — func.md 自动扫描 + skill 指引
 
 发布日期：2026-10-15
