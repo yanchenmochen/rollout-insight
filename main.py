@@ -23,6 +23,7 @@ from starlette.staticfiles import StaticFiles
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from db.db_element import Base, Session, engine
+from utils.bootstrap import bootstrap_on_startup
 from utils.config_loader import config
 from utils.log_setup import setup_logging
 
@@ -70,6 +71,15 @@ include_all_routers()
 
 # 启动时建表（v0.1.0 暂为空模型；v0.2 起正式使用）
 Base.metadata.create_all(bind=engine)
+
+# v0.5.0 启动期 bootstrap：
+#   - DELETE FROM ri_segment_turn_table（p17_a：丢弃旧 turn 行）
+#   - ensure_admin_seed（若 user 表空则插入 admin/admin123）
+try:
+    bootstrap_summary = bootstrap_on_startup()
+    logger.info("[main] v0.5.0 bootstrap summary: {}", bootstrap_summary)
+except Exception as exc:  # noqa: BLE001
+    logger.exception("[main] bootstrap_on_startup 失败: {}", exc)
 
 
 @app.exception_handler(RolloutInsightException)

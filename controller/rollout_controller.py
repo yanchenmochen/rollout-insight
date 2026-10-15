@@ -281,9 +281,13 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
 
 @router.get("/api/tasks/{task_id}/rollouts/{rollout_id}", include_in_schema=False)
 async def page_rollout_detail(
-    task_id: int, rollout_id: int, request: Request
+    task_id: int, rollout_id: int, request: Request, group: Optional[int] = None
 ) -> HTMLResponse:
-    """渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。"""
+    """渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。
+
+    v0.5.0 T4 新增 ``?group=N`` 过滤：第一层手风琴按 group 折完后，
+    当 URL 带 group 参数时，只渲染该 group 的 attempts。
+    """
     Rollout = _rollout_model()
     Task = _task_model()
     Session = _session_factory()
@@ -291,6 +295,8 @@ async def page_rollout_detail(
     rollout: Dict[str, Any] = {}
     task: Optional[Dict[str, Any]] = None
     attempts: List[Dict[str, Any]] = []
+    filtered_attempts: List[Dict[str, Any]] = []
+    distinct_groups: List[int] = []
 
     if Rollout is None or Session is None:
         warning = "Rollout 模型尚未就绪"
@@ -314,6 +320,23 @@ async def page_rollout_detail(
                         )
                         task = _task_to_dict(t_obj)
                     attempts = _load_rollout_full(rollout_id).get("attempts", [])
+                    distinct_groups = sorted(
+                        {
+                            int(a["group_index"])
+                            for a in attempts
+                            if a.get("group_index") is not None
+                        }
+                    )
+                    if group is not None:
+                        filtered_attempts = [
+                            a for a in attempts if a.get("group_index") == int(group)
+                        ]
+                        if not filtered_attempts:
+                            warning = (
+                                f"rollout #{rollout_id} 中未找到 group={group} 的 attempt"
+                            )
+                    else:
+                        filtered_attempts = attempts
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 rollout 详情失败 rollout_id={}: {}", rollout_id, exc)
             warning = f"加载失败: {exc}"
@@ -325,15 +348,23 @@ async def page_rollout_detail(
             "page_title": f"Rollout #{rollout_id} - 任务 #{task_id}",
             "rollout": rollout,
             "task": task,
-            "attempts": attempts,
+            "attempts": filtered_attempts,
+            "all_attempts": attempts,
+            "distinct_groups": distinct_groups,
+            "current_group": group,
             "warning": warning,
         },
     )
 
 
 @router.get("/api/rollouts/{rollout_id}", response_model=None)
-async def api_get_rollout_json(rollout_id: int) -> Response:
-    """JSON 端点：返回 rollout 概览 + attempts 列表。"""
+async def api_get_rollout_json(
+    rollout_id: int, group: Optional[int] = Query(default=None, description="按 group_index 过滤 attempts")
+) -> Response:
+    """JSON 端点：返回 rollout 概览 + attempts 列表。
+
+    v0.5.0 T4 新增 ``?group=N`` 过滤：仅返回该 group 的 attempts。
+    """
     try:
         data = _load_rollout_full(rollout_id)
     except RolloutInsightException:
@@ -344,6 +375,12 @@ async def api_get_rollout_json(rollout_id: int) -> Response:
             RolloutInsightException.DB_ERROR, f"加载 rollout 失败: {exc}"
         ) from exc
 
+    all_attempts = data["attempts"]
+    if group is not None:
+        filtered = [a for a in all_attempts if a.get("group_index") == int(group)]
+    else:
+        filtered = all_attempts
+
     return Response.success(
         data={
             "pt_path": data["rollout"].get("pt_path"),
@@ -352,18 +389,34 @@ async def api_get_rollout_json(rollout_id: int) -> Response:
             "n_attempts": data["rollout"].get("n_attempts"),
             "instance_count": data["rollout"].get("instance_count"),
             "scanned_at": data["rollout"].get("scanned_at"),
+            "group_filter": group,
+            "distinct_groups": sorted(
+                {
+                    int(a["group_index"])
+                    for a in all_attempts
+                    if a.get("group_index") is not None
+                }
+            ),
             "attempts": [
                 {
                     "primary_id": a["primary_id"],
                     "group_index": a["group_index"],
+                    "attempt_id": a.get("attempt_id"),
                     "segment_count": a["segment_count"],
                     "mean_reward": a["mean_reward"],
                     "sandbox_id": a["sandbox_id"],
                     "instance_id": a["instance_id"],
                     "status": a["status"],
                     "first_segment_id": (a["segments"][0]["primary_id"] if a["segments"] else None),
+                    # v0.5.0 T2
+                    "n_tool_calls": a.get("n_tool_calls", 0),
+                    "n_diff_lines": a.get("n_diff_lines", 0),
+                    "total_resp_len": a.get("total_resp_len", 0),
+                    "total_mask_sum": a.get("total_mask_sum", 0),
+                    "total_trainable_tokens": a.get("total_trainable_tokens", 0),
+                    "reward_bucket": a.get("reward_bucket", "none"),
                 }
-                for a in data["attempts"]
+                for a in filtered
             ],
         }
     )

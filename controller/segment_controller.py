@@ -686,42 +686,168 @@ async def api_segment_transcript_json(segment_id: int) -> Response:
 
 
 @router.get("/api/segments/{segment_id}/turns.json", response_model=None)
-async def api_segment_turns_json(segment_id: int) -> Response:
+async def api_segment_turns_json(
+    segment_id: int,
+    pt_path: Optional[str] = None,
+) -> Response:
     """按需返回某个 segment 的 turn 列表（供 rollout 详情页懒加载）。
 
-    优先从 ``ri_segment_turn_table`` 取；若表里没数据，再尝试通过
-    ``ensure_transcript`` 触发 T3 切分并落库一次，之后命中 turn 表。
+    v0.5.0 T4：优先用 ``pt_path`` + tokenizer 切分（``split_response_to_turns_with_tokenizer``）；
+    若 tokens 拿不到或 tokenizer 不可用，回退到 ``ri_segment_turn_table``；
+    再回退到 ``ensure_transcript`` + 文本切分。
+
+    如果 query string 带 ``?pt_path=...``，会优先用该 .pt 的 tokens 重新切分；
+    否则从 ``ensure_transcript`` 拿的 sample tokens 切。
     """
     Segment = _segment_model()
+    Attempt = _attempt_model()
+    Rollout = _rollout_model()
     Session = _session_factory()
     if Segment is None or Session is None:
         raise RolloutInsightException(
             RolloutInsightException.NOT_IMPLEMENTED, "Segment 模型尚未就绪"
         )
 
-    with Session() as session:
-        seg_obj = (
-            session.query(Segment)
-            .filter(Segment.primary_id == segment_id)
-            .first()
-        )
-        if seg_obj is None:
-            raise RolloutInsightException(
-                RolloutInsightException.PARSE_DUMP_NOT_FOUND,
-                f"segment #{segment_id} 不存在",
+    # 拿 seg + 找 pt_path
+    pt_path_resolved: Optional[str] = pt_path or None
+    try:
+        with Session() as session:
+            seg_obj = (
+                session.query(Segment)
+                .filter(Segment.primary_id == segment_id)
+                .first()
             )
+            if seg_obj is None:
+                raise RolloutInsightException(
+                    RolloutInsightException.PARSE_DUMP_NOT_FOUND,
+                    f"segment #{segment_id} 不存在",
+                )
+            if not pt_path_resolved and Attempt is not None and getattr(seg_obj, "attempt_id", None):
+                att = (
+                    session.query(Attempt)
+                    .filter(Attempt.primary_id == seg_obj.attempt_id)
+                    .first()
+                )
+                if att is not None and Rollout is not None:
+                    ro = (
+                        session.query(Rollout)
+                        .filter(
+                            Rollout.task_id == att.task_id,
+                            Rollout.rollout_id == att.rollout_id,
+                        )
+                        .order_by(Rollout.scanned_at.desc())
+                        .first()
+                    )
+                    if ro is not None:
+                        pt_path_resolved = getattr(ro, "pt_path", None)
+    except RolloutInsightException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("解析 segment / pt_path 失败 segment_id={}: {}", segment_id, exc)
 
     turns: List[Dict[str, Any]] = []
-    # 1) 优先从 turn 表读
-    try:
-        from db.db_segment_turn_service import DBSegmentTurnService
-
-        turns = DBSegmentTurnService.list_turns(int(segment_id))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_turns 失败 segment_id={}: {}", segment_id, exc)
-
-    # 2) 落表为空时，懒触发 ensure_transcript + split_response_to_turns
     source = "turn_table"
+
+    # 0) v0.5.0 T1 优先：tokens + tokenizer 切分（带 pt_path 解析）
+    if pt_path_resolved:
+        try:
+            from utils.rollout_pt_parser import (
+                load_pt,
+                split_response_to_turns_with_tokenizer,
+                _discover_tokenizer_path,
+                _load_tokenizer,
+            )
+            dump = load_pt(pt_path_resolved)
+            samples = dump.get("samples") or []
+            # 按 (group_index, segment_index) 反查 sample
+            tokens_for_sample: Optional[List[int]] = None
+            sample_idx_found: Optional[int] = None
+            try:
+                with Session() as session:
+                    seg_obj = (
+                        session.query(Segment)
+                        .filter(Segment.primary_id == segment_id)
+                        .first()
+                    )
+                    target_si = getattr(seg_obj, "segment_index", None)
+                    target_gi: Optional[int] = None
+                    if Attempt is not None and getattr(seg_obj, "attempt_id", None):
+                        att = (
+                            session.query(Attempt)
+                            .filter(Attempt.primary_id == seg_obj.attempt_id)
+                            .first()
+                        )
+                        target_gi = getattr(att, "group_index", None)
+                # 找 sample_idx
+                for i, s in enumerate(samples):
+                    md = s.get("metadata") or {}
+                    if (
+                        s.get("group_index") == target_gi
+                        and md.get("segment_index") == target_si
+                    ):
+                        toks = s.get("tokens") or []
+                        if isinstance(toks, list) and toks:
+                            tokens_for_sample = [int(t) for t in toks]
+                            sample_idx_found = i
+                            break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "反查 sample 失败 segment_id={}: {}", segment_id, exc
+                )
+
+            tok = None
+            try:
+                tok_path = _discover_tokenizer_path(pt_path_resolved)
+                if tok_path is not None:
+                    tok = _load_tokenizer(tok_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "加载 tokenizer 失败 segment_id={}: {}", segment_id, exc
+                )
+
+            if tokens_for_sample is not None:
+                parsed, parsed_source = split_response_to_turns_with_tokenizer(
+                    response_text="",
+                    tokens=tokens_for_sample,
+                    tokenizer=tok,
+                    dump_path=pt_path_resolved,
+                )
+                if parsed:
+                    turns = parsed
+                    source = f"tokens:{parsed_source}"
+                    # 写回 turn 表（覆盖）
+                    try:
+                        from db.db_segment_turn_service import DBSegmentTurnService
+                        DBSegmentTurnService.upsert_segment_turns(
+                            segment_id=int(segment_id),
+                            turns=parsed,
+                            force=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "token 切分写回 turn 表失败 segment_id={}: {}",
+                            segment_id,
+                            exc,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "token 切分失败 segment_id={}: {}（回退到 turn 表）",
+                segment_id,
+                exc,
+            )
+
+    # 1) 兜底：从 turn 表读
+    if not turns:
+        try:
+            from db.db_segment_turn_service import DBSegmentTurnService
+
+            turns = DBSegmentTurnService.list_turns(int(segment_id))
+            if turns:
+                source = "turn_table"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_turns 失败 segment_id={}: {}", segment_id, exc)
+
+    # 2) 兜底：兜兜：ensure_transcript + 文本切分
     if not turns:
         transcript_text = ""
         try:
@@ -738,7 +864,6 @@ async def api_segment_turns_json(segment_id: int) -> Response:
         except Exception as exc:  # noqa: BLE001
             logger.warning("ensure_transcript 失败 segment_id={}: {}", segment_id, exc)
         if not transcript_text:
-            # 兜底：直接从 segment ORM 字段读
             try:
                 with Session() as session:
                     seg_obj = (
@@ -784,7 +909,7 @@ async def api_segment_turns_json(segment_id: int) -> Response:
                 "token_estimate": int(t.get("token_estimate") or 0),
                 "prompt_summary": t.get("prompt_summary") or summary,
                 "html": _highlight_html(body),
-                "body_text": body,  # 默认折叠时仅用前 N 字，全文只在「展开」时用到
+                "body_text": body,
             }
         )
 

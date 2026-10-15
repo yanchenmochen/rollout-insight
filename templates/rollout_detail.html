@@ -34,9 +34,9 @@
     .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
     .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
 
-    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
 
-    /* ------- 四层手风琴 ------- */
+    /* ------- v0.5.0 四层手风琴 ------- */
     details.tree {
         background: #fafbfc; border: 1px solid #e4e8ec; border-radius: var(--te-radius);
         margin-bottom: 8px; overflow: hidden;
@@ -55,10 +55,14 @@
     }
     details.tree[open] > summary::before { transform: rotate(90deg); }
 
-    /* attempt 颜色标 */
-    details.tree.attempt-row { border-left: 4px solid #5e35b1; }
-    details.tree.segment-row { border-left: 4px solid #1e88e5; margin-left: 22px; }
-    details.tree.turn-row { border-left: 4px solid #2d6a4f; margin-left: 44px; }
+    /* 第一层 group */
+    details.tree.group-row { border-left: 4px solid #1e88e5; }
+    /* 第二层 attempt */
+    details.tree.attempt-row { border-left: 4px solid #5e35b1; margin-left: 18px; }
+    /* 第三层 segment */
+    details.tree.segment-row { border-left: 4px solid #2d6a9f; margin-left: 36px; }
+    /* 第四层 turn */
+    details.tree.turn-row { border-left: 4px solid #2d6a4f; margin-left: 54px; }
 
     .sum-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ri-muted); }
     .sum-title { font-weight: 600; color: var(--ri-ink); }
@@ -77,15 +81,33 @@
     .badge.reward-hi { background: #cde7d6; color: var(--ri-success); }
     .badge.reward-lo { background: #f3c8c8; color: #9b2c2c; }
     .badge.reward-mid { background: #f0e2c5; color: #8a5a12; }
+    .badge.bucket-all_zero { background: #f3c8c8; color: #9b2c2c; }
+    .badge.bucket-all_one { background: #cde7d6; color: var(--ri-success); }
+    .badge.bucket-mixed { background: #f0e2c5; color: #8a5a12; }
+    .badge.bucket-none { background: #e0e0e0; color: #424242; }
 
     .tree-body { padding: 10px 16px 14px; border-top: 1px dashed #e4e8ec; background: #ffffff; }
     .empty-inline { color: var(--ri-muted); font-size: 12px; padding: 6px 4px; }
+
+    .stat-chip {
+        display: inline-block; font-family: ui-monospace, monospace;
+        background: #eef3f8; color: #1e5080; padding: 2px 8px;
+        border-radius: 8px; font-size: 11.5px; margin-right: 6px;
+    }
+    .stat-chip strong { color: var(--ri-ink); }
 
     .summary-line {
         font-size: 12.5px; color: #445566; padding: 4px 8px 4px 14px;
         border-left: 2px solid #e4e8ec; margin: 4px 0;
         background: #fbfcfd; border-radius: 0 4px 4px 0;
         word-break: break-word;
+    }
+
+    .prompt-blob {
+        background: #fbfcfd; border-left: 3px solid #c7def5;
+        padding: 8px 12px; margin: 6px 0;
+        font-size: 12.5px; color: #445566; max-height: 180px; overflow: auto;
+        white-space: pre-wrap; word-break: break-word;
     }
 
     pre.turn-body {
@@ -109,6 +131,33 @@
     }
     .tool-chip-row { padding: 4px 14px; font-size: 12px; background: #f4f8fc; border-top: 1px dashed #c7def5; }
     .loading-hint { color: var(--ri-muted); font-size: 12px; padding: 8px 12px; }
+
+    /* v0.5.0 turn 内 4 个子 details */
+    details.turn-chunk { background: #f8fafb; margin: 4px 0; border-left: 3px solid #c7def5; }
+    details.turn-chunk[open] { background: #ffffff; }
+    details.turn-chunk > summary {
+        list-style: none; cursor: pointer; padding: 5px 12px;
+        font-size: 12px; color: var(--ri-ink); user-select: none;
+    }
+    details.turn-chunk > summary::-webkit-details-marker { display: none; }
+    details.turn-chunk > summary::before {
+        content: "▸"; font-size: 10px; color: var(--ri-muted);
+        margin-right: 4px; display: inline-block; width: 10px;
+    }
+    details.turn-chunk[open] > summary::before { content: "▾"; }
+    .chunk-think { border-left-color: #8e44ad; }
+    .chunk-toolcall { border-left-color: #1e88e5; }
+    .chunk-toolresult { border-left-color: #f39c12; }
+    .chunk-text { border-left-color: #2d6a4f; }
+
+    .group-link {
+        display: inline-block; padding: 4px 10px; background: #eef3f8;
+        color: var(--ri-accent); border-radius: 4px; text-decoration: none;
+        font-size: 12px; margin-right: 6px;
+    }
+    .group-link.active { background: var(--ri-accent); color: white; }
+    .group-link:hover { background: #c7def5; }
+    .group-link.active:hover { background: var(--ri-accent-hover); }
 </style>
 {% endblock %}
 
@@ -123,6 +172,9 @@
     {% endif %}
     &nbsp;/&nbsp;
     <strong>rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }}</strong>
+    {% if current_group is not none %}
+        &nbsp;/&nbsp; group {{ current_group }}
+    {% endif %}
 </div>
 
 <div class="page-header">
@@ -131,6 +183,7 @@
         <div class="page-subtitle">
             任务 <strong>{{ task.task_name if task else '-' }}</strong>
             {% if rollout.scanned_at %}&nbsp;·&nbsp; 最近扫描 {{ rollout.scanned_at }}{% endif %}
+            &nbsp;·&nbsp; 共 <strong>{{ distinct_groups | length }}</strong> 个 group
         </div>
     </div>
     <div class="action-bar">
@@ -174,70 +227,84 @@
 </div>
 
 <div class="section">
-    <h2>Attempts / Segments / Turns <small>{{ attempts | length }} 个 attempt</small></h2>
+    <h2>四层手风琴 · group → attempt → segment → turn <small>{{ all_attempts | length }} 个 attempt / {{ distinct_groups | length }} 个 group</small></h2>
 
     <div class="toolbar">
         <button type="button" class="btn btn-secondary" id="expandAllBtn">展开全部</button>
         <button type="button" class="btn btn-secondary" id="collapseAllBtn">折叠全部</button>
-        <a href="/api/rollouts/{{ rollout.id }}" class="btn btn-secondary" target="_blank">查看 JSON</a>
+        <a href="/api/rollouts/{{ rollout.id }}{% if current_group is not none %}?group={{ current_group }}{% endif %}" class="btn btn-secondary" target="_blank">查看 JSON</a>
+        <span style="margin-left:auto; color: var(--ri-muted); font-size: 12px;">
+            按 group 过滤:
+            <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}"
+               class="group-link {% if current_group is none %}active{% endif %}">全部</a>
+            {% for g in distinct_groups %}
+                <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ g }}"
+                   class="group-link {% if current_group == g %}active{% endif %}">group {{ g }}</a>
+            {% endfor %}
+        </span>
     </div>
 
-    {% if attempts %}
+    {% if not all_attempts %}
+        <div class="empty-inline">暂无 attempt 数据</div>
+    {% elif current_group is not none %}
+        {# 当前按 group 过滤：直接渲染 attempts（不再按 group 再折一层） #}
         <div id="treeRoot">
-            {% for a in attempts %}
-            <details class="tree attempt-row" data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
-                <summary>
-                    <span class="sum-id">attempt #{{ a.primary_id }}</span>
-                    <span class="sum-title">
-                        group <strong>{{ a.group_index if a.group_index is not none else '-' }}</strong>
-                        &nbsp;·&nbsp; attempt_id <strong>{{ a.attempt_id if a.attempt_id is not none else '-' }}</strong>
-                    </span>
-                    <span class="sum-meta">
-                        segments <strong>{{ a.segment_count }}</strong>
-                        &nbsp;·&nbsp; mean_reward <strong>{{ "%.4f"|format(a.mean_reward) }}</strong>
-                        {% if a.status %}&nbsp;·&nbsp; {{ a.status }}{% endif %}
-                    </span>
-                </summary>
-                <div class="tree-body">
-                    <div style="font-size: 12px; color: var(--ri-muted); margin-bottom: 8px;">
-                        instance_id: <code class="sum-id">{{ a.instance_id or '-' }}</code>
-                        &nbsp;·&nbsp; sandbox_id: <code class="sum-id">{{ a.sandbox_id or '-' }}</code>
-                    </div>
-
-                    {% if a.segments %}
-                        {% for s in a.segments %}
-                        <details class="tree segment-row" data-segment-id="{{ s.primary_id }}">
-                            <summary>
-                                <span class="sum-id">segment #{{ s.primary_id }}</span>
-                                <span class="sum-title">
-                                    index <strong>{{ s.segment_index if s.segment_index is not none else '-' }}</strong>
-                                </span>
-                                <span class="sum-meta">
-                                    status <strong>{{ s.status or '-' }}</strong>
-                                    &nbsp;·&nbsp; reward <strong>{% if s.reward is not none %}{{ "%.4f"|format(s.reward) }}{% else %}-{% endif %}</strong>
-                                </span>
-                            </summary>
-                            <div class="tree-body" data-segment-body="{{ s.primary_id }}">
-                                <div class="loading-hint">点击展开以加载 turns…</div>
-                            </div>
-                        </details>
-                        {% endfor %}
-                    {% else %}
-                        <div class="empty-inline">该 attempt 暂无 segment</div>
-                    {% endif %}
-                </div>
-            </details>
-            {% endfor %}
+            {% set grouped_attempts = {'g0': attempts} %}
+            {% include "rollout_detail_attempt_loop.html" %}
         </div>
     {% else %}
-        <div class="empty-inline">暂无 attempt 数据</div>
+        {# 第一层 group 折：按 group_index 聚合 #}
+        <div id="treeRoot">
+            {% for gi in distinct_groups %}
+                {% set group_attempts = [] %}
+                {% for a in all_attempts %}
+                    {% if a.group_index == gi %}
+                        {% set _ = group_attempts.append(a) %}
+                    {% endif %}
+                {% endfor %}
+                {% set azero = 0 %}
+                {% set aone = 0 %}
+                {% set amixed = 0 %}
+                {% set anone = 0 %}
+                {% for a in group_attempts %}
+                    {% set b = a.reward_bucket or 'none' %}
+                    {% if b == 'all_zero' %}
+                        {% set azero = azero + 1 %}
+                    {% elif b == 'all_one' %}
+                        {% set aone = aone + 1 %}
+                    {% elif b == 'mixed' %}
+                        {% set amixed = amixed + 1 %}
+                    {% else %}
+                        {% set anone = anone + 1 %}
+                    {% endif %}
+                {% endfor %}
+                <details class="tree group-row" open>
+                    <summary>
+                        <span class="sum-title">group <strong>{{ gi }}</strong></span>
+                        <span class="sum-meta">
+                            {{ group_attempts | length }} attempts
+                            &nbsp;·&nbsp;
+                            <span class="badge bucket-all_zero" title="所有 segment 都是 0">全0 ×{{ azero }}</span>
+                            <span class="badge bucket-all_one" title="所有 segment 都是 1">全1 ×{{ aone }}</span>
+                            <span class="badge bucket-mixed">混合 ×{{ amixed }}</span>
+                            <span class="badge bucket-none" title="没有数字 reward">无 ×{{ anone }}</span>
+                        </span>
+                    </summary>
+                    <div class="tree-body">
+                        {% set attempts = group_attempts %}
+                        {% include "rollout_detail_attempt_loop.html" %}
+                    </div>
+                </details>
+            {% endfor %}
+        </div>
     {% endif %}
 </div>
 
 <div class="section">
     <h2>原始 JSON</h2>
     <p style="font-size:13px; color:var(--ri-muted);">
-        完整 attempts + segments 数据见 <a href="/api/rollouts/{{ rollout.id }}" target="_blank">/api/rollouts/{{ rollout.id }}</a>
+        完整 attempts + segments + turn 聚合数据见
+        <a href="/api/rollouts/{{ rollout.id }}{% if current_group is not none %}?group={{ current_group }}{% endif %}" target="_blank">/api/rollouts/{{ rollout.id }}{% if current_group is not none %}?group={{ current_group }}{% endif %}</a>
     </p>
 </div>
 {% endblock %}
@@ -264,14 +331,80 @@
         return flat.slice(0, limit) + '…';
     }
 
-    function rewardBadge(r) {
-        if (r == null) return '';
-        const v = Number(r);
-        if (Number.isNaN(v)) return '';
-        let cls = 'reward-mid';
-        if (v >= 0.7) cls = 'reward-hi';
-        else if (v <= 0.3) cls = 'reward-lo';
-        return `<span class="badge ${cls}" title="reward">R ${v.toFixed(3)}</span>`;
+    function fmtInt(n) {
+        if (n == null) return '0';
+        const v = Number(n);
+        if (!Number.isFinite(v)) return String(n);
+        if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+        if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+        return String(v);
+    }
+
+    function bucketBadge(b) {
+        const label = b || 'none';
+        return `<span class="badge bucket-${label}">${label}</span>`;
+    }
+
+    // v0.5.0 T3: turn 内部按 think / tool_call / tool_response / 纯文本 拆 4 个子 details
+    function splitTurnBody(body) {
+        if (!body) return [{ kind: 'text', text: '' }];
+        const chunks = [];
+        // 用 tokenizer 视角：先抓 <|tool_call ...>...</tool_call>，然后 <|tool_response ...>...</tool_response>，最后
+        // <think>...</think> 块，剩下的算纯文本（按出现顺序扫一遍）
+        const patterns = [
+            { kind: 'tool_call', re: /<\|tool_call[^>]*>[\s\S]*?<\/tool_call>/gi },
+            { kind: 'tool_response', re: /<\|tool_response[^>]*>[\s\S]*?<\/tool_response>/gi },
+            { kind: 'think', re: /<think>[\s\S]*?<\/think>/gi },
+        ];
+        // 朴素的「按出现顺序」切片：用全部匹配 start 排序
+        type RegExpMatchArray 类目的项; // 占位
+        const hits = [];
+        for (const p of patterns) {
+            let m;
+            p.re.lastIndex = 0;
+            while ((m = p.re.exec(body)) !== null) {
+                hits.push({ kind: p.kind, start: m.index, end: m.index + m[0].length, text: m[0] });
+                if (m.index === p.re.lastIndex) p.re.lastIndex++; // 零长度保护
+            }
+        }
+        hits.sort((a, b) => a.start - b.start);
+        let cursor = 0;
+        for (const h of hits) {
+            if (cursor < h.start) {
+                const seg = body.slice(cursor, h.start);
+                if (seg.trim()) chunks.push({ kind: 'text', text: seg });
+            }
+            chunks.push({ kind: h.kind, text: h.text });
+            cursor = h.end;
+        }
+        if (cursor < body.length) {
+            const seg = body.slice(cursor);
+            if (seg.trim()) chunks.push({ kind: 'text', text: seg });
+        }
+        if (chunks.length === 0) chunks.push({ kind: 'text', text: body });
+        return chunks;
+    }
+
+    function chunkTitle(c) {
+        const n = (c.text || '').length;
+        if (c.kind === 'think') return `💭 think · ${n} chars`;
+        if (c.kind === 'tool_call') {
+            const m = /<\|tool_call[^>]*>/i.exec(c.text || '');
+            const inner = m ? (c.text.slice(m[0].length, c.text.search(/<\/tool_call>/i) || c.text.length).trim().split(/\s+/)[0] || 'tool') : 'tool';
+            return `🔧 tool_call: ${inner} · ${n} chars`;
+        }
+        if (c.kind === 'tool_response') {
+            return `📥 tool_result · ${n} chars`;
+        }
+        return `纯文本 · ${n} chars`;
+    }
+
+    function renderChunk(c) {
+        const safeText = escapeHtml(c.text || '');
+        return `<details class="turn-chunk chunk-${c.kind}" open>
+            <summary>${escapeHtml(chunkTitle(c))}</summary>
+            <pre class="turn-body">${safeText}</pre>
+        </details>`;
     }
 
     function renderTurns(segmentId, data) {
@@ -297,9 +430,12 @@
             const toolTag = t.has_tool_call ? '🔧' : '';
             const thinkTag = t.has_think ? '💭' : '';
             const toolList = (t.tool_call_names || []).map((n) => `<span class="tool-chip">${escapeHtml(n)}</span>`).join('');
-            const summary = escapeHtml(t.prompt_summary || shortSummary(t.body_text || '', 120));
             const toolRow = toolList ? `<div class="tool-chip-row">tools: ${toolList}</div>` : '';
-            return `<details class="tree turn-row" data-turn-id="${t.primary_id || ''}">
+            // v0.5.0 T3: 把 body 按 4 类拆开
+            const chunks = splitTurnBody(t.body_text || '');
+            const chunksHtml = chunks.map(renderChunk).join('');
+            const summary = escapeHtml(t.prompt_summary || shortSummary(t.body_text || '', 120));
+            return `<details class="tree turn-row" data-turn-id="${t.primary_id || ''}" open>
                 <summary>
                     <span class="sum-id">turn #${idx}</span>
                     <span class="badge role-${escapeHtml(t.role_label || t.role || 'unknown')}">${role}</span>
@@ -310,13 +446,13 @@
                 ${toolRow}
                 <div class="tree-body">
                     <div class="summary-line">${summary || '<span style="color:var(--ri-muted);">(空)</span>'}</div>
-                    <pre class="turn-body">${t.html || ''}</pre>
+                    ${chunksHtml}
+                    ${t.html ? `<details class="turn-chunk chunk-text"><summary>高亮版（原始） · ${(t.body_text || '').length} chars</summary><pre class="turn-body">${t.html}</pre></details>` : ''}
                 </div>
             </details>`;
         }).join('');
         root.innerHTML = header + list;
 
-        // 展开/折叠所有 turn
         root.querySelectorAll('.toggle-all-turns').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -333,7 +469,6 @@
         root.innerHTML = `<div class="alert alert-warning" style="margin:0;">加载 turn 失败：${escapeHtml(msg)}</div>`;
     }
 
-    // segment 展开时按需加载 turns
     const segmentLoaded = new Set();
     document.querySelectorAll('details.segment-row').forEach((seg) => {
         seg.addEventListener('toggle', async () => {
@@ -356,18 +491,16 @@
         });
     });
 
-    // 全部展开/折叠
     document.getElementById('expandAllBtn').addEventListener('click', () => {
-        document.querySelectorAll('#treeRoot details.tree').forEach((d) => { d.open = true; });
+        document.querySelectorAll('#treeRoot details.tree, #treeRoot details.turn-chunk').forEach((d) => { d.open = true; });
     });
     document.getElementById('collapseAllBtn').addEventListener('click', () => {
-        document.querySelectorAll('#treeRoot details.tree').forEach((d) => { d.open = false; });
+        document.querySelectorAll('#treeRoot details.tree, #treeRoot details.turn-chunk').forEach((d) => { d.open = false; });
     });
 
-    // 重解析按钮（沿用原行为）
     document.getElementById("reparseBtn").addEventListener("click", async function () {
         const btn = this;
-        if (!confirm("确定要重新解析该 rollout 对应的 .pt 文件吗？\n会按 T3 规则重新切分 attempt / segment / turn，并刷新 turn 表。")) return;
+        if (!confirm("确定要重新解析该 rollout 对应的 .pt 文件吗？\n会按 v0.5.0 规则重新切分 attempt / segment / turn，并刷新 turn 表。")) return;
         btn.disabled = true;
         const original = btn.textContent;
         btn.textContent = "解析中…";
