@@ -12,6 +12,27 @@ description: >-
 
 本 skill 只描述**怎么用 CLI**完成常见任务；实现细节见仓库根目录的 `README.md`。
 
+## 改前先读 func.md / 改后重生成 func.md
+
+> 本节自 **v0.5.2** 起生效。`func.md` 是仓库根目录的**自动生成**能力索引，覆盖
+> `controller/`、`service/`、`db/`、`utils/`、`data/` 五个目录里所有公开符号。
+> 是 agent / skill 查找"现有可复用实现"的第一站。
+
+- **新增 / 修改** `controller/`、`service/`、`db/`、`utils/`、`data/` 下的
+  公开能力**前**，先 **Read** 仓库根目录的 `func.md`，确认是否已有可复用
+  实现（同名函数、相似职责的 service 等）。**禁止**在复制粘贴已有逻辑后
+  重写一个并行实现。
+- **新增 / 修改后**，必须重跑：
+
+  ```bash
+  python scripts/scan_func_md.py
+  ```
+
+  重新生成 `func.md` 并与本次改动一起 commit。CI / 自动化 agent 在 commit
+  前会跑 `python scripts/scan_func_md.py --check`，不一致会失败。
+- 当改动只动了内部实现细节（私有函数、内部重组、注释）时，可不重跑；
+  但建议养成"改动落定就跑一次"的习惯，避免与他人改动交叉时出现 drift。
+
 ## 何时使用
 
 - 列/建/重扫/删除 rollout 任务
@@ -202,3 +223,37 @@ rollout-insight agent-transcripts report /root/.cursor/projects/.../agent-transc
 - 安装步骤：`skill/install.sh`
 - Web API 全集：见仓库 `controller/` 与 `docs/`（v0.2 阶段补齐）
 - v0.4.0 计划：根目录 `rollout-insight_v0.4.0_52e49d78.plan.md`（T7→T8 串行链对应本 skill 升级）
+
+## 维护 func.md
+
+> 本节自 **v0.5.2** 起生效。
+
+`func.md` 是仓库根目录的**自动生成**索引文件，**禁止手改**（任何手改都会被下
+次扫描覆盖）。它的内容是 `python scripts/scan_func_md.py` 对全仓库
+`controller/`、`service/`、`db/`、`utils/`、`data/` 五个目录的扫描结果。
+
+### 工作流
+
+```bash
+# 1) 改动 controller / service / db / utils / data 下公开能力
+# 2) 跑扫描，重新生成 func.md
+python scripts/scan_func_md.py
+
+# 3) 跟代码改动一起 commit（必须）
+git add scripts/scan_func_md.py func.md
+git commit -m "feat(...): 新增 XXX 功能 + 重生成 func.md"
+
+# 4) CI 阶段的门禁（不许绕过）
+python scripts/scan_func_md.py --check   # 退出码 0 才允许合并
+```
+
+### 常见问题
+
+- **`--check` 失败：func.md 与扫描结果不一致** → 说明上次 commit 忘了重生成；
+  跑 `python scripts/scan_func_md.py` 重新写一次 func.md 再 commit。
+- **新增函数未出现在 func.md** → 检查是否在 `__pycache__/ log/ tests/ schedule/`
+  等被黑名单命名的目录里（plan p18_a）；或函数是否以下划线开头（私有函数不收录）。
+- **想忽略某个目录** → 在 `scripts/scan_func_md.py` 的 `SKIP_DIR_NAMES` /
+  `SKIP_DIR_PATTERNS` 里加 pattern；同时更新本节"维护 func.md"以备审计。
+- **想验证 CI 阶段命令** → 故意往 `utils/xxx.py` 加个新公共函数，重跑
+  `--check`，应该看到退出码 1 与 diff 提示。

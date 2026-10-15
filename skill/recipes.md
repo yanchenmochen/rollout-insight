@@ -10,6 +10,77 @@
 - **写操作默认 dry-run；加 `--submit` 才执行**
 - 退出码：`0` 成功；`1` 业务/API 错误；`2` 命令行参数错误；`130` Ctrl-C
 
+## 场景 0：新增 controller / service / db 表 / utils 函数的标准流程
+
+> 本节自 **v0.5.2** 起生效。目标：在新增或修改仓库公开能力时，确保
+> `func.md` 同步更新，避免 agent / 后续作者陷入"重复造轮子"。
+
+### 三步走
+
+```text
+1. Read func.md 确认无重复实现
+2. 实现 controller/service/db/utils/data 代码
+3. python scripts/scan_func_md.py  →  func.md 跟着本次 commit
+```
+
+### 第 1 步：改前先读 func.md
+
+```bash
+# 在仓库根目录
+cat func.md
+# 或者按目录分段读：
+sed -n '/^## controller/,/^## /p' func.md
+sed -n '/^## service/,/^## /p' func.md
+sed -n '/^## db\/ — 数据访问服务/,/^## /p' func.md
+```
+
+判断：
+
+- 同名或近名函数已存在？→ 直接复用，不要新写一个 `xxx_v2`。
+- 类似职责的 `DBXxxService` 已有方法？→ 在原 service 上加方法。
+- 已有 controller 端点覆盖？→ 不要平行加新端点，先复用或扩字段。
+
+### 第 2 步：按既有约定实现
+
+参考仓库根目录 `.cursor/rules/rollout-insight-conventions.mdc` 与既有代码：
+
+- **ORM**：`db/db_<领域>.py`，类名 `DBXxx`，表名 `ri_<语义>_table`。
+- **数据访问**：`db/db_<领域>_service.py`，类名 `DBXxxService`，`@staticmethod` + `with Session()`。
+- **业务编排**：`service/<领域>_service.py`（或模块级函数，二者皆可）。
+- **路由**：`controller/<领域>_controller.py`，统一返回
+  `data.response.Response.success(...)` / `Response.error(...)`，业务错误
+  用 `RolloutInsightException`。
+- **工具**：`utils/<用途>.py`，模块级函数，禁依赖 db/route。
+
+### 第 3 步：重跑扫描 + commit
+
+```bash
+# 重生成 func.md
+python scripts/scan_func_md.py
+
+# 验证一致性（CI 也会跑这一步；本机也跑一次心里有底）
+python scripts/scan_func_md.py --check
+# 期望输出：[scan_func_md] --check OK ...
+
+# 跟代码改动一起 commit（必须把 func.md 一起带上）
+git add scripts/scan_func_md.py func.md <你自己的改动>
+git commit -m "feat(...): 新增 XXX — 重生成 func.md"
+```
+
+> **重要**：`func.md` 必须与代码同步落在同一个 commit，否则 CI 会失败；
+> 如果只是内部实现细节改了（私有函数、注释、refactor），可不带 func.md。
+
+### 反例（被 reviewer 打回）
+
+| 场景 | 反例 | 应改 |
+|------|------|------|
+| 新表 | 在 `db/__init__.py` 直接写 Column | 新建 `db/db_<领域>.py` 与 `db/db_<领域>_service.py`；再跑 `scan_func_md.py` |
+| 新路由 | controller 里直接写裸 dict 返回 | 用 `Response.success(...)`；检查 `func.md` §controller 段确认无重复 |
+| 新工具函数 | 在 controller 内 inline 写一个文件解析 | 抽到 `utils/parse_xxx.py`；并确保 `func.md` §utils 段录到 |
+| 漏改 func.md | 只 commit 了代码，func.md 没动 | 跑 `scan_func_md.py`，把输出 diff 一起 commit |
+
+---
+
 ## 场景 1：用户刚跑完一次训练，要扫进 rollout-insight
 
 ```bash
