@@ -21,7 +21,8 @@ Worker B（v0.5.1）会补全：
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -82,10 +83,15 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 class DBUserService:
-    """v0.5.0 最小实现：仅提供 ``ensure_admin_seed``。
+    """v0.5.0 最小实现 + v0.5.1 完整 CRUD。
 
-    Worker B（v0.5.1）会扩展这个类：补上 ``create_user / authenticate /
-    list_users / update_password / deactivate``。
+    提供：
+    - ``ensure_admin_seed``（启动期种子 admin）
+    - ``create_user``（bcrypt hash + 校验）
+    - ``authenticate``（用户名 + 密码 → DBUser 或 None）
+    - ``get_by_username`` / ``get_by_id`` / ``list_users``
+    - ``update_password`` / ``set_active`` / ``set_last_login``
+    - ``count_users`` / ``is_username_taken``
     """
 
     @staticmethod
@@ -164,6 +170,329 @@ class DBUserService:
                 "ensure_admin_seed: DB 操作失败: {}", exc
             )
             return out
+
+    # ------------------------------------------------------------------
+    # v0.5.1 CRUD（user list / create / authenticate / update 等）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _db_user_model():
+        try:
+            from db.db_user import DBUser
+
+            return DBUser
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DBUserService: 导入 DBUser 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def _session_factory():
+        try:
+            from db.db_element import Session
+
+            return Session
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DBUserService: 导入 Session 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def count_users() -> int:
+        """``ri_user_table`` 行数；DB 不可用时返回 0。"""
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return 0
+        try:
+            with Session() as session:
+                return int(session.query(DBUser).count())
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("count_users 失败: {}", exc)
+            return 0
+
+    @staticmethod
+    def is_username_taken(username: str) -> bool:
+        """用户名是否已存在（区分大小写，DB UNIQUE）。"""
+        uname = (username or "").strip()
+        if not uname:
+            return False
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return False
+        try:
+            with Session() as session:
+                return (
+                    session.query(DBUser)
+                    .filter(DBUser.username == uname)
+                    .first()
+                    is not None
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("is_username_taken 失败: {}", exc)
+            return False
+
+    @staticmethod
+    def create_user(
+        username: str,
+        password: str,
+        role: str = "user",
+        is_active: bool = True,
+    ) -> Optional[Any]:
+        """新建一个用户。
+
+        Args:
+            username: 必填，非空；最大 64 字符（DB 列宽限制）。
+            password: 必填；非空明文密码（内部 bcrypt hash）。
+            role: ``admin`` / ``user``；非法时回退到 ``user``。
+            is_active: 默认 True。
+
+        Returns:
+            ``DBUser`` 实例；失败时返回 ``None``（已记录日志）。
+
+        Raises:
+            ValueError: 参数非法（空 username / 空 password）。
+        """
+        uname = (username or "").strip()
+        pwd = password or ""
+        if not uname:
+            raise ValueError("username 不能为空")
+        if not pwd:
+            raise ValueError("password 不能为空")
+        if role not in ("admin", "user"):
+            role = "user"
+
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            logger.warning("create_user: DB 不可用，无法创建用户")
+            return None
+        try:
+            with Session() as session:
+                # 防御：用户名已存在 → 不抛错，返回 None
+                existed = (
+                    session.query(DBUser)
+                    .filter(DBUser.username == uname)
+                    .first()
+                )
+                if existed is not None:
+                    logger.warning(
+                        "create_user: 用户名已存在 username={}", uname
+                    )
+                    return None
+                obj = DBUser(
+                    username=uname,
+                    password_hash=hash_password(pwd),
+                    role=role,
+                    is_active=is_active,
+                )
+                session.add(obj)
+                session.commit()
+                session.refresh(obj)
+                logger.info(
+                    "create_user: 新建用户 primary_id={} username={} role={}",
+                    obj.primary_id,
+                    uname,
+                    role,
+                )
+                return obj
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("create_user 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def authenticate(username: str, password: str) -> Optional[Any]:
+        """校验用户名 + 密码；返回 ``DBUser`` 或 ``None``。
+
+        不区分大小写匹配（用户名 ASCII 比较用 ``func.lower``）。
+        失败原因（用户不存在 / 密码错 / 账号禁用）一律返回 None；上层自己
+        写日志。
+        """
+        uname = (username or "").strip()
+        pwd = password or ""
+        if not uname or not pwd:
+            return None
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return None
+        try:
+            from sqlalchemy import func
+
+            with Session() as session:
+                row = (
+                    session.query(DBUser)
+                    .filter(func.lower(DBUser.username) == uname.lower())
+                    .first()
+                )
+                if row is None:
+                    return None
+                if not row.is_active:
+                    logger.info(
+                        "authenticate: 账号已禁用 username={}", uname
+                    )
+                    return None
+                if not verify_password(pwd, row.password_hash):
+                    return None
+                return row
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("authenticate 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def get_by_username(username: str) -> Optional[Any]:
+        """按用户名精确查一行；不存在返回 ``None``。"""
+        uname = (username or "").strip()
+        if not uname:
+            return None
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return None
+        try:
+            with Session() as session:
+                return (
+                    session.query(DBUser)
+                    .filter(DBUser.username == uname)
+                    .first()
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("get_by_username 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def get_by_id(pk: int) -> Optional[Any]:
+        """按主键查一行；不存在返回 ``None``。"""
+        if pk is None:
+            return None
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return None
+        try:
+            with Session() as session:
+                return (
+                    session.query(DBUser)
+                    .filter(DBUser.primary_id == pk)
+                    .first()
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("get_by_id 失败: {}", exc)
+            return None
+
+    @staticmethod
+    def list_users(
+        limit: int = 100,
+        offset: int = 0,
+        role: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> List[Any]:
+        """列出用户；可按 role / is_active 过滤。
+
+        按 ``create_time`` 升序（首个 admin 排第一），然后 ``primary_id`` 升序。
+        """
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return []
+        try:
+            with Session() as session:
+                q = session.query(DBUser)
+                if role in ("admin", "user"):
+                    q = q.filter(DBUser.role == role)
+                if is_active is not None:
+                    q = q.filter(DBUser.is_active == is_active)
+                return (
+                    q.order_by(DBUser.create_time.asc(), DBUser.primary_id.asc())
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("list_users 失败: {}", exc)
+            return []
+
+    @staticmethod
+    def update_password(pk: int, new_password: str) -> bool:
+        """改密码（bcrypt hash）；找不到返回 False。
+
+        Raises:
+            ValueError: new_password 为空。
+        """
+        if not new_password:
+            raise ValueError("new_password 不能为空")
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return False
+        try:
+            with Session() as session:
+                row = (
+                    session.query(DBUser)
+                    .filter(DBUser.primary_id == pk)
+                    .first()
+                )
+                if row is None:
+                    return False
+                row.password_hash = hash_password(new_password)
+                session.commit()
+                logger.info(
+                    "update_password: pk={} 已更新", pk
+                )
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("update_password 失败: {}", exc)
+            return False
+
+    @staticmethod
+    def set_active(pk: int, is_active: bool) -> bool:
+        """激活 / 禁用账号；找不到返回 False。"""
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return False
+        try:
+            with Session() as session:
+                row = (
+                    session.query(DBUser)
+                    .filter(DBUser.primary_id == pk)
+                    .first()
+                )
+                if row is None:
+                    return False
+                row.is_active = bool(is_active)
+                session.commit()
+                logger.info(
+                    "set_active: pk={} is_active={}", pk, is_active
+                )
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("set_active 失败: {}", exc)
+            return False
+
+    @staticmethod
+    def set_last_login(pk: int) -> bool:
+        """把 ``last_login_at`` 写为 ``datetime.now()``；找不到返回 False。"""
+        if pk is None:
+            return False
+        DBUser = DBUserService._db_user_model()
+        Session = DBUserService._session_factory()
+        if DBUser is None or Session is None:
+            return False
+        try:
+            with Session() as session:
+                row = (
+                    session.query(DBUser)
+                    .filter(DBUser.primary_id == pk)
+                    .first()
+                )
+                if row is None:
+                    return False
+                row.last_login_at = datetime.now()
+                session.commit()
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("set_last_login 失败: {}", exc)
+            return False
 
 
 def ensure_admin_seed(
