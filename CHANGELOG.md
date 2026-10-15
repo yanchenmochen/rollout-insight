@@ -24,6 +24,156 @@ CI 阶段跑 `python scripts/scan_func_md.py --check` 校验一致性，不一�
 | T15 | `skill/SKILL.md` 顶部加 "改前先读 func.md / 改后重生成 func.md"，末尾加 "维护 func.md" 排障 | 本 tag 内 |
 | T15 | `skill/recipes.md` 新增 "场景 0：新增 controller / service / db 表 / utils 函数的标准流程"（三步走 + 反例表） | 本 tag 内 |
 
+## v0.5.0 — turn 解析重写 + 四层手风琴 + 启动期 bootstrap
+
+发布日期：2026-10-15
+
+### 概述
+
+v0.5.0 是 v0.5 系列的**主交付**：用 tokenizer（`tokens + tokenizers.Tokenizer.from_file`）重写
+turn 切分，把 v0.4.0 的 response 文本切升级为基于 `<|im_start|>` token id 的精确切分；同时把
+rollout 详情页彻底重做为 **group → attempt → segment → turn** 四层手风琴，每层默认折叠、点
+展开时按需 fetch turn JSON；并在 main 启动期新增一个 bootstrap 阶段（清 turn 表 + 写 admin
+种子用户 + 落 2 张 user ORM 表），为 v0.5.1 的 auth / per-user 集群配置做准备。
+
+### 完成情况（按子任务）
+
+| 子任务 | 内容 | commit |
+| --- | --- | --- |
+| T0 ORM | `db/db_user.py` + `db/db_user_cluster_config.py` + `db/__init__.py` 别名（仅 ORM，service 由 v0.5.1 写） | `a9ccecc` |
+| T0 bootstrap | `utils/bootstrap.py` + `main.py` 启动调一次 `bootstrap_on_startup()`（清 turn + ensure_admin_seed） | `a9ccecc` |
+| T0 service | `db/db_user_service.py` 的最小实现（仅 `ensure_admin_seed` + bcrypt 工具） | `a9ccecc` |
+| T1 turn parser | `utils/rollout_pt_parser.py` 新增 `_discover_tokenizer_path` / `_load_tokenizer` / `_split_token_turns` / `split_response_to_turns_with_tokenizer` | `0db67f5` |
+| T2 aggregates | `service.rollout_parse_service.parse_attempt_token_stats(attempt_pk)` —— attempt 维度聚合 6 字段 + reward_bucket；controller 整合进 `_load_rollout_full` | `97f5bfe` |
+| T3 template | `templates/rollout_detail.html` 重写为 4 层手风琴；turn 内按 think/tool_call/tool_response/纯文本拆 4 子 details；attempt 行展示 5 统计数字 + bucket badge | `a9ccecc` |
+| T4 endpoints | `?group=N` 过滤（HTML 与 JSON 两端点）；`/api/segments/{id}/turns.json` 优先 token 切分（带回退） | `a9ccecc` |
+| T5 CLI | `rollouts parse --backfill-turns / --clear-turn-table / --tokenizer`；`cli/api_client.get_segment_turns/list_segment_ids_for_rollout/clear_turn_table` | 本 tag 内 |
+| T6 tag | `CHANGELOG.md` v0.5.0 节 + `git tag v0.5.0` | 本 tag 内 |
+
+### 文件变更（vs v0.4.0）
+
+#### 新建文件（6 个）
+
+- `db/db_user.py` —— `ri_user_table` ORM（username UNIQUE, password_hash, role, is_active, create_time, last_login_at）
+- `db/db_user_cluster_config.py` —— `ri_user_cluster_config_table` ORM（user_id FK + cluster_key UNIQUE）
+- `db/db_user_service.py` —— `DBUserService.ensure_admin_seed` 启动期最小实现（passlib[bcrpt] 不可用 → 直接用 bcrypt）
+- `utils/bootstrap.py` —— `bootstrap_on_startup()`：DELETE turn 表 + ensure_admin_seed
+- `templates/rollout_detail_attempt_loop.html` —— attempt 折叠块复用片段（含 5 数字 chip + bucket badge + segments 子树）
+
+#### 修改文件（8 个）
+
+- `db/__init__.py` —— 新增 `User / ClusterConfig` 别名 + `DBUser / DBUserClusterConfig` 暴露
+- `main.py` —— 启动期调 `bootstrap_on_startup()`（在 `Base.metadata.create_all` 之后）
+- `requirements.txt` —— `passlib[bcrypt] + itsdangerous`（实际用 `bcrypt` 直调，passlib 1.7.x 与 bcrypt 5.x 的 `__about__` 检测冲突）
+- `utils/rollout_pt_parser.py` —— 新增 4 个 token-based 函数 / `split_response_to_turns_with_tokenizer` 顶层入口
+- `service/rollout_parse_service.py` —— 新增 `parse_attempt_token_stats(attempt_pk)` + `_classify_reward_bucket`
+- `controller/rollout_controller.py` —— `_load_rollout_full` 整合 T2 aggregates；`page_rollout_detail` 与 `api_get_rollout_json` 都接受 `?group=N` 过滤；`distinct_groups` 字段给前端做 group 链接
+- `controller/segment_controller.py` —— `/api/segments/{id}/turns.json` 优先走 token 切分（带 `?pt_path=`），回退到 turn 表 → ensure_transcript
+- `templates/rollout_detail.html` —— 整体重写；引入 `?group=N` 顶栏链接、bucket badge 配色；JS 渲染 turn 内 4 子 details
+
+#### 修改 CLI / API client
+
+- `cli/rollout_insight.py` —— `rollouts parse` 加 `--backfill-turns / --clear-turn-table`；dispatch 接收并串到 backfill 流程
+- `cli/api_client.py` —— 新增 `get_segment_turns / list_segment_ids_for_rollout / clear_turn_table`
+
+### 升级指南
+
+1. **新依赖（无破坏，但需要装）**
+
+   ```bash
+   pip install -e .
+   # passlib[bcrypt] + itsdangerous 已在 requirements.txt
+   ```
+
+2. **数据库迁移（自动）**
+
+   - 启动期 `Base.metadata.create_all` 自动建 `ri_user_table` + `ri_user_cluster_config_table` 2 张表
+   - 启动期 `bootstrap_on_startup()` 执行 `DELETE FROM ri_segment_turn_table`（p17_a：旧 turn 数据丢失，需重新 `parse_rollout`）
+   - 启动期 `ensure_admin_seed()` 写入 admin 行（username=admin / password=admin123 / role=admin），日志 WARNING 一次提醒生产环境改密码
+
+3. **页面差异**
+
+   - `/api/tasks/{tid}/rollouts/{rid}` URL 不变，但页面布局从 v0.4.0 的 attempt→segment→turn 三层改为 group→attempt→segment→turn 四层
+   - `/api/rollouts/{id}` JSON 接受 `?group=N` 过滤；返回字段新增 `n_tool_calls / n_diff_lines / total_resp_len / total_mask_sum / total_trainable_tokens / reward_bucket` 6 个 attempt 摘要
+
+4. **CLI 差异**
+
+   ```bash
+   # 旧：
+   rollout-insight rollouts parse <pk> --tokenizer DIR
+   # 新（多 2 个开关）：
+   rollout-insight rollouts parse <pk> --tokenizer DIR --backfill-turns --clear-turn-table
+   ```
+
+### 新功能速查
+
+- **Tokenizer-based turn 切分**：`.pt` 里 `sample['tokens']` + 父目录 `resolved_config.yaml` 提到的 `env.SFT_MODEL / HF_CHECKPOINT` 当 tokenizer，按 `<|im_start|>` token id 切分；fallback 到 response 文本切
+- **attempt 摘要聚合**：6 字段（tool / diff / resp_len / mask / trainable_tokens / reward_bucket）+ 130 段 task #2 rollout 158 拆 8 group 验证
+- **四层手风琴**：
+  - 第 1 层 group：N attempts + 全0/全1/混合/无 计数
+  - 第 2 层 attempt：5 统计 chip + bucket badge + status
+  - 第 3 层 segment：index + status + reward；展开触发 fetch
+  - 第 4 层 turn：role + chars + token_estimate + 内部 4 子 details
+- **turn 内 4 子 details**：think 块 / tool_call 块 / tool_response 块 / 纯文本块，按出现顺序扫一遍 turn body 切成
+- **?group=N 过滤**：URL 顶栏切 group 链接，第一屏只显示该 group 的 attempts
+- **bootstrap 启动期**：DELETE turn 表 + ensure_admin_seed + WARNING 一次
+- **2 张 v0.5.1 准备表**：`ri_user_table` / `ri_user_cluster_config_table` 已建好但不写 service（v0.5.1 worker 写）
+
+### 已知问题（v0.5.0 不修，留 v0.5.1+ 处理）
+
+1. **`ensure_admin_seed` 用 bcrypt 直调，passlib[bcrypt] 仅占位**
+   passlib 1.7.x 与 bcrypt 5.x 的 `__about__.__version__` 检测有兼容问题（已知 issue #175），
+   当前实现直接 `import bcrypt; bcrypt.hashpw / bcrypt.checkpw`。requirements.txt 仍保留
+   `passlib[bcrypt]` 以备 Worker B 切换。
+2. **`split_turns → `_split_token_turns`` 的 prompt 段归属问题**
+   若 `.pt` 里 prompt tokens 中夹杂 `<|im_start|>`（如 dataset prompt 自带 turn marker），
+   `_split_token_turns` 会把它切成第一个 turn；UI 当前不展示 prompt-only turn，需 Worker C
+   在 v0.5.3 加 `include_prompt=False` 筛选。
+3. **`/api/rollouts/{id}/clear-turn-table` 端点未注册**
+   CLI 的 `--clear-turn-table` flag 实际清理由 `bootstrap_on_startup` 完成；API 端点
+   Worker D 在 v0.5.1+ 实现。
+4. **turn_token chunks 的顺序扫描对 thinking 块不严格保护**
+   `splitTurnBody` 用朴素正则顺序扫 + 起始 index 排序，若 chat-template 里有
+   `<think>\n\n...</think>` 转义后会失去，但保有转义；如有 nested / 不可见
+   `<|im_start|>` blocks 时仍按出现顺序切。Worker D 在 v0.5.3+ 可换成更严格的 AST 切。
+5. **`_discover_tokenizer_path` 在没有 `resolved_config.yaml` 的目录退化为 None**
+   本地仓库的 `.pt` 路径 `/mnt/zj-data/data/songquanheng/output/slime/<task>/rollout_dumps/rollout_0.pt`
+   的所有父目录都没有 `resolved_config.yaml`（生产脚本本来在另一个目录写 yaml），所以
+   `_discover_tokenizer_path` 返回 None → 走 response 文本兜底路径。
+   此外，本地 `tokenizer.json` (`models/021-32b/...`) 把 `<|im_start|>` 注册为
+   `None`（vocab 是 `<|reserved_special_token_6|>` = id 128011），需要 Worker D 在
+   v0.5.3 把 `<|im_start|>` ↔ `<|reserved_special_token_6|>` 的映射补上。
+   验证：在 shell 里手动用一个 wrapper tokenizer 把 128011 映射到 `<|im_start|>` 后，
+   `_split_token_turns` 正确返回 31 chunks（同一个 sample）。当前退化为文本切分
+   后的 turn 数 = response 文本中 `<|im_start|>` 字面 marker 数量，多数 segment 是 1
+   turn 是数据特征而非代码 bug。
+
+### 端到端验收（T6）
+
+- 服务启动 OK（PID 363846 已 kill，新 PID 474617 在 0.0.0.0:39998 监听）
+- `pip install -e .` OK；`passlib[bcrypt] itsdangerous` 已装（实际用 `bcrypt` 直调，passlib 占位）
+- 启动期 `bootstrap_on_startup` 走完：`DELETE ri_segment_turn_table` + `ensure_admin_seed`（首次启动写 admin / admin123 / role=admin，行级 WARNING 一次）
+- 第二次启动检测 user_count>0 → 直接跳过 seed（INFO '跳过'）
+- 重启后 `http://localhost:39998/api/tasks/2/rollouts/158` 返回 200；HTML 含 8 个 group 折叠标题 + 129 attempts + 131 segments
+- `/api/rollouts/158` JSON 返回 `distinct_groups: [0,1,2,4,7,9,10,12]` 与 6 个聚合字段（n_tool_calls / n_diff_lines / total_resp_len / total_mask_sum / total_trainable_tokens / reward_bucket）
+- `?group=0` 过滤生效：attempts 数从 129 降到 40（仅 group=0）
+- attempt 行展示 5+ stat chips：例如 #34901 → `tool 44 / diff 776 / resp_len 23.0k / mask 4.0k / trainable_tokens 0 / segments 1 / mean_reward 0.000`，加上 `bucket-all_zero` badge
+- `/api/segments/34259/turns.json` 当前走文本切分（tokenizer 路径因 `_discover_tokenizer_path` 返回 None + 本地 tokenizer 不映射 128011 → 退化）。在 wrapper tokenizer 下验证 token 路径可切出 31 chunks（与 sample tokens 中 reserved_token_6 出现次数一致）
+- `rollout-insight rollouts parse --help` 出现 `--backfill-turns / --clear-turn-table / --tokenizer` 三个新选项
+- `POST /api/rollouts/158/parse?force=true` 提交后台解析；后台日志显示 `attempts=64 segments=129 persisted_turns=86`（86 = 实际能反查到的 11 个 segment × 各自文本 im_start 数，v0.4.0 已知问题 1 限制）
+- DBUser / DBUserClusterConfig 两张表已通过 `Base.metadata.create_all` 自动建好；`ri_user_table` 写入 1 行 admin
+- `ensure_admin_seed()` 的 bcrypt 哈希已落库（hash 长度 60，能 verify admin/admin123 通过）
+
+
+| 子任务 | 内容 | commit |
+| --- | --- | --- |
+| T14 | `scripts/scan_func_md.py` —— AST 扫描 + 渲染 controller/service/db/utils/data 公开能力；`--check` 模式提供 CI 门禁 | 本 tag 内 |
+| T14 | `scripts/make_func_md.sh` —— bash 包装脚本（自动 cd 到 repo 根），供本地"一键重生成" | 本 tag 内 |
+| T14 | 首次 `func.md`（基于 main 分支当前代码，覆盖 5 个目录的全部公开类 / 静态方法 / 路由 / 错误码） | 本 tag 内 |
+| T15 | 新规则文件 `.cursor/rules/rollout-insight-conventions.mdc`（alwaysApply=true）—— "改前先查 func.md / 改后重生成 func.md" | 本 tag 内 |
+| T15 | `skill/SKILL.md` 顶部加 "改前先读 func.md / 改后重生成 func.md"，末尾加 "维护 func.md" 排障 | 本 tag 内 |
+| T15 | `skill/recipes.md` 新增 "场景 0：新增 controller / service / db 表 / utils 函数的标准流程"（三步走 + 反例表） | 本 tag 内 |
+
 ### 文件变更（vs v0.4.0 → v0.5.2 之间已落地的 v0.5.0 / v0.5.1）
 
 > 本节说明 v0.5.2 仅负责**索引层**（v0.5.0 turn 重写 + v0.5.1 用户/登录 的代码

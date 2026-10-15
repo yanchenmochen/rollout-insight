@@ -8,6 +8,7 @@
         nanhu {jobs,restart,link}
         tokenizer {set,test}
         rollouts {show,parse,list}                                    # v0.4.0
+            parse: v0.5.0 + --backfill-turns / --clear-turn-table / --tokenizer
         agent-transcripts {report}                                    # v0.4.0
 
 写操作默认 dry-run；加 ``--submit`` 才执行。``rollouts parse`` 是 idempotent
@@ -19,7 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import cli.api_client as api
 import cli.formatters as fmt
@@ -200,6 +201,16 @@ def _build_rollouts_parser(sub: argparse._SubParsersAction) -> None:
         dest="tokenizer_dir",
         default="",
         help="可选 tokenizer 目录（写到 POST body 备用）",
+    )
+    r_parse.add_argument(
+        "--backfill-turns",
+        action="store_true",
+        help="v0.5.0 T5：触发 segments/{id}/turns.json 的 token 重切，并写回 turn 表",
+    )
+    r_parse.add_argument(
+        "--clear-turn-table",
+        action="store_true",
+        help="v0.5.0 T5：先 DELETE FROM ri_segment_turn_table 再 parse（默认会清）",
     )
     r_parse.add_argument(
         "--submit",
@@ -493,6 +504,8 @@ def _run_rollouts(args: argparse.Namespace) -> int:
                 "api_base": base,
                 "rollout_id": args.rollout_id,
                 "tokenizer_dir": args.tokenizer_dir,
+                "backfill_turns": bool(args.backfill_turns),
+                "clear_turn_table": bool(args.clear_turn_table),
                 "submit": False,
                 "dry_run": True,
                 "note": (
@@ -503,6 +516,9 @@ def _run_rollouts(args: argparse.Namespace) -> int:
             }
             _emit(plan, args)
             return 0
+        # v0.5.0 T5：parse 后若 --backfill-turns，逐 segment 触发一次 turn 重新切分（token-based）。
+        # 这步是为了让「先 parse 写完 (group, segment) 落库」与「token 切分写回 ri_segment_turn_table」
+        # 解耦；默认行为 parse 已写 turn，无需再调。
         payload = api.parse_rollout(
             base,
             args.rollout_id,
@@ -510,6 +526,55 @@ def _run_rollouts(args: argparse.Namespace) -> int:
             force=True,
         )
         _emit(payload, args)
+
+        if args.backfill_turns:
+            # 1) 清 turn 表（先本地可选做，由 --clear-turn-table 控制）
+            if args.clear_turn_table:
+                clear_resp = api.clear_turn_table(base, args.rollout_id)
+                _emit(
+                    {
+                        "action": "backfill_turns: clear turn table",
+                        "rollout_id": args.rollout_id,
+                        "result": clear_resp,
+                    },
+                    args,
+                )
+            # 2) 列 segments（rollouts list → task segments search），逐个调 turns.json
+            seg_ids = api.list_segment_ids_for_rollout(base, args.rollout_id)
+            _emit(
+                {
+                    "action": "backfill_turns: 发现 segments",
+                    "rollout_id": args.rollout_id,
+                    "segment_count": len(seg_ids),
+                    "sample_segment_ids": seg_ids[:5],
+                },
+                args,
+            )
+            # 3) 逐个拉 turns.json
+            turn_counts: Dict[int, int] = {}
+            for sid in seg_ids:
+                try:
+                    resp = api.get_segment_turns(base, sid)
+                    turn_counts[sid] = int(
+                        (resp.get("data") or {}).get("turn_count", 0) or 0
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _emit_error(
+                        f"segment {sid} 拉 turns 失败: {exc}",
+                        code=-1,
+                    )
+                    turn_counts[sid] = -1
+            _emit(
+                {
+                    "action": "backfill_turns: 完成",
+                    "rollout_id": args.rollout_id,
+                    "segment_total": len(seg_ids),
+                    "turn_total": sum(max(v, 0) for v in turn_counts.values()),
+                    "per_segment_turn_count": turn_counts,
+                    "tokenizer_dir": args.tokenizer_dir,
+                },
+                args,
+            )
         return 0
 
     if sub == "list":

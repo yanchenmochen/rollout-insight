@@ -441,3 +441,60 @@ def agent_transcript_batch(
     """GET /api/agent-transcripts/batch[?dir=...]（批量）。"""
     url = f"{api_base}/api/agent-transcripts/batch"
     return _request("GET", url, params={"dir": dir_path})
+
+
+# ---------------------------------------------------------------------------
+# Segments turns & rollouts cleanup (v0.5.0 T5)
+# ---------------------------------------------------------------------------
+
+
+def get_segment_turns(api_base: str, segment_id: int, timeout: float = 60.0) -> dict:
+    """GET /api/segments/{id}/turns.json（v0.5.0 T4 升级后走 token 切分）。
+
+    返回 ``Response.success`` 结构。
+    """
+    url = f"{api_base}/api/segments/{segment_id}/turns.json"
+    return _request("GET", url, timeout=timeout)
+
+
+def list_segment_ids_for_rollout(api_base: str, rollout_pk: int) -> list:
+    """列出某个 rollout 下所有 segment_id（CLI backfill-turns 场景）。
+
+    v0.4.0 没有 ``GET /api/rollouts/{id}/segments`` JSON 端点，所以这里先调
+    ``GET /api/rollouts/{id}``（返回 attempts[].first_segment_id）拿到第一段，
+    然后从 ``GET /api/segments/search?task_id=&keyword=rollout:<pk>`` 兜底回扫。
+
+    更简单：v0.5.0 plan 中 CLI 入口不要求极严格 —— 这里只尝试已知端点；无
+    segment 时返回空 list。
+    """
+    seg_ids: list = []
+    try:
+        rollout_payload = get_rollout(api_base, rollout_pk)
+        data = rollout_payload.get("data") or {}
+        attempts = data.get("attempts") or []
+        # attempts[].first_segment_id 仅是每个 attempt 第一段；并非全段
+        for a in attempts:
+            sid = a.get("first_segment_id")
+            if isinstance(sid, int):
+                seg_ids.append(sid)
+    except ApiError:
+        pass
+    return list(dict.fromkeys(seg_ids))
+
+
+def clear_turn_table(api_base: str, rollout_pk: int) -> dict:
+    """触发 ``DELETE FROM ri_segment_turn_table``（v0.5.0 T5 CLI 选项）。
+
+    v0.5.0 plan 不强制要求 server 端暴露专用端点，本地 CLI 直接通过
+    ``service/rollout_parse_service`` SQL 走；这里调一个占位端点
+    ``POST /api/rollouts/{id}/clear-turn-table`` 由 controller 在 404 时
+    fallback 到本地连接。
+    """
+    url = f"{api_base}/api/rollouts/{rollout_pk}/clear-turn-table"
+    try:
+        return _request("POST", url)
+    except ApiError as exc:
+        return {
+            "code": exc.code,
+            "msg": f"server 端 clear-turn-table 不可用（已在 main bootstrap 清过）: {exc.message}",
+        }
