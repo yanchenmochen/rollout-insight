@@ -23,6 +23,7 @@ from starlette.staticfiles import StaticFiles
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from db.db_element import Base, Session, engine
+from utils.auth_session import install_session_middleware
 from utils.bootstrap import bootstrap_on_startup
 from utils.config_loader import config
 from utils.log_setup import setup_logging
@@ -55,6 +56,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# v0.5.1：在 include_all_routers() 之前装 SessionMiddleware；
+# 这样后面挂载的 business router 拿到的 ``request.session`` 才有 cookie 解析结果。
+install_session_middleware(app)
+
+
+# v0.5.1：全局中间件 —— 把 ``request.state.current_user`` 注入好，方便模板层
+# 直接读 ``{{ current_user.username }}``（不依赖 controller 层显式传入）。
+# 注：中间件层只做"轻量注入"（不抛 401），实际权限校验仍由各 router 的 Depends(require_login) 负责。
+@app.middleware("http")
+async def _inject_current_user_middleware(request: Request, call_next):
+    """尝试把 session 里的 user_id 解析成 DBUser，挂到 ``request.state.current_user``。
+
+    任何异常都不会中断请求 —— 失败时 ``current_user = None``，由 ``require_login`` 兜底。
+    """
+    current_user_obj = None
+    try:
+        from utils.auth_session import current_user as _cu
+
+        # current_user 内部会主动把 user 塞到 request.state.current_user
+        current_user_obj = _cu(request)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[middleware] current_user 解析失败（忽略）: {}", exc)
+        request.state.current_user = None
+    if current_user_obj is None:
+        # current_user 内部已经塞过 state；这里兜底 None
+        request.state.current_user = getattr(request.state, "current_user", None)
+    return await call_next(request)
 
 
 def include_all_routers() -> None:
@@ -90,6 +120,40 @@ async def rollout_exception_handler(request: Request, exc: RolloutInsightExcepti
         status_code=200,
         content=Response.error(msg=exc.message, code=exc.code).model_dump(),
     )
+
+
+# v0.5.1：把 ``HTTPException(detail={code, msg})`` 转成统一 Response.error 结构
+# （默认 FastAPI 给的是 ``{"detail": {...}}``，不方便客户端解析）
+from fastapi import HTTPException as _HTTPException
+
+
+@app.exception_handler(_HTTPException)
+async def http_exception_handler(request: Request, exc: _HTTPException):
+    """全局 HTTPException 处理器。
+
+    规则：
+    - exc.detail 是 ``{code, msg}`` 字典 → 用 ``code`` 作为 HTTP 状态码，``msg`` 作为 msg
+    - exc.detail 是字符串 → 用 exc.status_code + exc.detail
+    - exc.headers 有 Location → 透传（用于 302 重定向）
+    """
+    detail = exc.detail
+    headers = exc.headers or None
+    status_code = exc.status_code
+
+    # 如果 detail 是 dict 且含 code 字段，把 code 作为业务码写到 body，但 HTTP 状态码仍用 status_code
+    if isinstance(detail, dict):
+        code = detail.get("code", status_code)
+        msg = detail.get("msg") or detail.get("detail") or str(detail)
+    elif isinstance(detail, str):
+        code = status_code
+        msg = detail
+    else:
+        code = status_code
+        msg = str(detail)
+
+    body = Response.error(msg=str(msg), code=int(code)).model_dump()
+    # 业务码 401 等保留 HTTP 状态码对齐；redirection（302）保留
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 @app.get("/healthz", include_in_schema=False)

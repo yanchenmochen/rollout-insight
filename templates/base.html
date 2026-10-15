@@ -78,6 +78,38 @@
         .nav-link:hover { background-color: #294766; }
         .nav-link.active { background-color: var(--ri-accent); }
 
+        /* v0.5.1 顶栏登录态 */
+        .navbar-auth { margin-left: auto; }
+
+        .nav-user-label {
+            display: block;
+            padding: 14px 18px;
+            color: #c8d6e6;
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .nav-user-role {
+            color: #8ea4bd;
+            font-weight: 400;
+            font-size: 12px;
+        }
+
+        .nav-logout-form {
+            margin: 0;
+            display: inline;
+        }
+        .nav-logout-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font: inherit;
+            color: white;
+            padding: 14px 18px;
+            font-weight: 500;
+        }
+        .nav-logout-btn:hover { background-color: #294766; }
+
         .main-content { flex: 1; padding: 20px; }
 
         .layout {
@@ -206,6 +238,36 @@
                     <a href="/api/settings"
                        class="nav-link {% if request.url.path.startswith('/api/settings') %}active{% endif %}">系统设置</a>
                 </li>
+            </ul>
+
+            {# v0.5.1：顶栏登录态（request.state.current_user 由 main.py 中间件注入） #}
+            {% set cu = request.state.current_user %}
+            <ul class="navbar-nav navbar-auth">
+                {% if cu %}
+                <li class="nav-item nav-user">
+                    <span class="nav-user-label" title="role: {{ cu.role }}">
+                        {{ cu.username }} <span class="nav-user-role">({{ cu.role }})</span>
+                    </span>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/me/cluster-configs"
+                       class="nav-link {% if request.url.path.startswith('/api/me/cluster-configs') %}active{% endif %}">设置</a>
+                </li>
+                <li class="nav-item">
+                    <form method="POST" action="/api/auth/logout" class="nav-logout-form">
+                        <button type="submit" class="nav-link nav-logout-btn">退出</button>
+                    </form>
+                </li>
+                {% else %}
+                <li class="nav-item">
+                    <a href="/api/auth/login{% if request.url.path and request.url.path != '/' %}?next={{ request.url.path }}{% endif %}"
+                       class="nav-link">登录</a>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/auth/register"
+                       class="nav-link">注册</a>
+                </li>
+                {% endif %}
             </ul>
         </div>
     </nav>

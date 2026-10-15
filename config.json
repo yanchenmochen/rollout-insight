@@ -9,8 +9,10 @@
 
     "rollout_dump_root": "/mnt/zj-data/data/songquanheng/output/slime",
     "rollout_dump_pattern": "**/rollout_dumps/rollout_*.pt",
-    "rollout_insight_version": "0.1.0",
+    "rollout_insight_version": "0.5.1",
 
     "nanhu_cluster": "wuxi",
-    "nanhu_user_id": ""
+    "nanhu_user_id": "",
+
+    "session_secret": "bQ5Xi7OEeMd8ql4ycGPqmIOqzVpCiZGAFH00jYTtJsArtAo2pL8wMpAe9KOLoZyT"
 }

@@ -17,16 +17,18 @@ import re
 from html import escape as _html_escape
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
 from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
+from utils.auth_session import require_login
 from utils.config_loader import config
 
-router = APIRouter()
+# v0.5.1：业务路由统一要求登录
+router = APIRouter(dependencies=[Depends(require_login)])
 
 templates = Jinja2Templates(directory=str(config.templates_dir))
 
