@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .cfg-page {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+    }
+    .cfg-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+    .cfg-toolbar h1 {
+        margin: 0;
+        font-size: 22px;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .cfg-card {
+        background: var(--ri-surface);
+        border: 1px solid var(--ri-border);
+        border-radius: 8px;
+        padding: 18px 20px;
+        box-shadow: var(--ri-shadow);
+    }
+
+    .cfg-banner {
+        background: #fdecec;
+        color: #8a2222;
+        border: 1px solid #f3b9b9;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin-bottom: 14px;
+        font-size: 13px;
+    }
+
+    .cfg-banner.success {
+        background: #e8f5ee;
+        color: #1d6b3f;
+        border-color: #b6dec4;
+    }
+
+    .cfg-list table {
+        margin-top: 8px;
+    }
+
+    .cfg-list .actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .cfg-list .badge-on {
+        background: #e8f5ee;
+        color: #1d6b3f;
+        border: 1px solid #b6dec4;
+        padding: 1px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+    }
+    .cfg-list .badge-off {
+        background: #f3f5f8;
+        color: var(--ri-muted);
+        border: 1px solid var(--ri-border);
+        padding: 1px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+    }
+
+    .cfg-form .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+    }
+
+    @media (max-width: 720px) {
+        .cfg-form .form-grid { grid-template-columns: 1fr; }
+    }
+
+    .cfg-form .form-row {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .cfg-form .form-row.full { grid-column: 1 / -1; }
+
+    .cfg-form label {
+        font-size: 12px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .cfg-form input[type="text"],
+    .cfg-form input[type="password"],
+    .cfg-form textarea,
+    .cfg-form select {
+        padding: 7px 9px;
+        border: 1px solid var(--ri-border);
+        border-radius: 4px;
+        font-size: 13px;
+        background: #fafbfc;
+        font-family: inherit;
+    }
+
+    .cfg-form input:focus,
+    .cfg-form textarea:focus,
+    .cfg-form select:focus {
+        outline: none;
+        border-color: var(--ri-accent);
+        background: white;
+    }
+
+    .cfg-form textarea {
+        min-height: 90px;
+        resize: vertical;
+        font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Consolas, monospace;
+    }
+
+    .cfg-form .form-row.disabled input,
+    .cfg-form .form-row.disabled textarea,
+    .cfg-form .form-row.disabled select {
+        background: #f1f3f6;
+        color: var(--ri-muted);
+        cursor: not-allowed;
+    }
+
+    .cfg-form .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--ri-ink);
+    }
+
+    .cfg-form .actions {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .cfg-form .actions .spacer { flex: 1; }
+
+    .cfg-hint {
+        font-size: 12px;
+        color: var(--ri-muted);
+        margin-top: 4px;
+    }
+
+    .cfg-hint code {
+        background: #f3f5f8;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 12px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cfg-page">
+    <div class="cfg-toolbar">
+        <h1>{% if mode == 'edit' %}编辑集群配置{% elif mode == 'new' %}新建集群配置{% else %}集群配置{% endif %}</h1>
+        <div>
+            {% if mode == 'list' %}
+            <a class="btn" href="/api/me/cluster-configs/new">+ 新建</a>
+            {% else %}
+            <a class="btn btn-secondary" href="/api/me/cluster-configs">← 返回列表</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="cfg-banner">{{ error }}</div>
+    {% endif %}
+    {% if success %}
+    <div class="cfg-banner success">{{ success }}</div>
+    {% endif %}
+
+    {# ---- 列表模式 ---- #}
+    {% if mode == 'list' %}
+    <div class="cfg-card cfg-list">
+        {% if configs %}
+        <table>
+            <thead>
+                <tr>
+                    <th>cluster_key</th>
+                    <th>显示名</th>
+                    <th>api_base_url</th>
+                    <th>userId 字段</th>
+                    <th>token</th>
+                    <th>更新时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cfg in configs %}
+                <tr>
+                    <td><code>{{ cfg.cluster_key }}</code></td>
+                    <td>{{ cfg.display_label }}</td>
+                    <td>{{ cfg.api_base_url }}</td>
+                    <td>{{ cfg.user_id_field }}</td>
+                    <td>
+                        {% if cfg.token_enabled %}
+                        <span class="badge-on">enabled</span>
+                        {% else %}
+                        <span class="badge-off">disabled</span>
+                        {% endif %}
+                    </td>
+                    <td class="meta">{{ cfg.update_time.strftime('%Y-%m-%d %H:%M:%S') if cfg.update_time else '-' }}</td>
+                    <td>
+                        <div class="actions">
+                            <a class="btn btn-secondary" href="/api/me/cluster-configs/{{ cfg.cluster_key }}/edit">编辑</a>
+                            <form method="POST" action="/api/me/cluster-configs/{{ cfg.cluster_key }}/delete"
+                                  onsubmit="return confirm('确认删除 {{ cfg.cluster_key }}?');">
+                                <button type="submit" class="btn btn-secondary">删除</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="meta">还没有任何集群配置；点击右上角 <strong>+ 新建</strong> 创建第一条。</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- 新建 / 编辑模式 ---- #}
+    {% if mode == 'new' or mode == 'edit' %}
+    {% set ed = editing or {} %}
+    <div class="cfg-card cfg-form">
+        <form method="POST" action="/api/me/cluster-configs">
+            <div class="form-grid">
+                <div class="form-row {% if mode == 'edit' %}disabled{% endif %}">
+                    <label for="cluster_key">cluster_key *</label>
+                    {% if mode == 'edit' %}
+                    <input type="text" id="cluster_key" value="{{ ed.cluster_key or '' }}" disabled />
+                    <input type="hidden" name="cluster_key" value="{{ ed.cluster_key or '' }}" />
+                    <span class="cfg-hint">cluster_key 创建后不可改；如需修改请删除重建。</span>
+                    {% else %}
+                    <input type="text" name="cluster_key" id="cluster_key"
+                           value="{{ ed.cluster_key or '' }}"
+                           placeholder="例如 wuxi / x10000"
+                           pattern="^[a-z][a-z0-9._-]*$"
+                           maxlength="32"
+                           required />
+                    <span class="cfg-hint"><code>^[a-z][a-z0-9._-]*$</code>，最长 32 字符</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-row">
+                    <label for="display_label">显示名 *</label>
+                    <input type="text" name="display_label" id="display_label"
+                           value="{{ ed.display_label or '' }}" required />
+                </div>
+
+                <div class="form-row full">
+                    <label for="api_base_url">API 网关地址 *</label>
+                    <input type="text" name="api_base_url" id="api_base_url"
+                           value="{{ ed.api_base_url or '' }}"
+                           placeholder="https://nanhu.example.com/api/v1" required />
+                </div>
+
+                <div class="form-row">
+                    <label for="user_id_field">南湖 userId 字段</label>
+                    <input type="text" name="user_id_field" id="user_id_field"
+                           value="{{ ed.user_id_field or '' }}"
+                           placeholder="例如 userId" />
+                </div>
+
+                <div class="form-row">
+                    <label for="token_http_method">token HTTP 方法</label>
+                    <select name="token_http_method" id="token_http_method">
+                        {% set m = (ed.token_http_method or 'POST') %}
+                        <option value="POST" {% if m == 'POST' %}selected{% endif %}>POST</option>
+                        <option value="GET" {% if m == 'GET' %}selected{% endif %}>GET</option>
+                        <option value="PUT" {% if m == 'PUT' %}selected{% endif %}>PUT</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <label for="app_key">app_key</label>
+                    <input type="text" name="app_key" id="app_key"
+                           value="{{ ed.app_key or '' }}" />
+                </div>
+
+                <div class="form-row">
+                    <label for="app_secret">app_secret</label>
+                    <input type="password" name="app_secret" id="app_secret"
+                           value="{{ ed.app_secret or '' }}" />
+                </div>
+
+                <div class="form-row full">
+                    <label for="auth_token_url">OAuth2 token URL（可选）</label>
+                    <input type="text" name="auth_token_url" id="auth_token_url"
+                           value="{{ ed.auth_token_url or '' }}"
+                           placeholder="https://example.com/oauth/token" />
+                </div>
+
+                <div class="form-row full">
+                    <label for="token_request_body">token 请求体（裸 JSON 文本，可选）</label>
+                    <textarea name="token_request_body" id="token_request_body"
+                              placeholder='{"grant_type":"client_credentials","client_id":"...","client_secret":"..."}'>{{ ed.token_request_body or '' }}</textarea>
+                </div>
+
+                <div class="form-row full toggle-row">
+                    <label class="cfg-hint" style="display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" name="token_enabled" value="1"
+                               {% if ed.token_enabled %}checked{% endif %} />
+                        启用 token 自动刷新（v0.5.3+ 接入；v0.5.1 仅记录开关）
+                    </label>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button type="submit" class="btn">保存</button>
+                <span class="spacer"></span>
+                <a class="btn btn-secondary" href="/api/me/cluster-configs">取消</a>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

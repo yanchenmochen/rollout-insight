@@ -1,4 +1,4 @@
-"""``rollout-insight`` CLI 入口（v0.4.0）。
+"""``rollout-insight`` CLI 入口（v0.5.1）。
 
 命令树::
 
@@ -10,6 +10,7 @@
         rollouts {show,parse,list}                                    # v0.4.0
             parse: v0.5.0 + --backfill-turns / --clear-turn-table / --tokenizer
         agent-transcripts {report}                                    # v0.4.0
+        users {list,create,set-password,activate,deactivate}         # v0.5.1
 
 写操作默认 dry-run；加 ``--submit`` 才执行。``rollouts parse`` 是 idempotent
 且用户主动触发，所以即使不带 ``--submit`` 也会真执行。
@@ -26,6 +27,7 @@ import cli.api_client as api
 import cli.formatters as fmt
 import cli.nanhu_bridge as nanhu_bridge
 import cli.tokenizer_cmd as tokenizer_cmd
+import cli.users_cmd as users_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +167,73 @@ def build_parser() -> argparse.ArgumentParser:
     # ----- agent-transcripts (v0.4.0) -----
     _build_agent_transcripts_parser(sub)
 
+    # ----- users (v0.5.1) -----
+    _build_users_parser(sub)
+
     return parser
+
+
+def _build_users_parser(sub: argparse._SubParsersAction) -> None:
+    """注册 ``users`` 顶层子命令（v0.5.1 T12）。
+
+    子命令：
+    - list                  列出所有用户（默认 JSON，--format table 转 markdown 表）
+    - create                新建用户（dry-run 默认；--submit 真执行）
+    - set-password          改密码（dry-run 默认；--submit 真执行）
+    - activate / deactivate 启用 / 禁用账号（dry-run 默认；--submit 真执行）
+    """
+    users_p = sub.add_parser(
+        "users",
+        help="用户管理（v0.5.1）",
+    )
+    users_sub = users_p.add_subparsers(
+        dest="users_cmd", required=True, title="users 子命令"
+    )
+
+    # users list
+    u_list = users_sub.add_parser(
+        "list", help="列出所有用户（JSON / table）"
+    )
+
+    # users create
+    u_create = users_sub.add_parser(
+        "create", help="新建用户（dry-run 默认；--submit 真执行）"
+    )
+    u_create.add_argument("--username", required=True, help="用户名")
+    u_create.add_argument("--password", required=True, help="明文密码（内部 bcrypt hash）")
+    u_create.add_argument(
+        "--role",
+        choices=("admin", "user"),
+        default="user",
+        help="角色（默认 user）",
+    )
+    u_create.add_argument(
+        "--submit",
+        action="store_true",
+        help="真执行（默认 dry-run）",
+    )
+
+    # users set-password
+    u_setpwd = users_sub.add_parser(
+        "set-password", help="改密码（dry-run 默认；--submit 真执行）"
+    )
+    u_setpwd.add_argument("--username", required=True)
+    u_setpwd.add_argument("--password", required=True, help="新密码")
+    u_setpwd.add_argument("--submit", action="store_true")
+
+    # users activate
+    u_activate = users_sub.add_parser(
+        "activate", help="启用账号（dry-run 默认；--submit 真执行）"
+    )
+    u_activate.add_argument("--username", required=True)
+    u_activate.add_argument("--submit", action="store_true")
+
+    # users deactivate
+    u_deactivate = users_sub.add_parser(
+        "deactivate", help="禁用账号（dry-run 默认；--submit 真执行）"
+    )
+    u_deactivate.add_argument("--username", required=True)
+    u_deactivate.add_argument("--submit", action="store_true")
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +687,56 @@ def _run_agent_transcripts(args: argparse.Namespace) -> int:
     _emit_error(f"未知 agent-transcripts 子命令: {sub}")
     return 2
 
+
+def _run_users(args: argparse.Namespace) -> int:
+    """``users`` 子命令分发（v0.5.1 T12）。"""
+    sub = args.users_cmd
+
+    if sub == "list":
+        payload = users_cmd.list_users()
+        _emit(payload, args)
+        return 0
+
+    if sub == "create":
+        payload = users_cmd.create_user(
+            username=args.username,
+            password=args.password,
+            role=args.role,
+            submit=args.submit,
+        )
+        _emit(payload, args)
+        return 0 if payload.get("code") == 0 else 1
+
+    if sub == "set-password":
+        payload = users_cmd.set_password(
+            username=args.username,
+            password=args.password,
+            submit=args.submit,
+        )
+        _emit(payload, args)
+        return 0 if payload.get("code") == 0 else 1
+
+    if sub == "activate":
+        payload = users_cmd.set_active(
+            username=args.username,
+            is_active=True,
+            submit=args.submit,
+        )
+        _emit(payload, args)
+        return 0 if payload.get("code") == 0 else 1
+
+    if sub == "deactivate":
+        payload = users_cmd.set_active(
+            username=args.username,
+            is_active=False,
+            submit=args.submit,
+        )
+        _emit(payload, args)
+        return 0 if payload.get("code") == 0 else 1
+
+    _emit_error(f"未知 users 子命令: {sub}")
+    return 2
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -648,6 +766,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             return _run_rollouts(args)
         if args.command == "agent-transcripts":
             return _run_agent_transcripts(args)
+        if args.command == "users":
+            return _run_users(args)
         _emit_error(f"未知命令: {args.command}")
         return 2
     except api.ApiError as exc:
