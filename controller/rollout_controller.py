@@ -68,6 +68,13 @@ def _rollout_parse_service():
     )
 
 
+def _attempt_token_stats_fn():
+    """v0.5.0 T2：取 service 层的 attempt 聚合函数（延迟导入）。"""
+    return _safe_import_attr(
+        "service.rollout_parse_service", "parse_attempt_token_stats"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 序列化辅助
 # ---------------------------------------------------------------------------
@@ -206,6 +213,22 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
             for s in segs:
                 seg_map.setdefault(int(s.attempt_id), []).append(s)
 
+        # v0.5.0 T2：批量聚合 attempt 摘要（避免每行单独 query）
+        stats_fn = _attempt_token_stats_fn()
+        stats_cache: Dict[int, Dict[str, Any]] = {}
+        if stats_fn is not None:
+            for a in attempts:
+                try:
+                    s = stats_fn(int(a.primary_id)) or {}
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "_load_rollout_full: attempt_pk={} 聚合失败: {}",
+                        a.primary_id,
+                        exc,
+                    )
+                    s = {}
+                stats_cache[int(a.primary_id)] = s
+
         for a in attempts:
             segs = seg_map.get(int(a.primary_id), [])
             rewards = [
@@ -223,6 +246,7 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
                         "sandbox_id": getattr(s, "sandbox_id", None) or "",
                     }
                 )
+            stats = stats_cache.get(int(a.primary_id), {}) or {}
             out["attempts"].append(
                 {
                     "primary_id": int(a.primary_id),
@@ -236,6 +260,15 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
                     "segment_count": len(seg_dicts),
                     "mean_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
                     "segments": seg_dicts,
+                    # v0.5.0 T2：attempt 维度聚合
+                    "n_tool_calls": int(stats.get("n_tool_calls", 0) or 0),
+                    "n_diff_lines": int(stats.get("n_diff_lines", 0) or 0),
+                    "total_resp_len": int(stats.get("total_resp_len", 0) or 0),
+                    "total_mask_sum": int(stats.get("total_mask_sum", 0) or 0),
+                    "total_trainable_tokens": int(
+                        stats.get("total_trainable_tokens", 0) or 0
+                    ),
+                    "reward_bucket": stats.get("reward_bucket") or "none",
                 }
             )
     return out

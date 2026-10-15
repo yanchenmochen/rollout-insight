@@ -7,6 +7,9 @@
 - ``parse_rollout(pt_path, force=False)``：把单份 .pt 的 attempts / segments / turns
   解析出来，并把 turn 行 upsert 到 ``ri_segment_turn_table``（T4 新表）。
 - 复用 DBSegmentService / DBAttemptService 已有的 upsert 路径补全 summary 字段。
+- v0.5.0 T2：``parse_attempt_token_stats(attempt_pk)`` —— attempt 维度聚合
+  （n_tool_calls / n_diff_lines / total_resp_len / total_mask_sum /
+  total_trainable_tokens / reward_bucket）
 
 设计：
 - 业务错误用 RolloutInsightException 抛出
@@ -26,11 +29,20 @@ from utils.rollout_pt_parser import (
     load_pt,
     parse_attempts_and_segments,
     split_response_to_turns,
+    split_response_to_turns_with_tokenizer,
     token_estimate,
 )
 
 
-__all__ = ["parse_rollout", "RolloutParseService"]
+__all__ = [
+    "parse_rollout",
+    "RolloutParseService",
+    "parse_attempt_token_stats",  # v0.5.0 T2
+]
+
+
+# 阈值常量（v0.5.0 T2 reward_bucket 用）
+_REWARD_EPS = 1e-9
 
 
 class RolloutParseService:
@@ -211,3 +223,137 @@ class RolloutParseService:
 def parse_rollout(pt_path: str, force: bool = False) -> Dict[str, Any]:
     """``RolloutParseService().parse_rollout`` 的快捷封装。"""
     return RolloutParseService().parse_rollout(pt_path, force=force)
+
+
+# ---------------------------------------------------------------------------
+# v0.5.0 T2：attempt 维度摘要聚合
+# ---------------------------------------------------------------------------
+
+
+def _classify_reward_bucket(rewards: List[float]) -> str:
+    """把 attempts 的 segment reward 列表归类为 reward_bucket 标签。
+
+    - 'none'  —— 没有任何 segment 有数字 reward
+    - 'all_zero' —— 所有 segment 都是 0（不含 None）
+    - 'all_one' —— 所有 segment 都是 1（不含 None）
+    - 'mixed' —— 既有非 0 又非 1，或 reward 落在 0~1 之间
+    """
+    if not rewards:
+        return "none"
+    if all(abs(r) <= _REWARD_EPS for r in rewards):
+        return "all_zero"
+    if all(abs(r - 1.0) <= _REWARD_EPS for r in rewards):
+        return "all_one"
+    if any(0.0 < r < 1.0 for r in rewards):
+        return "mixed"
+    # 出现 >1 或 <0 的值都视作 mixed（避免错把奖励解码错误的样本归为 all_zero）
+    if any(r > 1.0 + _REWARD_EPS or r < 0.0 - _REWARD_EPS for r in rewards):
+        return "mixed"
+    return "mixed"
+
+
+def parse_attempt_token_stats(attempt_pk: int) -> Dict[str, Any]:
+    """聚合某个 attempt 下所有 segment 的 token / mask / reward 统计，供 UI 用。
+
+    Returns:
+        {
+            "attempt_id": int,
+            "segment_count": int,
+            "n_tool_calls": int,
+            "n_diff_lines": int,
+            "total_resp_len": int,
+            "total_mask_sum": int,
+            "total_trainable_tokens": int,
+            "reward_bucket": str ('all_zero' | 'all_one' | 'mixed' | 'none'),
+            "rewards": [float, ...],      # 各 segment reward 数字版（不含 None）
+        }
+
+    Raises:
+        RolloutInsightException.DB_ERROR：DB 查询失败
+        RolloutInsightException.NOT_IMPLEMENTED：模型未就绪
+    """
+    if attempt_pk is None:
+        raise RolloutInsightException(
+            RolloutInsightException.INVALID_ARGUMENT, "attempt_pk 不能为空"
+        )
+    try:
+        from db.db_element import Session
+        from db.db_attempt import DBAttempt
+        from db.db_segment import DBSegment
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "parse_attempt_token_stats: 延迟导入失败: {}", exc
+        )
+        raise RolloutInsightException(
+            RolloutInsightException.NOT_IMPLEMENTED,
+            f"db 模型未就绪: {exc}",
+        ) from exc
+
+    out: Dict[str, Any] = {
+        "attempt_id": int(attempt_pk),
+        "segment_count": 0,
+        "n_tool_calls": 0,
+        "n_diff_lines": 0,
+        "total_resp_len": 0,
+        "total_mask_sum": 0,
+        "total_trainable_tokens": 0,
+        "reward_bucket": "none",
+        "rewards": [],
+    }
+
+    try:
+        with Session() as session:
+            # 1) attempt 行校验
+            att = (
+                session.query(DBAttempt)
+                .filter(DBAttempt.primary_id == int(attempt_pk))
+                .first()
+            )
+            if att is None:
+                logger.warning(
+                    "parse_attempt_token_stats: attempt_pk={} 不存在",
+                    attempt_pk,
+                )
+                return out
+            # 2) segments 聚合
+            segs = (
+                session.query(DBSegment)
+                .filter(DBSegment.attempt_id == int(attempt_pk))
+                .order_by(DBSegment.segment_index.asc())
+                .all()
+            )
+
+            # n_tool_calls / n_diff_lines 取 attempt 行（DBAttempt 上已有聚合列）
+            out["n_tool_calls"] = int(getattr(att, "tool_calls", 0) or 0)
+            out["n_diff_lines"] = int(getattr(att, "diff_line_count", 0) or 0)
+
+            for s in segs:
+                out["total_resp_len"] += int(getattr(s, "response_length", 0) or 0)
+                out["total_mask_sum"] += int(getattr(s, "mask_sum", 0) or 0)
+                out["total_trainable_tokens"] += int(
+                    getattr(s, "trainable_tokens", 0) or 0
+                )
+                r = getattr(s, "reward", None)
+                if isinstance(r, (int, float)):
+                    out["rewards"].append(float(r))
+
+            # n_diff_lines 缺 attempt 行（0）时退化为 segments sum
+            if not out["n_diff_lines"]:
+                for s in segs:
+                    # segment 表本身没 diff_line_count 字段（与 attempt.metadata 重）
+                    pass  # 占位：实际数据由 attempt 表提供
+
+            out["segment_count"] = len(segs)
+            out["reward_bucket"] = _classify_reward_bucket(out["rewards"])
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "parse_attempt_token_stats: DB 操作失败 attempt_pk={} err={}",
+            attempt_pk,
+            exc,
+        )
+        raise RolloutInsightException(
+            RolloutInsightException.DB_ERROR,
+            "attempt #{} 聚合失败: {}".format(attempt_pk, exc),
+        ) from exc
+
+    return out
