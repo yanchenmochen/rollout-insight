@@ -20,7 +20,8 @@ import io
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # 在 import torch 前先屏蔽 MUSA / CUDA 探测输出
 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -37,6 +38,10 @@ __all__ = [
     "split_response_to_turns",
     "token_estimate",
     "_attempt_layout",  # 暴露给测试
+    "split_response_to_turns_with_tokenizer",  # v0.5.0 T1
+    "_discover_tokenizer_path",  # v0.5.0 T1
+    "_load_tokenizer",  # v0.5.0 T1
+    "_split_token_turns",  # v0.5.0 T1
 ]
 
 
@@ -366,3 +371,267 @@ def token_estimate(text: str, chars_per_token: float = 3.5) -> int:
     if not text:
         return 0
     return max(1, int(round(len(text) / max(0.1, chars_per_token))))
+
+
+# ---------------------------------------------------------------------------
+# v0.5.0 T1：基于 tokenizer 的 turn 切分
+# ---------------------------------------------------------------------------
+
+
+def _discover_tokenizer_path(dump_path: str) -> Optional[Path]:
+    """在 ``dump_path`` 的所有父目录中找 ``resolved_config.yaml``，再读 ``env.SFT_MODEL`` / ``env.HF_CHECKPOINT``。
+
+    复用 inspect-rollout-trajectory 的解析规则：managed syctool run 的 yaml 通常位于
+    ``<run_root>/resolved_config.yaml``，env 段里给出 SFT_MODEL 或 HF_CHECKPOINT 作为
+    tokenizer 目录。
+
+    Args:
+        dump_path: .pt dump 绝对路径
+
+    Returns:
+        解出的 tokenizer 目录路径（``Path``），找不到返回 ``None``。
+    """
+    if not dump_path:
+        return None
+    try:
+        parents = list(Path(dump_path).resolve().parents)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_discover_tokenizer_path: resolve {} 失败: {}", dump_path, exc)
+        return None
+    try:
+        import yaml  # PyYAML
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_discover_tokenizer_path: 未安装 PyYAML，跳过发现: {}", exc)
+        return None
+
+    for parent in parents:
+        config_path = parent / "resolved_config.yaml"
+        if not config_path.is_file():
+            continue
+        try:
+            with config_path.open(encoding="utf-8") as config_file:
+                cfg = yaml.safe_load(config_file) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "_discover_tokenizer_path: 解析 {} 失败: {}", config_path, exc
+            )
+            continue
+        env = (cfg or {}).get("env") or {}
+        model_path = env.get("SFT_MODEL") or env.get("HF_CHECKPOINT")
+        if model_path:
+            return Path(model_path)
+    return None
+
+
+def _load_tokenizer(path: str | Path) -> Any:
+    """从本地目录加载 Hugging Face ``tokenizer.json``，不引入 transformers。
+
+    Args:
+        path: tokenizer 目录路径；或直接指向 ``tokenizer.json`` 的文件路径。
+
+    Returns:
+        ``tokenizers.Tokenizer`` 实例（解码/切分用）。
+    """
+    # 在函数内导入：避免顶级依赖 + 当未安装 tokenizers 时让整文件可加载
+    from tokenizers import Tokenizer
+
+    p = Path(path) if not isinstance(path, Path) else path
+    tokenizer_json = p if p.name == "tokenizer.json" else p / "tokenizer.json"
+    if not tokenizer_json.is_file():
+        raise FileNotFoundError(f"tokenizer.json not found under {path}")
+    return Tokenizer.from_file(str(tokenizer_json))
+
+
+def _split_token_turns(
+    tokens: Sequence[int],
+    tokenizer: Any,
+) -> List[Dict[str, Any]]:
+    """在 token 序列上找 ``<|im_start|>`` 的 id，按出现位置切成多段并 decode。
+
+    返回元素形如::
+
+        {
+            "role": str,
+            "role_label": str,      # system/user/assistant/tool/unknown
+            "body": str,            # 已去掉 <|im_start|>/<|im_end|> 的纯文本
+            "token_start": int,     # 闭区间起点
+            "token_end": int,       # 开区间终点
+            "token_count": int,
+        }
+
+    - 若 tokenizer 无 ``<|im_start|>`` token id，整段序列作单元素返回（role="sequence"）。
+    - 若 tokens 里没有任何 ``<|im_start|>``，整段也作单元素。
+    """
+    if tokens is None or len(tokens) == 0 or tokenizer is None:
+        return []
+
+    turn_start_id = tokenizer.token_to_id("<|im_start|>")
+    if turn_start_id is None:
+        # fallback: 把整段视作单个 sequence；前端用 response 文本切分兜底
+        text = tokenizer.decode(list(tokens), skip_special_tokens=False)
+        return [
+            {
+                "role": "sequence",
+                "role_label": "unknown",
+                "body": text,
+                "token_start": 0,
+                "token_end": len(tokens),
+                "token_count": len(tokens),
+            }
+        ]
+
+    starts = [i for i, tid in enumerate(tokens) if tid == turn_start_id]
+    if not starts:
+        text = tokenizer.decode(list(tokens), skip_special_tokens=False)
+        return [
+            {
+                "role": "sequence",
+                "role_label": "unknown",
+                "body": text,
+                "token_start": 0,
+                "token_end": len(tokens),
+                "token_count": len(tokens),
+            }
+        ]
+
+    bounds = ([0] if starts[0] else []) + starts + [len(tokens)]
+    marker = "<|im_start|>"
+    turns: List[Dict[str, Any]] = []
+    for start, end in zip(bounds, bounds[1:]):
+        text = tokenizer.decode(list(tokens[start:end]), skip_special_tokens=False)
+        if tokens[start] != turn_start_id:
+            # 段首不是 im_start；视作续接文本，拼成 sequence
+            turns.append(
+                {
+                    "role": "sequence",
+                    "role_label": "unknown",
+                    "body": text,
+                    "token_start": int(start),
+                    "token_end": int(end),
+                    "token_count": int(end - start),
+                }
+            )
+            continue
+        body = text[len(marker):] if text.startswith(marker) else text
+        role, separator, content = body.partition("\n")
+        if not separator:
+            role_label = _normalize_role(role.strip() or "")
+            turns.append(
+                {
+                    "role": role.strip() or "?",
+                    "role_label": role_label,
+                    "body": "",
+                    "token_start": int(start),
+                    "token_end": int(end),
+                    "token_count": int(end - start),
+                }
+            )
+            continue
+        content = re.sub(r"<\|im_end\|>\s*$", "", content)
+        role_label = _normalize_role(role.strip() or "")
+        turns.append(
+            {
+                "role": role.strip() or "?",
+                "role_label": role_label,
+                "body": content,
+                "token_start": int(start),
+                "token_end": int(end),
+                "token_count": int(end - start),
+            }
+        )
+    return turns
+
+
+def _decode_turn_chunks_to_turn_dicts(
+    chunks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """把 ``_split_token_turns`` 的输出转成与 ``split_response_to_turns`` 同 schema 的 dict。
+
+    用法：当 tokens + tokenizer 可用时，外部调 ``_split_token_turns`` 后再过本函数，
+    让``upsert_segment_turns`` 的入参 schema 保持一致。
+    """
+    out: List[Dict[str, Any]] = []
+    for idx, ch in enumerate(chunks, 1):
+        body = ch.get("body", "") or ""
+        role = ch.get("role", "") or ""
+        role_label = ch.get("role_label", "unknown") or "unknown"
+        out.append(
+            _build_turn(
+                turn_index=idx,
+                role=role,
+                role_label=role_label,
+                body=body,
+                im_start_marker=("<|im_start|>" if ch.get("token_start") is not None else ""),
+            )
+        )
+    return out
+
+
+def split_response_to_turns_with_tokenizer(
+    response_text: str = "",
+    *,
+    tokens: Optional[Sequence[int]] = None,
+    tokenizer: Any = None,
+    tokenizer_path: Optional[str] = None,
+    dump_path: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """v0.5.0 T1：优先用 tokens + tokenizer 切分；否则 fallback 到 response 文本。
+
+    Args:
+        response_text: 整文 response（兜底用）
+        tokens: ``sample['tokens']`` 列表（可选）
+        tokenizer: 已加载的 ``tokenizers.Tokenizer``（可选，优先）
+        tokenizer_path: 已知的 tokenizer 目录路径（可选，用于临时加载）
+        dump_path: ``.pt`` 绝对路径（可选；用于 ``_discover_tokenizer_path``）
+
+    Returns:
+        (turns_list, source) — ``source`` 取值 ``"tokens"`` / ``"text"``。
+    """
+    # 1) 优先：tokens + tokenizer 都给齐了，直接走 token 路径
+    if tokens and len(tokens) > 0 and tokenizer is not None:
+        chunks = _split_token_turns(tokens, tokenizer)
+        return _decode_turn_chunks_to_turn_dicts(chunks), "tokens"
+
+    # 2) 兜底1：tokens 有、tokenizer 没给出 → 尝试加载（先 path，再 discover）
+    if tokens and len(tokens) > 0 and tokenizer is None:
+        loaded = _try_load_tokenizer_for_dump(
+            tokenizer_path=tokenizer_path, dump_path=dump_path
+        )
+        if loaded is not None:
+            chunks = _split_token_turns(tokens, loaded)
+            return _decode_turn_chunks_to_turn_dicts(chunks), "tokens"
+
+    # 3) 兜底2：response 文本切分
+    return split_response_to_turns(response_text or ""), "text"
+
+
+def _try_load_tokenizer_for_dump(
+    tokenizer_path: Optional[str] = None,
+    dump_path: Optional[str] = None,
+) -> Optional[Any]:
+    """按优先级加载 tokenizer：
+
+    1. 显式 ``tokenizer_path``
+    2. ``_discover_tokenizer_path(dump_path)``
+
+    失败时返回 ``None``，不抛异常（让调用方走 fallback）。
+    """
+    candidates: List[Path] = []
+    if tokenizer_path:
+        try:
+            candidates.append(Path(tokenizer_path))
+        except Exception:  # noqa: BLE001
+            pass
+    discovered = _discover_tokenizer_path(dump_path) if dump_path else None
+    if discovered is not None:
+        candidates.append(discovered)
+    for cand in candidates:
+        try:
+            return _load_tokenizer(cand)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "split_response_to_turns_with_tokenizer: 加载 tokenizer {} 失败: {}",
+                cand,
+                exc,
+            )
+    return None
