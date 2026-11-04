@@ -8,24 +8,19 @@ attempt 键 = ``(group_index, rollout_id)``；每个 sample 是该 attempt 的�
 segment，按 ``metadata.segment_index`` 排序。
 
 约定：
-- ``load_pt`` 抑制 MUSA / CUDA 的 ``CreatePlatform failed`` 噪音（见 view_trajectory.py）
+- ``load_pt`` 优先走 ``analyze_dump.load_dump``（zip/pickle，无需可 import 的 torch）；
+  torch.load 仅作 analyze_dump 内部惰性兜底，本模块**不**在 import 时拉起 torch
 - ``parse_attempts_and_segments`` 返回结构化的 attempts + segments + 整文响应
 - ``split_response_to_turns`` 按 ``<|im_start|>`` 切分并识别 role
 - ``token_estimate`` 默认按字符 / 3.5 粗估
 """
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-
-# 在 import torch 前先屏蔽 MUSA / CUDA 探测输出
-with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-    import torch
 
 from loguru import logger
 
@@ -46,26 +41,12 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# MUSA / CUDA 抑制
-# ---------------------------------------------------------------------------
-
-
-def _suppress_platform_noise():
-    """把 stdout/stderr 重定向到 StringIO，包裹 torch / MUSA 探测噪音。
-
-    view_trajectory.py 用 ``with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-    import torch`` 来避免平台探测日志泄漏；本函数把这一行做成可复用的 context manager。
-    """
-    return contextlib.ExitStack()
-
-
-# ---------------------------------------------------------------------------
-# .pt 加载
+# .pt 加载（无硬依赖 torch）
 # ---------------------------------------------------------------------------
 
 
 def load_pt(path: str) -> Dict[str, Any]:
-    """用 ``torch.load`` 加载 .pt dump，抑制平台探测噪音。
+    """加载 .pt dump：优先 zip/pickle，不要求环境能 ``import torch``。
 
     Args:
         path: .pt 文件绝对路径
@@ -86,12 +67,11 @@ def load_pt(path: str) -> Dict[str, Any]:
             f".pt dump 文件不存在: {path}",
         )
     try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
-            io.StringIO()
-        ):
-            dump = torch.load(path, map_location="cpu", weights_only=False)
+        from utils.analyze_dump import load_dump
+
+        dump = load_dump(path)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("torch.load 失败 path={} err={}", path, exc)
+        logger.exception("load_pt 失败 path={} err={}", path, exc)
         raise RolloutInsightException(
             RolloutInsightException.PARSE_DUMP_CORRUPTED,
             f"加载 .pt dump 失败 {path}: {exc}",
@@ -268,7 +248,10 @@ def parse_attempts_and_segments(dump: Dict[str, Any]) -> Dict[str, Any]:
 
 _IM_START_RE = re.compile(r"<\|im_start\|>")
 _IM_END_RE = re.compile(r"<\|im_end\|>")
-_TOOL_CALL_NAME_RE = re.compile(r"<\|tool_call[^>]*>\s*(\w+)", re.IGNORECASE)
+_TOOL_CALL_NAME_RE = re.compile(
+    r"<(?:\|)?tool_call[^>]*>\s*([A-Za-z0-9_]+)", re.IGNORECASE
+)
+_MD_TURN_HEAD_RE = re.compile(r"(?m)^### turn \d+ · \S+\s*$")
 _TOOL_CALL_END_RE = re.compile(r"</?tool_call>", re.IGNORECASE)
 
 
@@ -293,10 +276,11 @@ def split_response_to_turns(response_text: str) -> List[Dict[str, Any]]:
         return []
 
     parts = _IM_START_RE.split(response_text)
-    # parts[0] = 首个 im_start 之前的内容（无 role），作为 unknown turn
+    # parts[0] = 首个 im_start 之前的内容（无 role 标记）：
+    # dump 里常见为第一轮 assistant（含 <think>/<tool_call>），与 view_trajectory 一致
     turns: List[Dict[str, Any]] = []
     if parts and parts[0].strip():
-        turns.append(_build_turn(0, "unknown", "unknown", parts[0], ""))
+        turns.append(_build_turn(0, "assistant", "assistant", parts[0], ""))
 
     for chunk in parts[1:]:
         if not chunk:
@@ -319,6 +303,28 @@ def split_response_to_turns(response_text: str) -> List[Dict[str, Any]]:
         t["turn_index"] = i
         t["body_char_count"] = len(t["body"])
         t["token_estimate"] = token_estimate(t["body"])
+    return turns
+
+
+def split_markdown_headed_turns(text: str) -> List[Dict[str, Any]]:
+    """把 ``### turn N · role`` 标题切成多轮。
+
+    inspect / ensure_transcript 落库的正文经常没有 ``<|im_start|>``，
+    但保留了这种 markdown 轮次标题。少于 2 个标题时返回空列表，调用方继续用原切分。
+    """
+    if not text or text.count("### turn") < 2:
+        return []
+    matches = list(_MD_TURN_HEAD_RE.finditer(text))
+    if len(matches) < 2:
+        return []
+    turns: List[Dict[str, Any]] = []
+    for i, match in enumerate(matches):
+        head = match.group(0).strip()
+        role = head.split("·")[-1].strip() if "·" in head else "unknown"
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end].strip()
+        turns.append(_build_turn(i + 1, role, _normalize_role(role), body, "### turn"))
     return turns
 
 

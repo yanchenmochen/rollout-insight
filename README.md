@@ -59,7 +59,7 @@ rollout-insight/
 ├── utils/                     # 工具：配置、日志、解析辅助
 │   ├── config_loader.py
 │   ├── log_setup.py
-│   └── analyze_dump.py        # 由并行 worker 提供，封装 inspect-rollout-trajectory skill
+│   └── analyze_dump.py        # .pt dump 元数据/摘要/transcript（无依赖外部 skill）
 ├── data/                      # 数据层
 │   ├── response.py            # 统一 JSON 响应（code/msg/data）
 │   └── rollout_insight_exception.py   # 业务异常（50xxx/51xxx/52xxx/53xxx/54xxx）

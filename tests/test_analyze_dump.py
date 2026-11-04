@@ -1,10 +1,14 @@
 """utils.analyze_dump 的测试用例。"""
 import os
+import pickle
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
 from utils.analyze_dump import (
+    load_dump,
     load_dump_meta,
     split_turns,
     summarize_dump,
@@ -15,6 +19,11 @@ from utils.analyze_dump import (
 DUMP_PATH = Path(
     "/mnt/zj-data/data/songquanheng/output/slime/"
     "021_32b_agentic_scale_swe_1000_optim_20261001_195820/rollout_dumps/rollout_0.pt"
+)
+
+LIVE_DUMP_PATH = Path(
+    "/mnt/seed-program-nas/001688/songquanheng/output/slime/runs/"
+    "20261104_113329_c021-f1base-rollout/generated/rollout_dumps/rollout_0.pt"
 )
 
 
@@ -68,6 +77,59 @@ class TestAnalyzeDump(unittest.TestCase):
         self.assertGreater(len(out), 0)
 
 
+@unittest.skipUnless(LIVE_DUMP_PATH.is_file(), f"live dump 不存在：{LIVE_DUMP_PATH}")
+class TestAnalyzeDumpLiveNoTorchSkill(unittest.TestCase):
+    """不依赖 Cursor skill / torch 也能解析当前训练落盘。"""
+
+    def test_load_and_summarize_without_external_skill(self) -> None:
+        meta = load_dump_meta(LIVE_DUMP_PATH)
+        rows = summarize_dump(LIVE_DUMP_PATH)
+        self.assertGreater(meta["n_samples"], 0)
+        self.assertEqual(len(rows), meta["n_samples"])
+        self.assertIsNotNone(rows[0]["segment_index"])
+
+
+class TestAnalyzeDumpSyntheticZip(unittest.TestCase):
+    """用最小 zip/.pt 验证无 torch 路径与 None segment_index 兜底。"""
+
+    def test_zip_pickle_and_null_segment_index(self) -> None:
+        dump = {
+            "rollout_id": 7,
+            "samples": [
+                {
+                    "group_index": 0,
+                    "rollout_id": 11,
+                    "reward": 1.0,
+                    "status": "Status.FINISHED",
+                    "response_length": 3,
+                    "loss_mask": [1, 0, 1],
+                    "response": "<|im_start|>assistant\nok<|im_end|>",
+                    "metadata": {
+                        "segment_index": None,
+                        "segment_count": None,
+                        "instance_id": "i0",
+                        "sandbox_id": "s0",
+                        "agent_turns": 1,
+                        "tool_calls": 0,
+                        "diff_line_count": 0,
+                    },
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            pt_path = Path(tmp) / "rollout_7.pt"
+            with zipfile.ZipFile(pt_path, "w") as zf:
+                zf.writestr("rollout_7/data.pkl", pickle.dumps(dump))
+                zf.writestr("rollout_7/byteorder", "little")
+            meta = load_dump_meta(pt_path)
+            rows = summarize_dump(pt_path)
+        self.assertEqual(meta["rollout_id"], 7)
+        self.assertEqual(meta["n_samples"], 1)
+        self.assertEqual(rows[0]["segment_index"], 0)
+        self.assertEqual(rows[0]["segment_count"], 1)
+        self.assertEqual(rows[0]["mask_sum"], 2)
+
+
 class TestImportOnly(unittest.TestCase):
     """即使 .pt 不存在，也要保证 import 路径无副作用。"""
 
@@ -75,6 +137,8 @@ class TestImportOnly(unittest.TestCase):
         from utils import analyze_dump  # noqa: F401
 
         self.assertTrue(hasattr(analyze_dump, "load_dump_meta"))
+        self.assertTrue(hasattr(analyze_dump, "load_dump"))
+        self.assertTrue(callable(load_dump))
 
 
 if __name__ == "__main__":
