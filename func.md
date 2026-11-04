@@ -51,6 +51,7 @@
   | `RolloutInsightException.NANHU_JOB_RESTART_FAILED` | 53004 | `NANHU_JOB_RESTART_FAILED` | 南湖重启作业失败 |
   | `RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED` | 53005 | `NANHU_RESOURCE_QUERY_FAILED` | 南湖资源查询失败 |
   | `RolloutInsightException.NANHU_ALGORITHM_NOT_FOUND` | 53006 | `NANHU_ALGORITHM_NOT_FOUND` | 南湖算法镜像未找到 |
+  | `RolloutInsightException.NANHU_JOB_NOT_FOUND` | 53007 | `NANHU_JOB_NOT_FOUND` | 南湖作业未找到 |
   | `RolloutInsightException.SYSTEM_ERROR` | 54000 | `SYSTEM_ERROR` | 系统异常 |
   | `RolloutInsightException.DB_ERROR` | 54001 | `DB_ERROR` | 数据库异常 |
   | `RolloutInsightException.DB_CONNECT_FAILED` | 54002 | `DB_CONNECT_FAILED` | 数据库连接失败 |
@@ -62,10 +63,22 @@
 
 ### `utils/analyze_dump.py`
 
+- `def load_dump(path: str | Path) -> Dict[str, Any]` — 加载完整 .pt dump dict（优先 zip/pickle，不依赖可 import 的 torch）。
 - `def load_dump_meta(path: str | Path) -> Dict[str, Any]` — 读取 .pt 顶部元数据：rollout_id、n_samples、n_attempts、mean_reward。
 - `def summarize_dump(path: str | Path) -> List[Dict[str, Any]]` — 返回每个 sample 的摘要行（与 view_trajectory 表格一致）。
+- `def split_turns(text: str) -> List[tuple[str, str]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分为 ``(role, content)``。
 - `def render_transcript(path: str | Path, sample_idx: int, tokenizer_dir: Optional[str]=None, inc…` — 渲染一个 sample 的完整 transcript（Markdown）。
-- `def split_turns(text: str) -> List[tuple[str, str]]` — 复用 view_trajectory 的 turn 切分。
+
+### `utils/auth_session.py`
+
+- `def get_session_secret(config_path: Optional[str]=None) -> str` — 从 config.json 读 ``session_secret``；首次启动随机生成并写回。
+- `def install_session_middleware(app: Any) -> None` — 在 ``app`` 上挂 ``SessionMiddleware``（max_age = 7 天）。
+- `def wants_json_response(request: Request) -> bool` — 基于 Accept 头判断 caller 期望 JSON 而不是 HTML。
+- `def current_user(request: Request) -> Optional[Any]` — 从 ``request.session["user_id"]`` 查 DBUser；没登录返回 None。
+- `def require_login(request: Request) -> Any` — 依赖：未登录 → 302（HTML）或 401 JSON；否则返回当前 DBUser。
+- `def require_admin(request: Request) -> Any` — 依赖：未登录 → 同 ``require_login``；非 admin → 403 JSON；否则返回 DBUser。
+- `def set_login_session(request: Request, user_id: int) -> None` — 把 user_id 写进 session；FastAPI SessionMiddleware 会在响应时签 cookie。
+- `def clear_session(request: Request) -> None` — 清掉 user_id（其它自定义 key 保留；如果要全清用 ``request.session.clear()``）。
 
 ### `utils/bootstrap.py`
 
@@ -80,12 +93,20 @@
 - `def setup_rollout_insight_logging(log_base: str='') -> None` — 配置 rollout-insight 的 loguru 输出。
 - `def ensure_logging_configured() -> None` — 幂等地初始化 logging，避免被反复执行。
 
+### `utils/nanhu_job_path_resolve.py`
+
+- `def env_map_from_job(job: Mapping[str, Any]) -> Dict[str, str]` — 把 ``envVars`` / ``env_vars`` 列表转成 ``{KEY: value}``。
+- `def output_dir_from_job(job: Mapping[str, Any], env: Optional[Mapping[str, str]]=None) -> str` — 解析作业输出根目录（不含 ``rollout_dumps`` 子路径）。
+- `def resolve_paths_from_job_detail(job: Mapping[str, Any], *, prefer_existing_dirs: bool=True) -…` — 从作业详情 dict 解析创建任务字段。
+- `def extract_job_payload(detail: Mapping[str, Any]) -> Optional[MutableMapping[str, Any]]` — 从 ``get_job_detail`` 返回体取出作业 dict；失败返回 ``None``。
+
 ### `utils/rollout_pt_parser.py`
 
-- `def load_pt(path: str) -> Dict[str, Any]` — 用 ``torch.load`` 加载 .pt dump，抑制平台探测噪音。
+- `def load_pt(path: str) -> Dict[str, Any]` — 加载 .pt dump：优先 zip/pickle，不要求环境能 ``import torch``。
 - `def samples_index_for(_sample: Dict[str, Any]) -> int` — 占位：见 _segment_payload 中的 try/except；这里返回 0 让 except 兜底。
 - `def parse_attempts_and_segments(dump: Dict[str, Any]) -> Dict[str, Any]` — 把 dump 拆成 attempts + segments + 整文 response。
 - `def split_response_to_turns(response_text: str) -> List[Dict[str, Any]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分整文 response。
+- `def split_markdown_headed_turns(text: str) -> List[Dict[str, Any]]` — 把 ``### turn N · role`` 标题切成多轮。
 - `def token_estimate(text: str, chars_per_token: float=3.5) -> int` — 粗估 token 数：默认按字符数 / 3.5。
 - `def split_response_to_turns_with_tokenizer(response_text: str='', *, tokens: Optional[Sequence[…` — v0.5.0 T1：优先用 tokens + tokenizer 切分；否则 fallback 到 response 文本。
 
@@ -176,9 +197,31 @@
 - `staticmethod` `def update_fields(**fields: Any) -> bool`
 - `staticmethod` `def delete_task() -> bool`
 
+#### `DBUserClusterConfigService` (`db/db_user_cluster_config_service.py`)
+
+- `staticmethod` `def list_by_user() -> List[DBUserClusterConfig]`
+- `staticmethod` `def get_by_user_and_key(cluster_key: str) -> Optional[DBUserClusterConfig]`
+- `staticmethod` `def get_by_id(user_id: int) -> Optional[DBUserClusterConfig]`
+- `staticmethod` `def list_need_token_refresh() -> List[DBUserClusterConfig]`
+- `staticmethod` `def list_all() -> List[DBUserClusterConfig]`
+- `staticmethod` `def resolve_for_cluster(user_id: Optional[int]=None) -> Optional[DBUserClusterConfig]`
+- `staticmethod` `def upsert(cluster_key: str, display_label: str='', api_base_url: str='', user_id_field: str=''…`
+- `staticmethod` `def delete_by_id(user_id: int) -> bool`
+- `staticmethod` `def delete_by_user_and_key(cluster_key: str) -> bool`
+
 #### `DBUserService` (`db/db_user_service.py`)
 
 - `staticmethod` `def ensure_admin_seed(password: str=DEFAULT_ADMIN_PASSWORD, log_warning: bool=True) -> Dict[str…`
+- `staticmethod` `def count_users() -> int`
+- `staticmethod` `def is_username_taken() -> bool`
+- `staticmethod` `def create_user(password: str, role: str='user', is_active: bool=True) -> Optional[Any]`
+- `staticmethod` `def authenticate(password: str) -> Optional[Any]`
+- `staticmethod` `def get_by_username() -> Optional[Any]`
+- `staticmethod` `def get_by_id() -> Optional[Any]`
+- `staticmethod` `def list_users(offset: int=0, role: Optional[str]=None, is_active: Optional[bool]=None) -> List…`
+- `staticmethod` `def update_password(new_password: str) -> bool`
+- `staticmethod` `def set_active(is_active: bool) -> bool`
+- `staticmethod` `def set_last_login() -> bool`
 
 ## service/ — 业务流程
 
@@ -201,10 +244,10 @@
 
 模块级公开函数（不在 class 内）：
 
-- `staticmethod` `def list_train_jobs(cluster: str='', status: str='', user_id: str='') -> List[Dict[str, Any]]`
-- `staticmethod` `def get_job_detail(cluster: str, job_id: str) -> Dict[str, Any]`
-- `staticmethod` `def create_train_job(cluster: str, yaml_path: str, submit: bool=False) -> Dict[str, Any]`
-- `staticmethod` `def restart_job(cluster: str, job_id: str, submit: bool=False) -> Dict[str, Any]`
+- `staticmethod` `def list_train_jobs(cluster: str='', status: str='', user_id: str='', local_user_id: Optional[i…`
+- `staticmethod` `def get_job_detail(cluster: str, job_id: str, local_user_id: Optional[int]=None) -> Dict[str, A…`
+- `staticmethod` `def create_train_job(cluster: str, yaml_path: str, submit: bool=False, local_user_id: Optional[…`
+- `staticmethod` `def restart_job(cluster: str, job_id: str, submit: bool=False, local_user_id: Optional[int]=Non…`
 - `staticmethod` `def module_diagnostics() -> Dict[str, Any]`
 
 ### `RolloutParseService` (`service/rollout_parse_service.py`)
@@ -243,8 +286,15 @@
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/page` | `page_agent_transcripts` | 渲染 agent_transcript_report.html。 |
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/report` | `api_agent_transcript_report` | 返回单文件分析 JSON。 |
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/batch` | `api_agent_transcript_batch` | 批量分析；返回 list[dict]。 |
+| `auth_controller` | GET | `/api/auth/login` | `page_login` | 渲染 ``templates/login.html``。 |
+| `auth_controller` | POST | `/api/auth/login` | `api_login` | 登录端点（兼容 form + JSON 两种 body）。 |
+| `auth_controller` | GET | `/api/auth/register` | `page_register` | 渲染 ``templates/register.html``。 |
+| `auth_controller` | POST | `/api/auth/register` | `api_register` | 注册端点。 |
+| `auth_controller` | POST | `/api/auth/logout` | `api_logout` | 登出：清 session，返回 /api/tasks。 |
+| `auth_controller` | GET | `/api/auth/me` | `api_me` | 返回当前用户 dict；未登录返回 401 JSON。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/page` | `page_nanhu_jobs` | 渲染 nanhu_jobs.html（页面 + 表 + 过滤）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs` | `api_list_nanhu_jobs` | JSON 列表；refresh=1 会先调 nanhu_client.list_train_jobs 同步落库。 |
+| `nanhu_controller` | GET | `/api/nanhu/jobs/{job_id}/resolve-for-task` | `api_resolve_job_for_task` | 根据南湖 job 详情解析创建 Rollout 任务所需字段。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/link-task` | `api_link_task` | 关联 task 到南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/unlink-task` | `api_unlink_task` | 解绑 task 与南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/restart` | `api_restart_job` | 重启南湖 job；默认 dry-run。 |
@@ -262,6 +312,11 @@
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；带 rollouts/attempts/segments 三张子表。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
+| `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
+| `user_cluster_config_controller` | GET | `/api/me/cluster-configs/new` | `page_cluster_config_new` | 渲染新建表单（cluster_key 为空 → 新建模式）。 |
+| `user_cluster_config_controller` | GET | `/api/me/cluster-configs/{cluster_key}/edit` | `page_cluster_config_edit` | 渲染编辑表单（带预填数据）。 |
+| `user_cluster_config_controller` | POST | `/api/me/cluster-configs` | `api_cluster_config_upsert` | upsert：新建 / 更新都走这里。 |
+| `user_cluster_config_controller` | POST | `/api/me/cluster-configs/{cluster_key}/delete` | `api_cluster_config_delete` | 删除（仅自己的）。 |
 
 ## 重构检查清单
 
