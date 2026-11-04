@@ -44,6 +44,7 @@ class RolloutInsightException(Exception):
     NANHU_JOB_RESTART_FAILED = (53004, "NANHU_JOB_RESTART_FAILED", "南湖重启作业失败")
     NANHU_RESOURCE_QUERY_FAILED = (53005, "NANHU_RESOURCE_QUERY_FAILED", "南湖资源查询失败")
     NANHU_ALGORITHM_NOT_FOUND = (53006, "NANHU_ALGORITHM_NOT_FOUND", "南湖算法镜像未找到")
+    NANHU_JOB_NOT_FOUND = (53007, "NANHU_JOB_NOT_FOUND", "南湖作业未找到")
 
     # ----- 54xxx 系统 -----
     SYSTEM_ERROR = (54000, "SYSTEM_ERROR", "系统异常")

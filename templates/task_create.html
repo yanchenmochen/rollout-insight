@@ -132,11 +132,18 @@
         color: #721c24;
     }
 
+    .alert-info {
+        background-color: #e8f1f8;
+        border-color: var(--ri-accent);
+        color: #1a3a52;
+    }
+
     .button-group {
         margin-top: 18px;
         display: flex;
         gap: 10px;
         align-items: center;
+        flex-wrap: wrap;
     }
 
     .form-message {
@@ -146,6 +153,22 @@
 
     .form-message.error { color: #9b2c2c; }
     .form-message.success { color: var(--ri-success); }
+
+    .inline-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 8px;
+    }
+
+    .inline-actions input[type="text"],
+    .inline-actions select {
+        max-width: 220px;
+    }
+
+    .req-mark { color: #8a5a12; }
+    .opt-mark { color: var(--ri-muted); font-weight: 500; font-size: 12px; }
 </style>
 {% endblock %}
 
@@ -153,7 +176,7 @@
 <div class="page-header">
     <div>
         <h1>新建 Rollout 任务</h1>
-        <div class="page-subtitle">提供 rollout 落盘根目录，后台会异步扫描并写入 rollout / attempt / segment 元数据</div>
+        <div class="page-subtitle">提供 rollout 落盘根目录，或从南湖 job_id 一键解析路径后异步扫描</div>
     </div>
     <div>
         <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
@@ -168,18 +191,37 @@
 
         <div class="form-row">
             <div class="form-group">
-                <label for="task_name">任务名 *</label>
-                <input id="task_name" name="task_name" type="text" required maxlength="120" />
-                <div class="help-text">建议与 Slime 训练任务名同名，便于检索</div>
-            </div>
-            <div class="form-group">
                 <label for="source_type">来源类型</label>
                 <select id="source_type" name="source_type">
                     <option value="local_dump">本地落盘 (local_dump)</option>
                     <option value="nanhu_job">南湖作业 (nanhu_job)</option>
                     <option value="manual">手动 (manual)</option>
                 </select>
-                <div class="help-text">仅做记录用途，不会限制扫描逻辑</div>
+                <div class="help-text">选「南湖作业」后填写 job_id 并解析，可自动填充下方路径字段</div>
+            </div>
+            <div class="form-group" id="clusterGroup" style="display:none;">
+                <label for="cluster">南湖集群</label>
+                <select id="cluster" name="cluster">
+                    <option value="x10000" selected>x10000</option>
+                    <option value="wuxi">wuxi</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group" id="nanhuJobGroup" style="display:none;">
+            <label for="nanhu_job_id">关联南湖 job_id <span class="req-mark" id="jobReqMark">*</span></label>
+            <input id="nanhu_job_id" name="nanhu_job_id" type="text" placeholder="例如：jb-aitrain-xxxxxxxx" />
+            <div class="inline-actions">
+                <button type="button" class="btn btn-secondary" id="parseBtn">解析</button>
+                <span class="help-text" style="margin:0;">从作业 env 解析任务名 / Rollout 根路径 / tokenizer（HF_CHECKPOINT）</span>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="task_name">任务名 <span id="taskNameReq" class="req-mark">*</span></label>
+                <input id="task_name" name="task_name" type="text" required maxlength="120" />
+                <div class="help-text" id="taskNameHelp">建议与 Slime 训练任务名同名，便于检索</div>
             </div>
         </div>
 
@@ -193,21 +235,21 @@
         <h2>扫描设置</h2>
 
         <div class="form-group">
-            <label for="rollout_root">Rollout 根路径 *</label>
+            <label for="rollout_root">Rollout 根路径 <span id="rootReq" class="req-mark">*</span></label>
             <input id="rollout_root" name="rollout_root" type="text" required placeholder="例如：/mnt/data/slime/musa_run/runs" />
-            <div class="help-text">扫描器会在该路径下按 <code>**/rollout_dumps/rollout_*.pt</code> 规则匹配</div>
+            <div class="help-text" id="rootHelp">扫描器会在该路径下匹配 <code>rollout_*.pt</code>（勾选递归时含子目录）</div>
         </div>
 
         <div class="form-row">
-            <div class="form-group">
-                <label for="nanhu_job_id">关联南湖 job_id（可选）</label>
-                <input id="nanhu_job_id" name="nanhu_job_id" type="text" placeholder="例如：j-xxxxxx" />
-                <div class="help-text">若该任务的 rollout 由南湖作业产生，可填入便于溯源</div>
+            <div class="form-group" id="nanhuJobLocalGroup">
+                <label for="nanhu_job_id_local">关联南湖 job_id <span class="opt-mark">可选</span></label>
+                <input id="nanhu_job_id_local" type="text" placeholder="例如：jb-aitrain-xxxxxxxx" />
+                <div class="help-text">本地落盘模式下可选填，便于溯源</div>
             </div>
             <div class="form-group">
-                <label for="tokenizer_dir">tokenizer 目录（可选）</label>
+                <label for="tokenizer_dir">tokenizer 目录 <span class="opt-mark">可选</span></label>
                 <input id="tokenizer_dir" name="tokenizer_dir" type="text" placeholder="例如：/mnt/data/slime/hf" />
-                <div class="help-text">提供后可在 segment 详情中看到完整多轮对话渲染</div>
+                <div class="help-text">南湖模式下通常来自作业的 HF_CHECKPOINT</div>
             </div>
         </div>
 
@@ -216,7 +258,7 @@
                 <input id="recursive" name="recursive" type="checkbox" value="1" checked />
                 <label for="recursive" style="margin: 0; font-weight: 500;">递归扫描子目录</label>
             </div>
-            <div class="help-text">取消勾选则只在根路径下查找 <code>rollout_dumps/</code></div>
+            <div class="help-text">取消勾选则只在根路径及直属 <code>rollout_dumps/</code> 下查找</div>
         </div>
     </div>
 
@@ -243,7 +285,9 @@
             wrap.innerHTML = "";
             return;
         }
-        const cls = level === "success" ? "alert-success" : "alert-error";
+        const cls = level === "success"
+            ? "alert-success"
+            : (level === "info" ? "alert-info" : "alert-error");
         wrap.innerHTML = `<div class="alert ${cls}">${escapeHtml(msg)}</div>`;
     }
 
@@ -261,20 +305,135 @@
         return el ? (el.value || "").trim() : "";
     }
 
+    function isNanhuMode() {
+        return valueOf("source_type") === "nanhu_job";
+    }
+
+    function syncJobIdFields() {
+        const primary = document.getElementById("nanhu_job_id");
+        const local = document.getElementById("nanhu_job_id_local");
+        if (!primary || !local) return;
+        if (isNanhuMode()) {
+            if (!primary.value && local.value) primary.value = local.value;
+        } else {
+            if (!local.value && primary.value) local.value = primary.value;
+        }
+    }
+
+    function effectiveJobId() {
+        syncJobIdFields();
+        return isNanhuMode() ? valueOf("nanhu_job_id") : valueOf("nanhu_job_id_local");
+    }
+
+    function applySourceMode() {
+        const nanhu = isNanhuMode();
+        const nanhuJobGroup = document.getElementById("nanhuJobGroup");
+        const nanhuJobLocalGroup = document.getElementById("nanhuJobLocalGroup");
+        const clusterGroup = document.getElementById("clusterGroup");
+        const taskName = document.getElementById("task_name");
+        const rolloutRoot = document.getElementById("rollout_root");
+        const taskNameReq = document.getElementById("taskNameReq");
+        const rootReq = document.getElementById("rootReq");
+        const taskNameHelp = document.getElementById("taskNameHelp");
+        const rootHelp = document.getElementById("rootHelp");
+
+        nanhuJobGroup.style.display = nanhu ? "" : "none";
+        clusterGroup.style.display = nanhu ? "" : "none";
+        nanhuJobLocalGroup.style.display = nanhu ? "none" : "";
+
+        if (nanhu) {
+            taskName.required = false;
+            rolloutRoot.required = false;
+            taskNameReq.textContent = "";
+            taskNameReq.className = "opt-mark";
+            taskNameReq.textContent = "解析后自动填充";
+            rootReq.className = "opt-mark";
+            rootReq.textContent = "解析后自动填充";
+            taskNameHelp.textContent = "点击「解析」后从作业 name 回填，可手动修改";
+            rootHelp.textContent = "优先取自 ROLLOUT_DUMP_TEMPLATE；也可只填 job_id 由后端创建时补全";
+        } else {
+            taskName.required = true;
+            rolloutRoot.required = true;
+            taskNameReq.className = "req-mark";
+            taskNameReq.textContent = "*";
+            rootReq.className = "req-mark";
+            rootReq.textContent = "*";
+            taskNameHelp.textContent = "建议与 Slime 训练任务名同名，便于检索";
+            rootHelp.textContent = "扫描器会在该路径下匹配 rollout_*.pt（勾选递归时含子目录）";
+        }
+        syncJobIdFields();
+    }
+
+    async function parseNanhuJob() {
+        setMessage("");
+        setAlert("");
+        const jobId = valueOf("nanhu_job_id");
+        if (!jobId) {
+            setMessage("请先填写南湖 job_id", "error");
+            return;
+        }
+        const cluster = valueOf("cluster") || "x10000";
+        const btn = document.getElementById("parseBtn");
+        btn.disabled = true;
+        setMessage("正在解析作业…", "");
+        try {
+            const url = "/api/nanhu/jobs/" + encodeURIComponent(jobId)
+                + "/resolve-for-task?cluster=" + encodeURIComponent(cluster);
+            const resp = await fetch(url, { headers: { "Accept": "application/json" } });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!data || data.code !== 0) {
+                throw new Error((data && data.msg) || ("HTTP " + resp.status));
+            }
+            const d = data.data || {};
+            if (d.task_name) document.getElementById("task_name").value = d.task_name;
+            if (d.rollout_root) document.getElementById("rollout_root").value = d.rollout_root;
+            if (d.tokenizer_dir) document.getElementById("tokenizer_dir").value = d.tokenizer_dir;
+            const warns = Array.isArray(d.warnings) ? d.warnings : [];
+            if (warns.length) {
+                setAlert("已解析（有告警）：" + warns.join("；"), "info");
+            } else {
+                setAlert(
+                    "已解析：任务名 / Rollout 根路径 / tokenizer 已填入，确认后可创建",
+                    "success"
+                );
+            }
+            setMessage("解析成功", "success");
+        } catch (err) {
+            setMessage("解析失败：" + err.message, "error");
+            setAlert("解析失败：" + err.message, "error");
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    document.getElementById("source_type").addEventListener("change", applySourceMode);
+    document.getElementById("parseBtn").addEventListener("click", parseNanhuJob);
+    applySourceMode();
+
     document.getElementById("createForm").addEventListener("submit", async function (e) {
         e.preventDefault();
         setMessage("");
         setAlert("");
 
+        const nanhu = isNanhuMode();
+        const jobId = effectiveJobId();
         const taskName = valueOf("task_name");
         const rolloutRoot = valueOf("rollout_root");
-        if (!taskName) {
-            setMessage("请填写任务名", "error");
-            return;
-        }
-        if (!rolloutRoot) {
-            setMessage("请填写 rollout 根路径", "error");
-            return;
+
+        if (nanhu) {
+            if (!jobId) {
+                setMessage("请填写南湖 job_id", "error");
+                return;
+            }
+        } else {
+            if (!taskName) {
+                setMessage("请填写任务名", "error");
+                return;
+            }
+            if (!rolloutRoot) {
+                setMessage("请填写 rollout 根路径", "error");
+                return;
+            }
         }
 
         const payload = new URLSearchParams();
@@ -282,8 +441,11 @@
         payload.set("description", document.getElementById("description").value || "");
         payload.set("rollout_root", rolloutRoot);
         payload.set("tokenizer_dir", valueOf("tokenizer_dir"));
-        payload.set("nanhu_job_id", valueOf("nanhu_job_id"));
+        payload.set("nanhu_job_id", jobId);
         payload.set("source_type", valueOf("source_type"));
+        if (nanhu) {
+            payload.set("cluster", valueOf("cluster") || "x10000");
+        }
         if (document.getElementById("recursive").checked) {
             payload.set("recursive", "1");
         } else {
@@ -306,7 +468,7 @@
                 throw new Error((data && data.msg) || ("HTTP " + resp.status));
             }
             const taskId = (data.data && (data.data.id || data.data.task_id)) || null;
-            setMessage("创建成功，3 秒后跳转…", "success");
+            setMessage("创建成功，即将跳转…", "success");
             if (taskId) {
                 setTimeout(function () {
                     window.location.href = "/api/tasks/" + encodeURIComponent(taskId);

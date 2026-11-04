@@ -109,22 +109,34 @@ rollout-insight --format table tasks list --task-name slime-021-rollout
 rollout-insight --format table segments list --task-id 1
 ```
 
-## 场景 2：从南湖 job 找到「重跑」对应 rollout
+## 场景 2：从南湖 job 一键创建 / 关联 rollout 任务
+
+Web：`/api/tasks/create` → 来源类型选「南湖作业」→ 填 `job_id` → **解析**
+（回填任务名 / Rollout 根路径 / tokenizer）→ 创建。
+
+解析规则：`ROLLOUT_DUMP_TEMPLATE` 目录优先；否则 `OUTPUT_DIR/generated/rollout_dumps`；
+tokenizer 取 `HF_CHECKPOINT`。API：
+
+```bash
+curl -s "http://localhost:39998/api/nanhu/jobs/jb-xxx/resolve-for-task?cluster=x10000"
+```
+
+CLI 手工路径（仍可用）：
 
 ```bash
 # 1) 列出用户的所有运行中训练
-rollout-insight --cluster wuxi --format table nanhu jobs --job-type AI_TRAIN
+rollout-insight --cluster x10000 --format table nanhu jobs --job-type AI_TRAIN
 
-# 2) 取 job id 后看 detail（找出 OUTPUT_DIR）
-rollout-insight --cluster wuxi nanhu jobs detail --job-id jb-xxx | head -c 4k
+# 2) 取 job id 后看 detail（找出 OUTPUT_DIR / ROLLOUT_DUMP_TEMPLATE）
+rollout-insight --cluster x10000 nanhu jobs detail --job-id jb-xxx | head -c 4k
 
 # 3) 把南湖 job 绑到本地 task
 rollout-insight nanhu link --job-id jb-xxx --task-name slime-021-rollout
 rollout-insight nanhu link --job-id jb-xxx --task-name slime-021-rollout --submit
 
 # 4) 如任务失败：重启南湖 job
-rollout-insight --cluster wuxi nanhu restart --job-id jb-xxx
-rollout-insight --cluster wuxi nanhu restart --job-id jb-xxx --submit
+rollout-insight --cluster x10000 nanhu restart --job-id jb-xxx
+rollout-insight --cluster x10000 nanhu restart --job-id jb-xxx --submit
 ```
 
 ## 场景 3：定位一条失败 segment 的 tool_calls

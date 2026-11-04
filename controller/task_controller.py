@@ -27,7 +27,7 @@ from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
-from utils.auth_session import require_login
+from utils.auth_session import current_user, require_login
 from utils.config_loader import config
 
 # v0.5.1：业务路由统一要求登录（未登录 → 302 或 401，由 require_login 自行判断）
@@ -388,27 +388,106 @@ async def page_task_create(request: Request) -> HTMLResponse:
     )
 
 
+def _resolve_create_fields_from_nanhu(
+    job_id: str,
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+) -> dict:
+    """调用南湖详情并解析创建任务字段；失败抛 RolloutInsightException。"""
+    try:
+        import importlib
+
+        client = importlib.import_module("service.nanhu_client")
+    except Exception as exc:  # noqa: BLE001
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            f"nanhu_client 不可用: {exc}",
+        ) from exc
+
+    cluster_name = (cluster or "").strip() or "x10000"
+    detail = client.get_job_detail(
+        cluster=cluster_name,
+        job_id=job_id,
+        local_user_id=local_user_id,
+    )
+    if not isinstance(detail, dict):
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            "南湖作业详情返回格式异常",
+        )
+    if detail.get("ok") is False and "data" not in detail:
+        msg = (
+            detail.get("message")
+            or detail.get("error")
+            or detail.get("hint")
+            or "查询南湖作业失败"
+        )
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            str(msg),
+        )
+
+    from utils.nanhu_job_path_resolve import (
+        extract_job_payload,
+        resolve_paths_from_job_detail,
+    )
+
+    payload = extract_job_payload(detail)
+    if payload is None:
+        err = detail.get("error") or detail.get("message") or "作业找不到"
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_JOB_NOT_FOUND,
+            f"南湖作业未找到: {job_id} ({err})",
+        )
+    resolved = resolve_paths_from_job_detail(payload)
+    resolved["cluster"] = cluster_name
+    return resolved
+
+
 @router.post("/api/tasks")
 async def api_create_task(
     request: Request,
-    task_name: str = Form(...),
+    task_name: str = Form(default=""),
     description: str = Form(default=""),
-    rollout_root: str = Form(...),
+    rollout_root: str = Form(default=""),
     tokenizer_dir: str = Form(default=""),
     nanhu_job_id: str = Form(default=""),
     source_type: str = Form(default="local_dump"),
     recursive: str = Form(default="0"),
+    cluster: str = Form(default=""),
 ) -> Response:
     """创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。
 
-    注：根据用户任务描述，本路由需要「写库后 302 跳 /api/tasks/{id}」；
-    我们同时返回 JSON（data.id）和可选的 location 头，方便前端跳转。
-    真正 302 跳转由前端在收到 code=0 响应后根据 data.id 完成。
+    若填写 ``nanhu_job_id`` 且任务名 / rollout_root 为空，则自动从南湖作业详情补全。
     """
-    if not task_name or not task_name.strip():
+    name = (task_name or "").strip()
+    root = (rollout_root or "").strip()
+    tok = (tokenizer_dir or "").strip()
+    job_id = (nanhu_job_id or "").strip()
+    src = (source_type or "local_dump").strip() or "local_dump"
+
+    if job_id and src in ("", "local_dump"):
+        src = "nanhu_job"
+    if job_id and (not name or not root or not tok):
+        user = current_user(request)
+        local_uid = getattr(user, "primary_id", None) if user is not None else None
+        resolved = _resolve_create_fields_from_nanhu(
+            job_id, cluster=cluster, local_user_id=local_uid
+        )
+        if not name:
+            name = (resolved.get("task_name") or "").strip()
+        if not root:
+            root = (resolved.get("rollout_root") or "").strip()
+        if not tok:
+            tok = (resolved.get("tokenizer_dir") or "").strip()
+
+    if not name:
         return Response.error(code=50001, msg="任务名不能为空")
-    if not rollout_root or not rollout_root.strip():
-        return Response.error(code=50001, msg="rollout 根路径不能为空")
+    if not root:
+        return Response.error(
+            code=50001,
+            msg="rollout 根路径不能为空（可填写南湖 job_id 后由后端自动解析）",
+        )
 
     Task = _task_model()
     Session = _session_factory()
@@ -423,12 +502,12 @@ async def api_create_task(
     try:
         with Session() as session:
             obj = Task(
-                task_name=task_name.strip(),
+                task_name=name,
                 description=description or None,
-                rollout_root=rollout_root.strip(),
-                tokenizer_dir=(tokenizer_dir or "").strip() or None,
-                nanhu_job_id=(nanhu_job_id or "").strip() or None,
-                source_type=source_type or "local_dump",
+                rollout_root=root,
+                tokenizer_dir=tok or None,
+                nanhu_job_id=job_id or None,
+                source_type=src,
                 recursive=is_recursive,
                 status="PENDING",
             )
@@ -437,7 +516,12 @@ async def api_create_task(
             session.commit()
             session.refresh(obj)
             new_id = getattr(obj, "primary_id", None) or getattr(obj, "id", None)
-            logger.info("已创建任务 id={} name={}", new_id, task_name)
+            logger.info(
+                "已创建任务 id={} name={} nanhu_job_id={}",
+                new_id,
+                name,
+                job_id or "",
+            )
 
         # 触发一次初始扫描（如果扫描服务已就绪）；失败不影响创建结果
         try:

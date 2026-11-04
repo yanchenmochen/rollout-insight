@@ -3,6 +3,8 @@
 提供：
 - GET  /api/nanhu/jobs/page                渲染 nanhu_jobs.html（列表 + 过滤）
 - GET  /api/nanhu/jobs                     JSON 列表（带 cluster / status 过滤）
+- GET  /api/nanhu/jobs/{job_id}/resolve-for-task
+                                           按 job 详情解析 task_name / rollout_root / tokenizer_dir
 - POST /api/nanhu/jobs/{job_id}/link-task   把 task_id 关联到南湖 job；
                                             可选 restart_index 同步写一条重启记录
 - POST /api/nanhu/jobs/{job_id}/unlink-task 解绑（清 ri_task.nanhu_job_id）
@@ -26,7 +28,7 @@ from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
-from utils.auth_session import require_login
+from utils.auth_session import current_user, require_login
 from utils.config_loader import config
 
 # v0.5.1：业务路由统一要求登录
@@ -155,12 +157,20 @@ def _normalize_remote_job(payload: Dict[str, Any], cluster: str) -> Dict[str, An
         or payload.get("algorithm")
         or ""
     )
-    output_dir = (
+    raw_output = (
         payload.get("output_dir")
         or payload.get("outputDir")
         or payload.get("output")
         or ""
     )
+    if isinstance(raw_output, dict):
+        output_dir = (
+            raw_output.get("outputPath")
+            or raw_output.get("path")
+            or ""
+        )
+    else:
+        output_dir = raw_output
     mounted = (
         payload.get("mounted_storages")
         or payload.get("mountedStorages")
@@ -373,6 +383,83 @@ async def api_list_nanhu_jobs(
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"查询 nanhu job 列表失败: {exc}"
         ) from exc
+
+
+@router.get("/api/nanhu/jobs/{job_id}/resolve-for-task")
+async def api_resolve_job_for_task(
+    request: Request,
+    job_id: str,
+    cluster: Optional[str] = Query(
+        default=None,
+        description="南湖集群；默认优先 x10000，其次配置 nanhu_cluster",
+    ),
+) -> Response:
+    """根据南湖 job 详情解析创建 Rollout 任务所需字段。
+
+    返回 data：task_name / rollout_root / tokenizer_dir / job_id / warnings 等。
+    """
+    job_id = (job_id or "").strip()
+    if not job_id:
+        return Response.error(code=50001, msg="job_id 不能为空")
+
+    cluster_name = (cluster or "").strip() or "x10000"
+    user = current_user(request)
+    local_user_id = getattr(user, "primary_id", None) if user is not None else None
+    client_module = _nanhu_client_module()
+    if client_module is None or not hasattr(client_module, "get_job_detail"):
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            "nanhu_client 不可用，无法查询作业详情",
+        )
+
+    try:
+        detail = client_module.get_job_detail(
+            cluster=cluster_name,
+            job_id=job_id,
+            local_user_id=local_user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("get_job_detail 失败 job_id={} cluster={}", job_id, cluster_name)
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            f"查询南湖作业失败: {exc}",
+        ) from exc
+
+    if not isinstance(detail, dict):
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            "南湖作业详情返回格式异常",
+        )
+    if detail.get("ok") is False and "data" not in detail:
+        msg = (
+            detail.get("message")
+            or detail.get("error")
+            or detail.get("hint")
+            or "查询南湖作业失败"
+        )
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+            str(msg),
+        )
+
+    from utils.nanhu_job_path_resolve import (
+        extract_job_payload,
+        resolve_paths_from_job_detail,
+    )
+
+    payload = extract_job_payload(detail)
+    if payload is None:
+        err = detail.get("error") or detail.get("message") or "作业找不到"
+        raise RolloutInsightException(
+            RolloutInsightException.NANHU_JOB_NOT_FOUND,
+            f"南湖作业未找到: {job_id} ({err})",
+        )
+
+    resolved = resolve_paths_from_job_detail(payload)
+    resolved["cluster"] = cluster_name
+    if not resolved.get("job_id"):
+        resolved["job_id"] = job_id
+    return Response.success(msg="ok", data=resolved)
 
 
 @router.post("/api/nanhu/jobs/{job_id}/link-task")
