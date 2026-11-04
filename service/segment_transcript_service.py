@@ -179,12 +179,23 @@ def _extract_rollout_sample_index(
             RolloutInsightException.INVALID_ARGUMENT, "rollout_pt_path 不能为空"
         )
     rows = summarize_dump(rollout_pt_path)
+    # 优先：attempt_id = sample.rollout_id（与 view_trajectory / 新扫描一致）
     for row in rows:
         if (
             row.get("group_index") == group_index
             and row.get("rollout_id") == attempt_id
-            and row.get("segment_index") == segment_index
+            and (
+                segment_index is None or row.get("segment_index") == segment_index
+            )
         ):
+            return int(row["idx"])
+    # 兼容旧库：曾把 sample 下标写成 attempt_id
+    for row in rows:
+        same_group = row.get("group_index") == group_index
+        same_segment = (
+            segment_index is None or row.get("segment_index") == segment_index
+        )
+        if same_group and same_segment and row.get("idx") == attempt_id:
             return int(row["idx"])
     raise RolloutInsightException(
         RolloutInsightException.PARSE_SAMPLE_OUT_OF_RANGE,

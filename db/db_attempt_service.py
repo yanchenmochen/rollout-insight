@@ -64,7 +64,9 @@ class DBAttemptService:
                 session.commit()
                 session.refresh(attempt)
                 return attempt
-            # 已存在：合并可更新字段
+            # 已存在：合并可更新字段。
+            # 同一 attempt 的多 segment 会反复 upsert；response_length / trainable_tokens 累加，
+            # agent_turns / tool_calls 等会话级字段保持覆盖（各 segment 上数值相同）。
             for field_name in (
                 "sandbox_id",
                 "instance_id",
@@ -73,12 +75,18 @@ class DBAttemptService:
                 "agent_turns",
                 "tool_calls",
                 "diff_line_count",
-                "response_length",
-                "trainable_tokens",
                 "finalized",
             ):
                 if field_name in fields:
                     setattr(existing, field_name, fields[field_name])
+            if "response_length" in fields:
+                existing.response_length = int(existing.response_length or 0) + int(
+                    fields.get("response_length") or 0
+                )
+            if "trainable_tokens" in fields:
+                existing.trainable_tokens = int(existing.trainable_tokens or 0) + int(
+                    fields.get("trainable_tokens") or 0
+                )
             session.commit()
             session.refresh(existing)
             return existing

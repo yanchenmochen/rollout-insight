@@ -207,7 +207,12 @@ class RolloutScanService:
         # 3. 解析 .pt 路径
         try:
             task_rollout_root = getattr(task, "rollout_root", "") or ""
-            pt_paths = self._resolve_dump_paths(task_name, task_rollout_root)
+            task_recursive = bool(getattr(task, "recursive", False))
+            pt_paths = self._resolve_dump_paths(
+                task_name,
+                task_rollout_root,
+                recursive=task_recursive,
+            )
             result["total"] = len(pt_paths)
             logger.info(
                 "[scan_task] task_id={} task_name={} resolved dump paths count={}",
@@ -328,12 +333,20 @@ class RolloutScanService:
     def _scan_log_path(self, task_id: int) -> Path:
         return self.log_dir / f"scan_{task_id}.log"
 
-    def _resolve_dump_paths(self, task_name: str, task_rollout_root: str = "") -> List[Path]:
+    def _resolve_dump_paths(
+        self,
+        task_name: str,
+        task_rollout_root: str = "",
+        recursive: bool = False,
+    ) -> List[Path]:
         """按优先级解析 .pt 列表：
         0) task.rollout_root（页面/南湖创建时填的具体路径，最优先）
         1) OUTPUT_DIR 环境变量（若含 rollout_dumps 子目录则用之，否则用其本身）
         2) ROLLOUT_DUMP_DIR 环境变量
         3) <rollout_dump_root>/<task_name>/rollout_dumps/（兜底）
+
+        ``recursive=True`` 时，在 rollout_root 下用 ``rglob("rollout_*.pt")``
+        匹配嵌套的 ``generated/rollout_dumps`` 等目录。
 
         Returns:
             按路径排序的 .pt 列表（来自第一个能找到 .pt 的来源）
@@ -358,6 +371,15 @@ class RolloutScanService:
                         logger.info(
                             "_resolve_dump_paths: 使用 task.rollout_root/rollout_dumps={} 命中 {} 个 .pt",
                             sub,
+                            len(hits),
+                        )
+                        return hits
+                if recursive:
+                    hits = sorted(root.rglob("rollout_*.pt"))
+                    if hits:
+                        logger.info(
+                            "_resolve_dump_paths: recursive rglob under {} 命中 {} 个 .pt",
+                            root,
                             len(hits),
                         )
                         return hits
@@ -505,13 +527,21 @@ class RolloutScanService:
         n_seg = 0
         rollout_id_value = meta.get("rollout_id")
         for row in rows:
-            # 5.1 attempt 业务键 = (task_id, rollout_id, group_index, attempt_id)
-            # v0.2 简化：每个 sample 的 idx 直接当作 attempt_id
+            # 5.1 attempt 业务键 = (task_id, dump.rollout_id, group_index, sample.rollout_id)
+            # 与 view_trajectory._attempt_layout 一致：同一 OpenHands 会话的多 segment
+            # 共用 sample.rollout_id，不能再用 sample 下标当 attempt_id（否则 10 段会变成 10 个 attempt）。
+            sample_attempt_id = row.get("rollout_id")
+            if sample_attempt_id is None:
+                sample_attempt_id = row.get("idx")
+            row_idx = int(row.get("idx") or 0)
+            group_index = row.get("group_index")
+            if group_index is None:
+                group_index = 0
             attempt = DBAttemptService.upsert(
                 task_id=task_id,
                 rollout_id=rollout_id_value,
-                group_index=row.get("group_index"),
-                attempt_id=row.get("idx"),
+                group_index=int(group_index),
+                attempt_id=int(sample_attempt_id),
                 sandbox_id=row.get("sandbox_id") or "",
                 instance_id=row.get("instance_id") or "",
                 status=row.get("status") or "",
@@ -524,11 +554,15 @@ class RolloutScanService:
             if attempt is not None:
                 n_att += 1
 
-            # 5.2 segment 一个 sample 一行，attempt_id 关联 attempt
+            # 5.2 segment 一个 sample 一行，attempt_id 关联 attempt。
+            # metadata.segment_index 可能显式为 None（.get 默认值不生效），回退到 sample 下标。
             attempt_pk = getattr(attempt, "primary_id", None)
+            seg_index = row.get("segment_index")
+            if seg_index is None:
+                seg_index = row_idx
             seg = DBSegmentService.upsert(
                 attempt_id=attempt_pk,
-                segment_index=row.get("segment_index", row.get("idx", 0)),
+                segment_index=int(seg_index),
                 segment_count=int(row.get("segment_count") or 1),
                 status=row.get("status") or "",
                 reward=row.get("reward"),
