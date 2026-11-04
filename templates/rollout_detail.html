@@ -262,35 +262,38 @@
                         {% set _ = group_attempts.append(a) %}
                     {% endif %}
                 {% endfor %}
-                {% set azero = 0 %}
-                {% set aone = 0 %}
-                {% set amixed = 0 %}
-                {% set anone = 0 %}
+                {% set ns = namespace(azero=0, aone=0, amixed=0, anone=0) %}
                 {% for a in group_attempts %}
-                    {% set b = a.reward_bucket or 'none' %}
+                    {% set b = (a.reward_bucket or 'none')|lower %}
                     {% if b == 'all_zero' %}
-                        {% set azero = azero + 1 %}
+                        {% set ns.azero = ns.azero + 1 %}
                     {% elif b == 'all_one' %}
-                        {% set aone = aone + 1 %}
+                        {% set ns.aone = ns.aone + 1 %}
                     {% elif b == 'mixed' %}
-                        {% set amixed = amixed + 1 %}
+                        {% set ns.amixed = ns.amixed + 1 %}
                     {% else %}
-                        {% set anone = anone + 1 %}
+                        {% set ns.anone = ns.anone + 1 %}
                     {% endif %}
                 {% endfor %}
+                {% set brief = (group_briefs or {}).get(gi, {}) %}
                 <details class="tree group-row" open>
                     <summary>
-                        <span class="sum-title">group <strong>{{ gi }}</strong></span>
+                        <span class="sum-title">group <strong>{{ gi }}</strong>
+                            {% if brief.title %} · {{ brief.title }}{% endif %}
+                        </span>
                         <span class="sum-meta">
                             {{ group_attempts | length }} attempts
                             &nbsp;·&nbsp;
-                            <span class="badge bucket-all_zero" title="所有 segment 都是 0">全0 ×{{ azero }}</span>
-                            <span class="badge bucket-all_one" title="所有 segment 都是 1">全1 ×{{ aone }}</span>
-                            <span class="badge bucket-mixed">混合 ×{{ amixed }}</span>
-                            <span class="badge bucket-none" title="没有数字 reward">无 ×{{ anone }}</span>
+                            <span class="badge bucket-all_zero" title="所有 segment 都是 0">全0 ×{{ ns.azero }}</span>
+                            <span class="badge bucket-all_one" title="所有 segment 都是 1">全1 ×{{ ns.aone }}</span>
+                            <span class="badge bucket-mixed">混合 ×{{ ns.amixed }}</span>
+                            <span class="badge bucket-none" title="没有数字 reward">无 ×{{ ns.anone }}</span>
                         </span>
                     </summary>
                     <div class="tree-body">
+                        {% if brief.prompt %}
+                        <div class="prompt-blob" title="该 group 的题目 prompt">{{ brief.prompt }}</div>
+                        {% endif %}
                         {% set attempts = group_attempts %}
                         {% include "rollout_detail_attempt_loop.html" %}
                     </div>
@@ -352,12 +355,10 @@
         // 用 tokenizer 视角：先抓 <|tool_call ...>...</tool_call>，然后 <|tool_response ...>...</tool_response>，最后
         // <think>...</think> 块，剩下的算纯文本（按出现顺序扫一遍）
         const patterns = [
-            { kind: 'tool_call', re: /<\|tool_call[^>]*>[\s\S]*?<\/tool_call>/gi },
-            { kind: 'tool_response', re: /<\|tool_response[^>]*>[\s\S]*?<\/tool_response>/gi },
+            { kind: 'tool_call', re: /<(?:\|)?tool_call[^>]*>[\s\S]*?<\/tool_call>/gi },
+            { kind: 'tool_response', re: /<(?:\|)?tool_response[^>]*>[\s\S]*?<\/tool_response>/gi },
             { kind: 'think', re: /<think>[\s\S]*?<\/think>/gi },
         ];
-        // 朴素的「按出现顺序」切片：用全部匹配 start 排序
-        type RegExpMatchArray 类目的项; // 占位
         const hits = [];
         for (const p of patterns) {
             let m;
@@ -389,8 +390,8 @@
         const n = (c.text || '').length;
         if (c.kind === 'think') return `💭 think · ${n} chars`;
         if (c.kind === 'tool_call') {
-            const m = /<\|tool_call[^>]*>/i.exec(c.text || '');
-            const inner = m ? (c.text.slice(m[0].length, c.text.search(/<\/tool_call>/i) || c.text.length).trim().split(/\s+/)[0] || 'tool') : 'tool';
+            const m = /<(?:\|)?tool_call[^>]*>/i.exec(c.text || '');
+            const inner = m ? ((c.text.slice(m[0].length).match(/[A-Za-z0-9_]+/) || ['tool'])[0]) : 'tool';
             return `🔧 tool_call: ${inner} · ${n} chars`;
         }
         if (c.kind === 'tool_response') {
@@ -416,8 +417,15 @@
             return;
         }
         const sourceTag = data.source ? `<span class="sum-meta">source: ${escapeHtml(data.source)}</span>` : '';
+        const roleOf = (t) => String(t.role_label || t.role || '').toLowerCase();
+        const nAsst = turns.filter((t) => roleOf(t) === 'assistant').length;
+        const nUser = turns.filter((t) => roleOf(t) === 'user').length;
+        const nOther = turns.length - nAsst - nUser;
+        const roleHint = nOther
+            ? `${nAsst} assistant · ${nUser} user · ${nOther} other`
+            : `${nAsst} assistant · ${nUser} user`;
         const header = `<div class="toolbar" style="margin-bottom:8px;">
-            <span class="sum-title">Turns <small style="color:var(--ri-muted);">${turns.length} turn(s)</small></span>
+            <span class="sum-title">Turns <small style="color:var(--ri-muted);">${turns.length} 条消息（${roleHint}；本段 response 按 &lt;|im_start|&gt; 切开。各段 assistant 之和 = attempt 的 agent轮）</small></span>
             ${sourceTag}
             <button type="button" class="btn btn-secondary btn-sm toggle-all-turns" data-action="expand">展开所有 turn</button>
             <button type="button" class="btn btn-secondary btn-sm toggle-all-turns" data-action="collapse">折叠所有 turn</button>
@@ -435,7 +443,7 @@
             const chunks = splitTurnBody(t.body_text || '');
             const chunksHtml = chunks.map(renderChunk).join('');
             const summary = escapeHtml(t.prompt_summary || shortSummary(t.body_text || '', 120));
-            return `<details class="tree turn-row" data-turn-id="${t.primary_id || ''}" open>
+            return `<details class="tree turn-row" data-turn-id="${t.primary_id || ''}">
                 <summary>
                     <span class="sum-id">turn #${idx}</span>
                     <span class="badge role-${escapeHtml(t.role_label || t.role || 'unknown')}">${role}</span>
@@ -470,25 +478,29 @@
     }
 
     const segmentLoaded = new Set();
-    document.querySelectorAll('details.segment-row').forEach((seg) => {
-        seg.addEventListener('toggle', async () => {
-            if (!seg.open) return;
-            const sid = seg.dataset.segmentId;
-            if (!sid || segmentLoaded.has(sid)) return;
-            const body = seg.querySelector(`[data-segment-body="${sid}"]`);
-            if (body) body.innerHTML = '<div class="loading-hint">正在加载 turns…</div>';
-            try {
-                const resp = await fetch(SEG_TURNS_URL(sid), { headers: { Accept: 'application/json' } });
-                const data = await resp.json().catch(() => ({}));
-                if (!resp.ok || (data && data.code !== 0)) {
-                    throw new Error((data && data.msg) || ('HTTP ' + resp.status));
-                }
-                renderTurns(sid, data.data || {});
-                segmentLoaded.add(sid);
-            } catch (e) {
-                showLoadError(sid, e.message || String(e));
+    async function loadSegmentTurns(seg) {
+        if (!seg || !seg.open) return;
+        const sid = seg.dataset.segmentId;
+        if (!sid || segmentLoaded.has(sid)) return;
+        segmentLoaded.add(sid);
+        const body = seg.querySelector(`[data-segment-body="${sid}"]`);
+        if (body) body.innerHTML = '<div class="loading-hint">正在加载 turns…</div>';
+        try {
+            const resp = await fetch(SEG_TURNS_URL(sid), { headers: { Accept: 'application/json' } });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || (data && data.code !== 0)) {
+                segmentLoaded.delete(sid);
+                throw new Error((data && data.msg) || ('HTTP ' + resp.status));
             }
-        });
+            renderTurns(sid, data.data || {});
+        } catch (e) {
+            segmentLoaded.delete(sid);
+            showLoadError(sid, e.message || String(e));
+        }
+    }
+    document.querySelectorAll('details.segment-row').forEach((seg) => {
+        seg.addEventListener('toggle', () => { loadSegmentTurns(seg); });
+        if (seg.open) loadSegmentTurns(seg);
     });
 
     document.getElementById('expandAllBtn').addEventListener('click', () => {

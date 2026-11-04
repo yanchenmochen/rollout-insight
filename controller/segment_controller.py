@@ -750,19 +750,23 @@ async def api_segment_turns_json(
     turns: List[Dict[str, Any]] = []
     source = "turn_table"
 
-    # 0) v0.5.0 T1 优先：tokens + tokenizer 切分（带 pt_path 解析）
+    # 0) 优先：直接读该 sample 的 response(str)，按 <|im_start|> 切轮；
+    #    轮内前端再拆 <think> / <tool_call> / <tool_response>。
+    #    tokenizer 可用时再尝试 tokens 路径（完整训练序列）。
     if pt_path_resolved:
         try:
             from utils.rollout_pt_parser import (
                 load_pt,
+                split_response_to_turns,
                 split_response_to_turns_with_tokenizer,
                 _discover_tokenizer_path,
                 _load_tokenizer,
             )
+            from db.db_segment_turn_service import DBSegmentTurnService
+
             dump = load_pt(pt_path_resolved)
             samples = dump.get("samples") or []
-            # 按 (group_index, segment_index) 反查 sample
-            tokens_for_sample: Optional[List[int]] = None
+            sample_hit: Optional[Dict[str, Any]] = None
             sample_idx_found: Optional[int] = None
             try:
                 with Session() as session:
@@ -773,6 +777,7 @@ async def api_segment_turns_json(
                     )
                     target_si = getattr(seg_obj, "segment_index", None)
                     target_gi: Optional[int] = None
+                    target_attempt_id: Optional[int] = None
                     if Attempt is not None and getattr(seg_obj, "attempt_id", None):
                         att = (
                             session.query(Attempt)
@@ -780,60 +785,103 @@ async def api_segment_turns_json(
                             .first()
                         )
                         target_gi = getattr(att, "group_index", None)
-                # 找 sample_idx
+                        # 扫描时 attempt_id 存的是 sample 下标
+                        target_attempt_id = getattr(att, "attempt_id", None)
                 for i, s in enumerate(samples):
                     md = s.get("metadata") or {}
-                    if (
-                        s.get("group_index") == target_gi
+                    # 新扫描：attempt_id == sample.rollout_id，再配 segment_index
+                    key_hit = (
+                        target_attempt_id is not None
+                        and s.get("rollout_id") == int(target_attempt_id)
+                        and s.get("group_index") == target_gi
+                        and (
+                            target_si is None
+                            or md.get("segment_index") == target_si
+                        )
+                    )
+                    # 旧库兼容：attempt_id 曾等于 sample 下标
+                    legacy_hit = (
+                        target_attempt_id is not None
+                        and i == int(target_attempt_id)
+                        and s.get("group_index") == target_gi
+                        and (
+                            target_si is None
+                            or md.get("segment_index") == target_si
+                        )
+                    )
+                    seg_hit = (
+                        target_attempt_id is None
+                        and s.get("group_index") == target_gi
                         and md.get("segment_index") == target_si
-                    ):
-                        toks = s.get("tokens") or []
-                        if isinstance(toks, list) and toks:
-                            tokens_for_sample = [int(t) for t in toks]
-                            sample_idx_found = i
-                            break
+                    )
+                    if key_hit or legacy_hit or seg_hit:
+                        sample_hit = s if isinstance(s, dict) else None
+                        sample_idx_found = i
+                        break
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "反查 sample 失败 segment_id={}: {}", segment_id, exc
                 )
 
-            tok = None
-            try:
-                tok_path = _discover_tokenizer_path(pt_path_resolved)
-                if tok_path is not None:
-                    tok = _load_tokenizer(tok_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "加载 tokenizer 失败 segment_id={}: {}", segment_id, exc
-                )
+            if sample_hit is not None:
+                response_text = sample_hit.get("response") or ""
+                if isinstance(response_text, str) and response_text.strip():
+                    parsed = split_response_to_turns(response_text)
+                    if len(parsed) >= 2:
+                        turns = parsed
+                        source = "sample_response"
+                        try:
+                            DBSegmentTurnService.upsert_segment_turns(
+                                segment_id=int(segment_id),
+                                turns=parsed,
+                                force=True,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "response 切分写回 turn 表失败 segment_id={}: {}",
+                                segment_id,
+                                exc,
+                            )
 
-            if tokens_for_sample is not None:
-                parsed, parsed_source = split_response_to_turns_with_tokenizer(
-                    response_text="",
-                    tokens=tokens_for_sample,
-                    tokenizer=tok,
-                    dump_path=pt_path_resolved,
-                )
-                if parsed:
-                    turns = parsed
-                    source = f"tokens:{parsed_source}"
-                    # 写回 turn 表（覆盖）
+                if not turns:
+                    toks = sample_hit.get("tokens") or []
+                    tokens_for_sample: Optional[List[int]] = None
+                    if isinstance(toks, list) and toks:
+                        tokens_for_sample = [int(t) for t in toks]
+                    tok = None
                     try:
-                        from db.db_segment_turn_service import DBSegmentTurnService
-                        DBSegmentTurnService.upsert_segment_turns(
-                            segment_id=int(segment_id),
-                            turns=parsed,
-                            force=True,
-                        )
+                        tok_path = _discover_tokenizer_path(pt_path_resolved)
+                        if tok_path is not None:
+                            tok = _load_tokenizer(tok_path)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
-                            "token 切分写回 turn 表失败 segment_id={}: {}",
-                            segment_id,
-                            exc,
+                            "加载 tokenizer 失败 segment_id={}: {}", segment_id, exc
                         )
+                    if tokens_for_sample is not None:
+                        parsed, parsed_source = split_response_to_turns_with_tokenizer(
+                            response_text="",
+                            tokens=tokens_for_sample,
+                            tokenizer=tok,
+                            dump_path=pt_path_resolved,
+                        )
+                        if len(parsed) >= 2:
+                            turns = parsed
+                            source = f"tokens:{parsed_source}"
+                            try:
+                                DBSegmentTurnService.upsert_segment_turns(
+                                    segment_id=int(segment_id),
+                                    turns=parsed,
+                                    force=True,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning(
+                                    "token 切分写回 turn 表失败 segment_id={}: {}",
+                                    segment_id,
+                                    exc,
+                                )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "token 切分失败 segment_id={}: {}（回退到 turn 表）",
+                "从 .pt sample 切分失败 segment_id={}: {}（回退到 turn 表）",
                 segment_id,
                 exc,
             )
@@ -881,9 +929,14 @@ async def api_segment_turns_json(
         if transcript_text:
             try:
                 from db.db_segment_turn_service import DBSegmentTurnService
-                from utils.rollout_pt_parser import split_response_to_turns
+                from utils.rollout_pt_parser import (
+                    split_markdown_headed_turns,
+                    split_response_to_turns,
+                )
 
-                parsed = split_response_to_turns(transcript_text)
+                parsed = split_markdown_headed_turns(transcript_text)
+                if len(parsed) < 2:
+                    parsed = split_response_to_turns(transcript_text)
                 if parsed:
                     DBSegmentTurnService.upsert_segment_turns(
                         segment_id=int(segment_id), turns=parsed, force=True
@@ -893,10 +946,15 @@ async def api_segment_turns_json(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("懒切分 turn 失败 segment_id={}: {}", segment_id, exc)
 
+    # 单条 turn 被 100KB 截断时，标题只剩前半段；用完整 transcript 重切
+    turns, source = _recover_truncated_markdown(int(segment_id), turns, source)
+    # 正文若是「### turn N · role」拼在一起的单条，拆成多轮再返回
+    turns, source = _explode_markdown_turns(turns, source)
+
     # 渲染时附带预计算的高亮 HTML & 摘要，便于前端直接渲染
     items: List[Dict[str, Any]] = []
     for t in turns:
-        body = t.get("body_text") or ""
+        body = t.get("body_text") or t.get("body") or ""
         summary = _make_turn_summary(body)
         items.append(
             {
@@ -923,6 +981,111 @@ async def api_segment_turns_json(
             "source": source,
         }
     )
+
+
+def _recover_truncated_markdown(
+    segment_id: int, turns: List[Dict[str, Any]], source: str
+) -> tuple:
+    """turn 表里若只有被截断的整段 markdown，改用 transcript 全文重切。"""
+    import re
+
+    try:
+        from db.db_segment_transcript import DBSegmentTranscript
+        from db.db_element import Session
+        from utils.rollout_pt_parser import split_markdown_headed_turns
+    except Exception:  # noqa: BLE001
+        return turns, source
+
+    header_re = re.compile(r"(?m)^### turn \d+")
+    shown = 0
+    for t in turns or []:
+        body = t.get("body_text") or t.get("body") or ""
+        n = len(header_re.findall(body)) if isinstance(body, str) else 0
+        shown += n if n else 1
+    try:
+        with Session() as session:
+            row = (
+                session.query(DBSegmentTranscript)
+                .filter(DBSegmentTranscript.segment_id == segment_id)
+                .first()
+            )
+            full = row.response_text if row is not None else ""
+    except Exception:  # noqa: BLE001
+        return turns, source
+    if not isinstance(full, str):
+        return turns, source
+    full_n = len(header_re.findall(full))
+    if full_n < 2 or full_n <= shown:
+        return turns, source
+    pieces = split_markdown_headed_turns(full)
+    if len(pieces) < 2:
+        return turns, source
+    try:
+        from db.db_segment_turn_service import DBSegmentTurnService
+
+        DBSegmentTurnService.upsert_segment_turns(
+            segment_id=segment_id, turns=pieces, force=True
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("完整 markdown 写回 turn 表失败 segment_id={}: {}", segment_id, exc)
+    recovered: List[Dict[str, Any]] = []
+    for p in pieces:
+        recovered.append(
+            {
+                "turn_index": p.get("turn_index"),
+                "role": p.get("role_label") or p.get("role") or "unknown",
+                "role_label": p.get("role_label") or p.get("role") or "unknown",
+                "body_text": p.get("body") or "",
+                "body": p.get("body") or "",
+                "has_tool_call": bool(p.get("has_tool_call")),
+                "has_think": bool(p.get("has_think")),
+                "tool_call_names": p.get("tool_call_names") or [],
+                "body_char_count": int(p.get("body_char_count") or 0),
+                "token_estimate": int(p.get("token_estimate") or 0),
+                "prompt_summary": "",
+            }
+        )
+    return recovered, "transcript_markdown"
+
+
+def _explode_markdown_turns(
+    turns: List[Dict[str, Any]], source: str
+) -> tuple:
+    """单条 turn 里嵌了多个 ``### turn`` 标题时，拆开再交给前端。"""
+    if not turns:
+        return turns, source
+    try:
+        from utils.rollout_pt_parser import split_markdown_headed_turns
+    except Exception:  # noqa: BLE001
+        return turns, source
+    exploded: List[Dict[str, Any]] = []
+    changed = False
+    for t in turns:
+        body = t.get("body_text") or t.get("body") or ""
+        pieces = split_markdown_headed_turns(body) if isinstance(body, str) else []
+        if len(pieces) >= 2:
+            changed = True
+            for p in pieces:
+                exploded.append(
+                    {
+                        "turn_index": p.get("turn_index"),
+                        "role": p.get("role_label") or p.get("role") or "unknown",
+                        "role_label": p.get("role_label") or p.get("role") or "unknown",
+                        "body_text": p.get("body") or "",
+                        "body": p.get("body") or "",
+                        "has_tool_call": bool(p.get("has_tool_call")),
+                        "has_think": bool(p.get("has_think")),
+                        "tool_call_names": p.get("tool_call_names") or [],
+                        "body_char_count": int(p.get("body_char_count") or 0),
+                        "token_estimate": int(p.get("token_estimate") or 0),
+                        "prompt_summary": "",
+                    }
+                )
+        else:
+            exploded.append(t)
+    if changed:
+        source = f"{source}+markdown_turns"
+    return exploded, source
 
 
 def _make_turn_summary(body: str, limit: int = 120) -> str:

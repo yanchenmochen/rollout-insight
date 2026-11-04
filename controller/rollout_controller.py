@@ -271,9 +271,59 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
                         stats.get("total_trainable_tokens", 0) or 0
                     ),
                     "reward_bucket": stats.get("reward_bucket") or "none",
+                    "agent_turns": int(getattr(a, "agent_turns", 0) or 0),
                 }
             )
     return out
+
+
+_GROUP_BRIEF_CACHE: Dict[str, Dict[int, Dict[str, str]]] = {}
+
+
+def _prompt_text_of(sample: Dict[str, Any]) -> str:
+    prompt = sample.get("prompt") or ""
+    if isinstance(prompt, list):
+        parts: List[str] = []
+        for item in prompt:
+            if isinstance(item, dict):
+                parts.append(str(item.get("content") or item.get("text") or ""))
+            else:
+                parts.append(str(item))
+        return "\n".join(p for p in parts if p).strip()
+    if isinstance(prompt, dict):
+        return str(prompt.get("content") or prompt.get("text") or "").strip()
+    return str(prompt or "").strip()
+
+
+def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
+    """每个 group 取第一条 sample 的题目名和 prompt。结果按 pt 路径缓存。"""
+    if not pt_path:
+        return {}
+    cached = _GROUP_BRIEF_CACHE.get(pt_path)
+    if cached is not None:
+        return cached
+    briefs: Dict[int, Dict[str, str]] = {}
+    try:
+        from utils.rollout_pt_parser import load_pt
+
+        dump = load_pt(pt_path)
+        for sample in dump.get("samples") or []:
+            if not isinstance(sample, dict):
+                continue
+            gi = sample.get("group_index")
+            if not isinstance(gi, int) or gi in briefs:
+                continue
+            md = sample.get("metadata") or {}
+            title = str(md.get("instance_id") or sample.get("label") or "").strip()
+            briefs[gi] = {
+                "title": title,
+                "prompt": _prompt_text_of(sample),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 group prompt 失败 pt={}: {}", pt_path, exc)
+        briefs = {}
+    _GROUP_BRIEF_CACHE[pt_path] = briefs
+    return briefs
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +349,7 @@ async def page_rollout_detail(
     attempts: List[Dict[str, Any]] = []
     filtered_attempts: List[Dict[str, Any]] = []
     distinct_groups: List[int] = []
+    group_briefs: Dict[int, Dict[str, str]] = {}
 
     if Rollout is None or Session is None:
         warning = "Rollout 模型尚未就绪"
@@ -339,6 +390,17 @@ async def page_rollout_detail(
                             )
                     else:
                         filtered_attempts = attempts
+                    group_briefs = _group_briefs(rollout.get("pt_path"))
+                    for a in attempts:
+                        gi = a.get("group_index")
+                        brief = group_briefs.get(gi) if isinstance(gi, int) else None
+                        if brief and not brief.get("title"):
+                            brief["title"] = a.get("instance_id") or ""
+                        elif isinstance(gi, int) and gi not in group_briefs and a.get("instance_id"):
+                            group_briefs[gi] = {
+                                "title": a.get("instance_id") or "",
+                                "prompt": "",
+                            }
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 rollout 详情失败 rollout_id={}: {}", rollout_id, exc)
             warning = f"加载失败: {exc}"
@@ -354,6 +416,7 @@ async def page_rollout_detail(
             "all_attempts": attempts,
             "distinct_groups": distinct_groups,
             "current_group": group,
+            "group_briefs": group_briefs,
             "warning": warning,
         },
     )

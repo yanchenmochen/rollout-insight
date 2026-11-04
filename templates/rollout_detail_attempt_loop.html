@@ -23,11 +23,7 @@
         <summary>
             <span class="sum-id">attempt #{{ a.primary_id }}</span>
             <span class="sum-title">
-                group <strong>{{ a.group_index if a.group_index is not none else '-' }}</strong>
-                &nbsp;·&nbsp; attempt_id <strong>{{ a.attempt_id if a.attempt_id is not none else '-' }}</strong>
-                {% if a.instance_id %}
-                &nbsp;·&nbsp; <span class="sum-id">{{ a.instance_id[:40] }}{% if a.instance_id | length > 40 %}…{% endif %}</span>
-                {% endif %}
+                attempt_id <strong>{{ a.attempt_id if a.attempt_id is not none else '-' }}</strong>
             </span>
             <span class="sum-meta">
                 {{ bucket_badge(a.reward_bucket) }}
@@ -35,7 +31,8 @@
         </summary>
         <div class="tree-body">
             <div class="toolbar">
-                <span class="stat-chip" title="tool_calls">tool <strong>{{ a.n_tool_calls or 0 }}</strong></span>
+                <span class="stat-chip" title="整次会话的 assistant 生成轮数（≈ 调模型次数）。等于各 segment 里 assistant 消息数之和；不等于各 segment「消息总条数」之和（后者还含 user/tool_response）">agent轮 <strong>{{ a.agent_turns or 0 }}</strong></span>
+                <span class="stat-chip" title="整次会话 trajectory 中的 tool ActionEvent / tool_use 次数（OpenHands 工具调用，非 sglang HTTP 次数）">tool <strong>{{ a.n_tool_calls or 0 }}</strong></span>
                 <span class="stat-chip" title="diff_line_count">diff <strong>{{ a.n_diff_lines or 0 }}</strong></span>
                 <span class="stat-chip" title="response_length (字符)">resp_len <strong>{{ fmt_int(a.total_resp_len) }}</strong></span>
                 <span class="stat-chip" title="mask_sum">mask <strong>{{ fmt_int(a.total_mask_sum) }}</strong></span>

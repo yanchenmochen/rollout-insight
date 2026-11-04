@@ -357,7 +357,9 @@
                     {% if rollouts %}
                         {% for r in rollouts %}
                         <tr>
-                            <td class="col-id">{{ r.id }}</td>
+                            <td class="col-id">
+                                <a href="/api/tasks/{{ task.id }}/rollouts/{{ r.id }}">{{ r.id }}</a>
+                            </td>
                             <td class="col-id">{{ r.rollout_id if r.rollout_id is not none else "-" }}</td>
                             <td class="col-num">{{ r.n_samples if r.n_samples is not none else "-" }}</td>
                             <td class="col-num">{{ r.n_attempts if r.n_attempts is not none else "-" }}</td>
