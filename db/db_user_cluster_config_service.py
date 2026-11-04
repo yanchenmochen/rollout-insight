@@ -146,6 +146,77 @@ class DBUserClusterConfigService:
             logger.exception("list_need_token_refresh 失败: {}", exc)
             return []
 
+    @staticmethod
+    def list_all() -> List[DBUserClusterConfig]:
+        """列出全部用户的集群配置（按 user_id / cluster_key 升序）。"""
+        try:
+            with Session() as session:
+                return (
+                    session.query(DBUserClusterConfig)
+                    .order_by(
+                        DBUserClusterConfig.user_id.asc(),
+                        DBUserClusterConfig.cluster_key.asc(),
+                    )
+                    .all()
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("DBUserClusterConfigService.list_all 失败: {}", exc)
+            return []
+
+    @staticmethod
+    def resolve_for_cluster(
+        cluster: str,
+        user_id: Optional[int] = None,
+    ) -> Optional[DBUserClusterConfig]:
+        """按集群名解析一条可用凭据（须含 app_key + app_secret）。
+
+        匹配顺序：
+        1. ``user_id`` 给定时：精确 ``(user_id, cluster_key)``
+        2. 该用户下前缀匹配（如 ``x10000`` ↔ ``x10000_v5000``）
+        3. 全局精确 / 前缀匹配（后台任务或未传 user_id 时）
+        """
+        name = (cluster or "").strip()
+        if not name:
+            return None
+
+        def _has_creds(row: Optional[DBUserClusterConfig]) -> bool:
+            return bool(
+                row is not None
+                and (getattr(row, "app_key", None) or "").strip()
+                and (getattr(row, "app_secret", None) or "").strip()
+            )
+
+        def _matches(key: str) -> bool:
+            k = (key or "").strip().lower()
+            c = name.lower()
+            if not k:
+                return False
+            if k == c:
+                return True
+            if k.startswith(c + "_") or k.startswith(c + "."):
+                return True
+            if c.startswith(k + "_") or c.startswith(k + "."):
+                return True
+            return False
+
+        if user_id is not None:
+            exact = DBUserClusterConfigService.get_by_user_and_key(user_id, name)
+            if _has_creds(exact):
+                return exact
+            for row in DBUserClusterConfigService.list_by_user(user_id):
+                if _matches(row.cluster_key) and _has_creds(row):
+                    return row
+
+        # 全局：先精确，再前缀
+        candidates = DBUserClusterConfigService.list_all()
+        for row in candidates:
+            if (row.cluster_key or "").strip().lower() == name.lower() and _has_creds(row):
+                return row
+        for row in candidates:
+            if _matches(row.cluster_key) and _has_creds(row):
+                return row
+        return None
+
     # ------------------------------------------------------------------
     # upsert / delete
     # ------------------------------------------------------------------

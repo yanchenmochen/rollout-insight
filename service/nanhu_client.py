@@ -1,37 +1,32 @@
-"""NanhuClient 封装：复用本地 nanhu-skill 提供的 ``nanhu`` CLI。
+"""NanhuClient 封装：通过 ``nanhu`` / ``nanhu-cli`` CLI 调用南湖 OpenAPI。
 
-设计目标（rollout-insight v0.3.0 阶段 3A）：
+设计目标（rollout-insight v0.5.x）：
 
-- **不重写 OpenAPI 客户端**：所有南湖调用都通过 ``nanhu`` / ``nanhu-cli`` CLI
-  转发，避免重复实现鉴权、token 缓存、限流等细节。
-- **优先 importlib 动态 import** ``/mnt/zj-data/data/songquanheng/nanhu-skill/src/nanhu``，
-  若该路径不可用则降级到 ``python -m nanhu.cli`` / ``nanhu`` 子进程；
-  若 ``nanhu`` 二进制也找不到或凭据未配置，**返回友好提示**，不抛异常。
-- **dry-run 默认**：``create_train_job`` / ``restart_job`` 默认 ``submit=False``，
-  CLI 在不传 ``--submit`` 时也是 dry-run 行为；所有调用都会写入
-  ``log/nanhu_audit.log`` 便于审计。
-- **stdout JSON 透传**：nanhu CLI 默认输出 compact JSON；本模块把解析后的
-  dict 直接返回给调用方，由 controller 层负责格式化。
-- **缺凭据返回** ``{"hint": "...", "ok": False}`` 风格的 dict，让 controller
-  能优雅地 fallback 而非 500。
+- **不重写 OpenAPI 客户端**：鉴权 / token 缓存等细节由 nanhu CLI 负责。
+- **凭据来自数据库**：``ri_user_cluster_config_table``（用户在
+  ``/api/me/cluster-configs`` 录入）；调用 CLI 时注入 ``NANHU_APP_KEY`` /
+  ``NANHU_APP_SECRET`` / ``NANHU_USER_ID`` / ``NANHU_API_BASE`` 环境变量。
+  **不再**依赖硬编码的 nanhu-skill 源码路径或 ``credentials.env`` 文件。
+- **CLI 二进制**：从 ``PATH`` 查找 ``nanhu`` / ``nanhu-cli``；也可
+  ``import nanhu``（若已 pip install）。
+- **dry-run 默认**：``create_train_job`` / ``restart_job`` 默认 ``submit=False``。
+- **缺凭据返回** ``{"hint": "...", "ok": False}``，由 controller 友好展示。
 
-对外暴露 4 个函数：
-    - ``list_train_jobs(cluster, status, user_id)``
-    - ``get_job_detail(cluster, job_id)``
-    - ``create_train_job(cluster, yaml_path, submit=False)``
-    - ``restart_job(cluster, job_id, submit=False)``
+对外暴露：
+    - ``list_train_jobs(cluster, status, user_id, local_user_id)``
+    - ``get_job_detail(cluster, job_id, local_user_id)``
+    - ``create_train_job(cluster, yaml_path, submit, local_user_id)``
+    - ``restart_job(cluster, job_id, submit, local_user_id)``
+    - ``module_diagnostics()``
 """
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import json
 import os
 import shutil
 import subprocess
-import sys
 import time
-import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,13 +35,8 @@ from loguru import logger
 from utils.config_loader import config
 
 # ---------------------------------------------------------------------------
-# 路径与常量
+# 常量
 # ---------------------------------------------------------------------------
-
-# nanhu-skill 本地源码路径（v0.3.0 复用约定）
-NANHU_SKILL_SRC = Path(
-    "/mnt/zj-data/data/songquanheng/nanhu-skill/src/nanhu"
-)
 
 # 审计日志文件名（位于 config.log_dir 下）
 AUDIT_LOG_NAME = "nanhu_audit.log"
@@ -85,23 +75,10 @@ def _write_audit(entry: Dict[str, Any]) -> None:
 
 
 def _try_import_nanhu_skill() -> Optional[Any]:
-    """尝试通过 importlib 加载 nanhu-skill 本地源码。
-
-    返回加载到的顶层 package 对象（``nanhu``），失败返回 ``None``。
-    """
-    if not NANHU_SKILL_SRC.is_dir():
-        return None
-    src_parent = NANHU_SKILL_SRC.parent
-    src_parent_str = str(src_parent)
-    if src_parent_str not in sys.path:
-        sys.path.insert(0, src_parent_str)
+    """尝试 import 已安装的 ``nanhu`` 包（不依赖任何硬编码路径）。"""
     try:
-        # 先把可能存在的旧缓存踢掉，便于热重载
-        for mod_name in [m for m in list(sys.modules) if m == "nanhu" or m.startswith("nanhu.")]:
-            sys.modules.pop(mod_name, None)
         return importlib.import_module("nanhu")
-    except Exception as exc:  # pragma: no cover - 仅在 import 失败时
-        logger.warning("importlib 加载 nanhu-skill 失败: {}", exc)
+    except Exception:  # pragma: no cover
         return None
 
 
@@ -115,42 +92,70 @@ def _resolve_nanhu_binary() -> Optional[str]:
 
 
 def _nanhu_available() -> bool:
-    """nanhu 是否可用（importlib 或 CLI 二进制至少一种）。"""
+    """nanhu 是否可用（已安装包或 CLI 二进制至少一种）。"""
     if _try_import_nanhu_skill() is not None:
         return True
     return _resolve_nanhu_binary() is not None
 
 
-def _credentials_configured() -> bool:
-    """检查凭据是否已配置（环境变量或 nanhu-skill 默认 env 文件）。"""
-    if os.environ.get("NANHU_APP_KEY") and os.environ.get("NANHU_APP_SECRET"):
+def _credential_env_from_db(
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+) -> Optional[Dict[str, str]]:
+    """从 ``ri_user_cluster_config_table`` 解析凭据，返回可注入 CLI 的 env 片段。
+
+    成功时至少包含 ``NANHU_APP_KEY`` / ``NANHU_APP_SECRET``；有则附带
+    ``NANHU_USER_ID`` / ``NANHU_API_BASE``。
+    """
+    name = (cluster or "").strip() or (config.nanhu_cluster or "").strip()
+    if not name:
+        return None
+    try:
+        from db.db_user_cluster_config_service import DBUserClusterConfigService
+
+        row = DBUserClusterConfigService.resolve_for_cluster(
+            name, user_id=local_user_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("解析南湖 DB 凭据失败 cluster={}: {}", name, exc)
+        return None
+    if row is None:
+        return None
+
+    app_key = (getattr(row, "app_key", None) or "").strip()
+    app_secret = (getattr(row, "app_secret", None) or "").strip()
+    if not app_key or not app_secret:
+        return None
+
+    env: Dict[str, str] = {
+        "NANHU_APP_KEY": app_key,
+        "NANHU_APP_SECRET": app_secret,
+    }
+    user_id_field = (getattr(row, "user_id_field", None) or "").strip()
+    if user_id_field:
+        env["NANHU_USER_ID"] = user_id_field
+    api_base = (getattr(row, "api_base_url", None) or "").strip().rstrip("/")
+    if api_base:
+        env["NANHU_API_BASE"] = api_base
+    return env
+
+
+def _env_has_nanhu_creds() -> bool:
+    """进程环境里是否已有南湖 app 凭据（运维临时覆盖用）。"""
+    return bool(
+        (os.environ.get("NANHU_APP_KEY") or "").strip()
+        and (os.environ.get("NANHU_APP_SECRET") or "").strip()
+    )
+
+
+def _credentials_configured(
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+) -> bool:
+    """凭据是否可用：优先 DB 集群配置，其次进程环境变量。"""
+    if _credential_env_from_db(cluster, local_user_id):
         return True
-    # nanhu-skill 默认 env 文件（位于 <repo>/config/credentials.env）
-    # NANHU_SKILL_SRC 指向 src/nanhu，repo 根是其 parents[2]
-    repo_root = NANHU_SKILL_SRC.parent.parent
-    default_env = repo_root / "config" / "credentials.env"
-    if default_env.is_file():
-        try:
-            content = default_env.read_text(encoding="utf-8")
-            has_key = any(
-                line.strip().startswith("NANHU_APP_KEY=") and "=" in line
-                and line.split("=", 1)[1].strip()
-                for line in content.splitlines()
-            )
-            has_secret = any(
-                line.strip().startswith("NANHU_APP_SECRET=") and "=" in line
-                and line.split("=", 1)[1].strip()
-                for line in content.splitlines()
-            )
-            if has_key and has_secret:
-                return True
-        except OSError:
-            pass
-    # 也允许自定义路径
-    override = os.environ.get("NANHU_CREDENTIALS_PATH")
-    if override and Path(override).is_file():
-        return True
-    return False
+    return _env_has_nanhu_creds()
 
 
 def _missing_credentials_response(action: str) -> Dict[str, Any]:
@@ -160,23 +165,21 @@ def _missing_credentials_response(action: str) -> Dict[str, Any]:
         "action": action,
         "hint": "nanhu credentials not configured",
         "message": (
-            "未配置南湖凭据：请在环境变量或 "
-            "/mnt/zj-data/data/songquanheng/nanhu-skill/config/credentials.env "
-            "中填写 NANHU_APP_KEY / NANHU_APP_SECRET / NANHU_USER_ID 后再试。"
+            "未配置南湖凭据：请登录后在 /api/me/cluster-configs 录入集群网关、"
+            "app_key / app_secret / userId，保存后再试。"
         ),
     }
 
 
 def _unavailable_response(action: str) -> Dict[str, Any]:
-    """nanhu-skill 与 CLI 都不可用时的友好提示响应。"""
+    """nanhu CLI 不可用时的友好提示响应。"""
     return {
         "ok": False,
         "action": action,
         "hint": "nanhu skill not available",
         "message": (
-            "未找到 nanhu-skill 源码或 nanhu 二进制：请检查 "
-            f"{NANHU_SKILL_SRC} 或执行 pip install -e "
-            "/mnt/zj-data/data/songquanheng/nanhu-skill。"
+            "未找到 nanhu / nanhu-cli 可执行文件：请先 "
+            "`pip install -e <nanhu-skill 仓库路径>` 并保证 PATH 可找到。"
         ),
     }
 
@@ -186,21 +189,33 @@ def _unavailable_response(action: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _run_cli(args: List[str], timeout: int = 60) -> Dict[str, Any]:
+def _run_cli(
+    args: List[str],
+    timeout: int = 60,
+    *,
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """通过 ``nanhu`` 子进程调用命令并解析 stdout JSON。
 
-    :param args: 不包含 ``nanhu`` 二进制名的参数列表，例如
-        ``["--cluster", "wuxi", "jobs", "list", "--job-type", "AI_TRAIN"]``。
+    :param args: 不包含 ``nanhu`` 二进制名的参数列表。
     :param timeout: 超时秒数。
-    :returns: 解析后的 dict；解析失败时返回 ``{"ok": False, "raw": ..., "error": ...}``。
+    :param cluster: 用于从 DB 解析凭据并注入 ``NANHU_*`` 环境变量。
+    :param local_user_id: 本地登录用户主键，优先匹配其集群配置。
+    :returns: 解析后的 dict；解析失败时返回 ``{"ok": False, ...}``。
     """
     binary = _resolve_nanhu_binary()
     if not binary:
         return {
             "ok": False,
             "error": "nanhu binary not found",
-            "hint": "ensure nanhu CLI is installed (pip install -e /mnt/zj-data/data/songquanheng/nanhu-skill)",
+            "hint": "ensure nanhu CLI is installed (pip install -e <nanhu-skill>)",
         }
+
+    env = os.environ.copy()
+    cred_env = _credential_env_from_db(cluster, local_user_id)
+    if cred_env:
+        env.update(cred_env)
 
     cmd = [binary, *args]
     try:
@@ -210,6 +225,7 @@ def _run_cli(args: List[str], timeout: int = 60) -> Dict[str, Any]:
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "nanhu CLI timeout", "cmd": cmd}
@@ -258,26 +274,32 @@ def list_train_jobs(
     cluster: str = "",
     status: str = "",
     user_id: str = "",
+    local_user_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """查询训练作业列表。
 
     :param cluster: 集群名（``wuxi`` / ``x10000``）；为空时读 ``config.nanhu_cluster``。
     :param status: 状态过滤（如 ``running`` / ``failed``），空字符串表示不过滤。
-    :param user_id: 用户 ID（用于跨用户查询）；空时读 ``config.nanhu_user_id``。
+    :param user_id: 南湖 userId（保留参数，当前 list CLI 未透传）。
+    :param local_user_id: 本地登录用户主键，用于匹配 DB 集群凭据。
     :returns: 作业列表；缺凭据或 nanhu 不可用时返回 ``[]`` 并 ``_write_audit``。
     """
     cluster = cluster or config.nanhu_cluster
     user_id = user_id or config.nanhu_user_id
 
     action = "jobs list"
-    audit_extra: Dict[str, Any] = {"cluster": cluster, "status": status, "user_id": user_id}
+    audit_extra: Dict[str, Any] = {
+        "cluster": cluster,
+        "status": status,
+        "user_id": user_id,
+        "local_user_id": local_user_id,
+    }
 
     if not _nanhu_available():
         _write_audit({"action": action, "result": "unavailable", **audit_extra})
-        # 注意：保持返回类型稳定（list），不可用时返回空列表
         return []
 
-    if not _credentials_configured():
+    if not _credentials_configured(cluster, local_user_id):
         _write_audit({"action": action, "result": "no_creds", **audit_extra})
         logger.info("[nanhu_client] list_train_jobs: 凭据未配置，返回空列表")
         return []
@@ -286,14 +308,13 @@ def list_train_jobs(
     if status:
         args.extend(["--status", status])
 
-    result = _run_cli(args)
+    result = _run_cli(args, cluster=cluster, local_user_id=local_user_id)
     _write_audit({"action": action, "result": "ok", "ok": result.get("ok"), **audit_extra})
 
     if not result.get("ok", True):
         logger.warning("[nanhu_client] list_train_jobs 返回失败: {}", result.get("error"))
         return []
 
-    # nanhu list 返回结构: {"data": {"result": [...]}, "code": "200", ...}
     payload = result.get("data") if isinstance(result, dict) else None
     if isinstance(payload, dict):
         items = payload.get("result")
@@ -304,21 +325,30 @@ def list_train_jobs(
     return []
 
 
-def get_job_detail(cluster: str, job_id: str) -> Dict[str, Any]:
+def get_job_detail(
+    cluster: str,
+    job_id: str,
+    local_user_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """查询作业详情。
 
     :param cluster: 集群名（必填）。
     :param job_id: 作业 ID（必填）。
-    :returns: dict（含 ``ok`` 字段）；缺凭据时返回 ``_missing_credentials_response`` 风格 dict。
+    :param local_user_id: 本地登录用户主键，用于匹配 DB 集群凭据。
+    :returns: dict（含 ``ok`` 字段）；缺凭据时返回友好提示。
     """
     action = "jobs detail"
-    audit_extra = {"cluster": cluster, "job_id": job_id}
+    audit_extra = {
+        "cluster": cluster,
+        "job_id": job_id,
+        "local_user_id": local_user_id,
+    }
 
     if not _nanhu_available():
         _write_audit({"action": action, "result": "unavailable", **audit_extra})
         return _unavailable_response(action)
 
-    if not _credentials_configured():
+    if not _credentials_configured(cluster, local_user_id):
         _write_audit({"action": action, "result": "no_creds", **audit_extra})
         return _missing_credentials_response(action)
 
@@ -328,7 +358,7 @@ def get_job_detail(cluster: str, job_id: str) -> Dict[str, Any]:
         "jobs", "detail",
         "--job-id", job_id,
     ]
-    result = _run_cli(args)
+    result = _run_cli(args, cluster=cluster, local_user_id=local_user_id)
     _write_audit({"action": action, "result": "ok", "ok": result.get("ok"), **audit_extra})
     return result
 
@@ -337,19 +367,15 @@ def create_train_job(
     cluster: str,
     yaml_path: str,
     submit: bool = False,
+    local_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """读取训练作业 YAML 并创建南湖训练作业（**默认 dry-run**）。
-
-    :param cluster: 集群名。
-    :param yaml_path: 训练作业 YAML 配置路径。
-    :param submit: 是否真正提交；``False``（默认）走 dry-run，仅打印请求体。
-    :returns: dict；缺凭据 / nanhu 不可用 / 文件不存在时返回友好提示。
-    """
+    """读取训练作业 YAML 并创建南湖训练作业（**默认 dry-run**）。"""
     action = "jobs create-train"
     audit_extra = {
         "cluster": cluster,
         "yaml_path": yaml_path,
         "submit": submit,
+        "local_user_id": local_user_id,
     }
 
     yaml_file = Path(yaml_path)
@@ -368,7 +394,6 @@ def create_train_job(
         return _unavailable_response(action)
 
     if not submit:
-        # dry-run：记录意图但不下发
         _write_audit({"action": action, "result": "dry_run", **audit_extra})
         return {
             "ok": True,
@@ -379,7 +404,7 @@ def create_train_job(
             "message": "dry-run 未提交；如需真实提交请传 submit=True",
         }
 
-    if not _credentials_configured():
+    if not _credentials_configured(cluster, local_user_id):
         _write_audit({"action": action, "result": "no_creds", **audit_extra})
         return _missing_credentials_response(action)
 
@@ -389,7 +414,9 @@ def create_train_job(
         "jobs", "create-train",
         "--config", str(yaml_file),
     ]
-    result = _run_cli(args, timeout=120)
+    result = _run_cli(
+        args, timeout=120, cluster=cluster, local_user_id=local_user_id
+    )
     _write_audit({"action": action, "result": "ok", "ok": result.get("ok"), **audit_extra})
     return result
 
@@ -398,18 +425,15 @@ def restart_job(
     cluster: str,
     job_id: str,
     submit: bool = False,
+    local_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """重启南湖作业（**默认 dry-run**）。
-
-    :param cluster: 集群名。
-    :param job_id: 作业 ID。
-    :param submit: 是否真正提交。
-    """
+    """重启南湖作业（**默认 dry-run**）。"""
     action = "jobs restart"
     audit_extra = {
         "cluster": cluster,
         "job_id": job_id,
         "submit": submit,
+        "local_user_id": local_user_id,
     }
 
     if not _nanhu_available():
@@ -427,7 +451,7 @@ def restart_job(
             "message": "dry-run 未提交；如需真实提交请传 submit=True",
         }
 
-    if not _credentials_configured():
+    if not _credentials_configured(cluster, local_user_id):
         _write_audit({"action": action, "result": "no_creds", **audit_extra})
         return _missing_credentials_response(action)
 
@@ -437,7 +461,9 @@ def restart_job(
         "jobs", "restart",
         "--job-id", job_id,
     ]
-    result = _run_cli(args, timeout=120)
+    result = _run_cli(
+        args, timeout=120, cluster=cluster, local_user_id=local_user_id
+    )
     _write_audit({"action": action, "result": "ok", "ok": result.get("ok"), **audit_extra})
     return result
 
@@ -450,12 +476,18 @@ def restart_job(
 def module_diagnostics() -> Dict[str, Any]:
     """返回当前模块的诊断信息，便于 debug 或 healthz 展示。"""
     nanhu_pkg = _try_import_nanhu_skill()
+    cluster = config.nanhu_cluster
     return {
-        "nanhu_skill_path": str(NANHU_SKILL_SRC),
-        "nanhu_skill_path_exists": NANHU_SKILL_SRC.is_dir(),
+        "nanhu_skill_path": "",
+        "nanhu_skill_path_exists": False,
         "nanhu_skill_import_ok": nanhu_pkg is not None,
         "nanhu_binary": _resolve_nanhu_binary(),
-        "credentials_configured": _credentials_configured(),
+        "credentials_configured": _credentials_configured(cluster),
+        "credentials_source": (
+            "db"
+            if _credential_env_from_db(cluster)
+            else ("env" if _env_has_nanhu_creds() else "none")
+        ),
         "audit_log_path": str(_audit_log_path()),
         "config_cluster": config.nanhu_cluster,
         "config_user_id": config.nanhu_user_id,
@@ -468,7 +500,6 @@ __all__ = [
     "create_train_job",
     "restart_job",
     "module_diagnostics",
-    "NANHU_SKILL_SRC",
 ]
 
 
