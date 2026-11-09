@@ -326,6 +326,113 @@ def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
     return briefs
 
 
+def _attempt_segment_count(attempt: Dict[str, Any]) -> int:
+    """单个 attempt 的 segment 数；优先用 segment_count，否则回退 len(segments)。"""
+    sc = attempt.get("segment_count")
+    if isinstance(sc, int):
+        return sc
+    segs = attempt.get("segments")
+    if isinstance(segs, list):
+        return len(segs)
+    try:
+        return int(sc or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _group_outcome(all_zero: int, all_one: int, mixed: int, none: int, n_attempts: int) -> str:
+    """组级结果标签（与 attempt 级 bucket 正交）。
+
+    - all_pass：全部 attempt 都是全1
+    - all_fail：全部 attempt 都是全0
+    - split：组内既有全0又有全1（跨 attempt 分化；用户口中的「混合奖励」多指这个）
+    - seg_mixed：存在段内混合 attempt（单次 attempt 内 segment reward 不一致）
+    - empty：全无数字 reward
+    - other：其余组合（如仅全1+无）
+    """
+    if n_attempts <= 0:
+        return "empty"
+    if none == n_attempts:
+        return "empty"
+    if all_one == n_attempts:
+        return "all_pass"
+    if all_zero == n_attempts:
+        return "all_fail"
+    if all_zero > 0 and all_one > 0:
+        return "split"
+    if mixed > 0:
+        return "seg_mixed"
+    return "other"
+
+
+def summarize_groups(
+    attempts: List[Dict[str, Any]],
+    group_briefs: Optional[Dict[int, Dict[str, str]]] = None,
+) -> List[Dict[str, Any]]:
+    """按 group_index 聚合概览行。
+
+    attempt 级计数（满足 ``全0 + 全1 + 段内混合 + 无 = n_attempts``）：
+    - all_zero / all_one / mixed / none —— 来自每个 attempt 的 ``reward_bucket``
+      （mixed = **单次 attempt 内** segment reward 不一致，不是组内分化）
+
+    组级：
+    - outcome —— ``all_pass|all_fail|split|seg_mixed|empty|other``
+      （``split`` = 组内既有全挂又有全过的 attempt，即跨 attempt 分化）
+    """
+    briefs = group_briefs or {}
+    by_gi: Dict[int, List[Dict[str, Any]]] = {}
+    for a in attempts or []:
+        gi = a.get("group_index")
+        if gi is None:
+            continue
+        try:
+            key = int(gi)
+        except (TypeError, ValueError):
+            continue
+        by_gi.setdefault(key, []).append(a)
+
+    rows: List[Dict[str, Any]] = []
+    for gi in sorted(by_gi):
+        items = by_gi[gi]
+        azero = aone = amixed = anone = 0
+        n_segments = 0
+        for a in items:
+            b = str(a.get("reward_bucket") or "none").lower()
+            if b == "all_zero":
+                azero += 1
+            elif b == "all_one":
+                aone += 1
+            elif b == "mixed":
+                amixed += 1
+            else:
+                anone += 1
+            n_segments += _attempt_segment_count(a)
+        brief = briefs.get(gi) or {}
+        title = str(brief.get("title") or "").strip()
+        if not title:
+            # 回退 attempt.instance_id
+            for a in items:
+                inst = str(a.get("instance_id") or "").strip()
+                if inst:
+                    title = inst
+                    break
+        n_attempts = len(items)
+        rows.append(
+            {
+                "group_index": gi,
+                "title": title,
+                "n_attempts": n_attempts,
+                "n_segments": n_segments,
+                "all_zero": azero,
+                "all_one": aone,
+                "mixed": amixed,
+                "none": anone,
+                "outcome": _group_outcome(azero, aone, amixed, anone, n_attempts),
+            }
+        )
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # 路由
 # ---------------------------------------------------------------------------
@@ -350,6 +457,7 @@ async def page_rollout_detail(
     filtered_attempts: List[Dict[str, Any]] = []
     distinct_groups: List[int] = []
     group_briefs: Dict[int, Dict[str, str]] = {}
+    group_summaries: List[Dict[str, Any]] = []
 
     if Rollout is None or Session is None:
         warning = "Rollout 模型尚未就绪"
@@ -401,6 +509,7 @@ async def page_rollout_detail(
                                 "title": a.get("instance_id") or "",
                                 "prompt": "",
                             }
+                    group_summaries = summarize_groups(attempts, group_briefs)
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 rollout 详情失败 rollout_id={}: {}", rollout_id, exc)
             warning = f"加载失败: {exc}"
@@ -417,6 +526,7 @@ async def page_rollout_detail(
             "distinct_groups": distinct_groups,
             "current_group": group,
             "group_briefs": group_briefs,
+            "group_summaries": group_summaries,
             "warning": warning,
         },
     )
@@ -462,6 +572,7 @@ async def api_get_rollout_json(
                     if a.get("group_index") is not None
                 }
             ),
+            "group_summaries": summarize_groups(all_attempts),
             "attempts": [
                 {
                     "primary_id": a["primary_id"],

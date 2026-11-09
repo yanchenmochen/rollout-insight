@@ -85,6 +85,19 @@
     .badge.bucket-all_one { background: #cde7d6; color: var(--ri-success); }
     .badge.bucket-mixed { background: #f0e2c5; color: #8a5a12; }
     .badge.bucket-none { background: #e0e0e0; color: #424242; }
+    .badge.outcome-all_pass { background: #cde7d6; color: var(--ri-success); }
+    .badge.outcome-all_fail { background: #f3c8c8; color: #9b2c2c; }
+    .badge.outcome-split { background: #dde7fb; color: #1e5080; }
+    .badge.outcome-seg_mixed { background: #f0e2c5; color: #8a5a12; }
+    .badge.outcome-empty { background: #e0e0e0; color: #424242; }
+    .badge.outcome-other { background: #eef3f8; color: #445566; }
+    .legend-note {
+        margin-top: 10px; font-size: 12px; color: var(--ri-muted); line-height: 1.55;
+    }
+    .legend-note code {
+        font-family: ui-monospace, monospace; font-size: 11.5px;
+        background: #eef3f8; padding: 1px 5px; border-radius: 3px;
+    }
 
     .tree-body { padding: 10px 16px 14px; border-top: 1px dashed #e4e8ec; background: #ffffff; }
     .empty-inline { color: var(--ri-muted); font-size: 12px; padding: 6px 4px; }
@@ -158,6 +171,30 @@
     .group-link.active { background: var(--ri-accent); color: white; }
     .group-link:hover { background: #c7def5; }
     .group-link.active:hover { background: var(--ri-accent-hover); }
+
+    /* Group 概览表（对齐 task_detail 的 rollout 列表风格） */
+    table.sub-table {
+        width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .sub-table th, .sub-table td {
+        padding: 7px 10px; border-bottom: 1px solid #e4e8ec;
+        text-align: left; vertical-align: middle;
+    }
+    .sub-table thead { background: #f4f7fa; }
+    .sub-table th {
+        color: var(--ri-muted); font-weight: 600; font-size: 12px;
+        white-space: nowrap;
+    }
+    .sub-table tbody tr:hover { background: #f8fafc; }
+    .sub-table tbody tr.is-active { background: #e8f0fa; }
+    .sub-table .col-id { font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
+    .sub-table .col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .sub-table .col-title {
+        max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sub-table a { color: var(--ri-accent); text-decoration: none; }
+    .sub-table a:hover { text-decoration: underline; }
+    .empty-row { color: var(--ri-muted); text-align: center; padding: 16px !important; }
 </style>
 {% endblock %}
 
@@ -226,6 +263,76 @@
     </table>
 </div>
 
+<div class="section" id="group-overview">
+    <h2>Group 概览 <small>{{ group_summaries | length }} 个 group</small></h2>
+    <table class="sub-table">
+        <thead>
+            <tr>
+                <th class="col-id">group</th>
+                <th>instance / title</th>
+                <th class="col-num" title="该 group 的 attempt 数">attempts</th>
+                <th class="col-num" title="该 group 下全部 attempt 的 segment 总数">segments</th>
+                <th title="组级结果：全过 / 全挂 / 分化 / 段内混合 / 无数据">组结果</th>
+                <th class="col-num" title="attempt 内所有 segment reward 均为 0">全0</th>
+                <th class="col-num" title="attempt 内所有 segment reward 均为 1">全1</th>
+                <th class="col-num" title="单次 attempt 内 segment reward 不一致（≠组内分化）">段内混合</th>
+                <th class="col-num" title="该 attempt 没有任何数字 reward">无奖励</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if group_summaries %}
+                {% for g in group_summaries %}
+                <tr class="{% if current_group == g.group_index %}is-active{% endif %}">
+                    <td class="col-id">
+                        <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ g.group_index }}"
+                           title="只看该 group">{{ g.group_index }}</a>
+                    </td>
+                    <td class="col-title" title="{{ g.title or '' }}">{{ g.title or '-' }}</td>
+                    <td class="col-num">{{ g.n_attempts }}</td>
+                    <td class="col-num"><strong>{{ g.n_segments }}</strong></td>
+                    <td>
+                        {% if g.outcome == 'all_pass' %}
+                            <span class="badge outcome-all_pass" title="全部 attempt 都是全1">全过</span>
+                        {% elif g.outcome == 'all_fail' %}
+                            <span class="badge outcome-all_fail" title="全部 attempt 都是全0">全挂</span>
+                        {% elif g.outcome == 'split' %}
+                            <span class="badge outcome-split" title="组内既有全0又有全1的 attempt（跨 attempt 分化）">分化</span>
+                        {% elif g.outcome == 'seg_mixed' %}
+                            <span class="badge outcome-seg_mixed" title="存在段内混合的 attempt">含段混</span>
+                        {% elif g.outcome == 'empty' %}
+                            <span class="badge outcome-empty" title="无数字 reward">无数据</span>
+                        {% else %}
+                            <span class="badge outcome-other">其它</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-num">
+                        <span class="badge bucket-all_zero" title="全0 attempt 数">×{{ g.all_zero }}</span>
+                    </td>
+                    <td class="col-num">
+                        <span class="badge bucket-all_one" title="全1 attempt 数">×{{ g.all_one }}</span>
+                    </td>
+                    <td class="col-num">
+                        <span class="badge bucket-mixed" title="段内混合 attempt 数">×{{ g.mixed }}</span>
+                    </td>
+                    <td class="col-num">
+                        <span class="badge bucket-none" title="无数字 reward 的 attempt 数">×{{ g.none }}</span>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="9" class="empty-row">暂无 group 数据</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <p class="legend-note">
+        <strong>计数恒等式</strong>：<code>全0 + 全1 + 段内混合 + 无奖励 = attempts</code>。
+        <strong>全0/全1</strong> = 该次 attempt 下所有 segment 的 reward 全是 0 / 全是 1；
+        <strong>段内混合</strong> = 同一次 attempt 内 segment reward 不一致；
+        <strong>无奖励</strong> = 该 attempt 没有任何数字 reward。
+        <strong>组结果·分化</strong> = 组内既有全挂 attempt 又有全过 attempt（如 全0×6 + 全1×2），这是跨 attempt 分化，不是「段内混合」。
+    </p>
+</div>
+
 <div class="section">
     <h2>四层手风琴 · group → attempt → segment → turn <small>{{ all_attempts | length }} 个 attempt / {{ distinct_groups | length }} 个 group</small></h2>
 
@@ -253,41 +360,45 @@
             {% include "rollout_detail_attempt_loop.html" %}
         </div>
     {% else %}
-        {# 第一层 group 折：按 group_index 聚合 #}
+        {# 第一层 group 折：按 group_index 聚合；摘要取自 group_summaries #}
         <div id="treeRoot">
-            {% for gi in distinct_groups %}
+            {% for gs in group_summaries %}
+                {% set gi = gs.group_index %}
                 {% set group_attempts = [] %}
                 {% for a in all_attempts %}
                     {% if a.group_index == gi %}
                         {% set _ = group_attempts.append(a) %}
                     {% endif %}
                 {% endfor %}
-                {% set ns = namespace(azero=0, aone=0, amixed=0, anone=0) %}
-                {% for a in group_attempts %}
-                    {% set b = (a.reward_bucket or 'none')|lower %}
-                    {% if b == 'all_zero' %}
-                        {% set ns.azero = ns.azero + 1 %}
-                    {% elif b == 'all_one' %}
-                        {% set ns.aone = ns.aone + 1 %}
-                    {% elif b == 'mixed' %}
-                        {% set ns.amixed = ns.amixed + 1 %}
-                    {% else %}
-                        {% set ns.anone = ns.anone + 1 %}
-                    {% endif %}
-                {% endfor %}
                 {% set brief = (group_briefs or {}).get(gi, {}) %}
-                <details class="tree group-row" open>
+                <details class="tree group-row" open id="group-{{ gi }}">
                     <summary>
                         <span class="sum-title">group <strong>{{ gi }}</strong>
-                            {% if brief.title %} · {{ brief.title }}{% endif %}
+                            {% if gs.title %} · {{ gs.title }}{% elif brief.title %} · {{ brief.title }}{% endif %}
                         </span>
                         <span class="sum-meta">
-                            {{ group_attempts | length }} attempts
+                            {{ gs.n_attempts }} attempts
                             &nbsp;·&nbsp;
-                            <span class="badge bucket-all_zero" title="所有 segment 都是 0">全0 ×{{ ns.azero }}</span>
-                            <span class="badge bucket-all_one" title="所有 segment 都是 1">全1 ×{{ ns.aone }}</span>
-                            <span class="badge bucket-mixed">混合 ×{{ ns.amixed }}</span>
-                            <span class="badge bucket-none" title="没有数字 reward">无 ×{{ ns.anone }}</span>
+                            <span class="stat-chip" title="该 group 下全部 attempt 的 segment 总数">segments <strong>{{ gs.n_segments }}</strong></span>
+                            &nbsp;·&nbsp;
+                            {% if gs.outcome == 'all_pass' %}
+                                <span class="badge outcome-all_pass">全过</span>
+                            {% elif gs.outcome == 'all_fail' %}
+                                <span class="badge outcome-all_fail">全挂</span>
+                            {% elif gs.outcome == 'split' %}
+                                <span class="badge outcome-split" title="组内既有全0又有全1">分化</span>
+                            {% elif gs.outcome == 'seg_mixed' %}
+                                <span class="badge outcome-seg_mixed">含段混</span>
+                            {% elif gs.outcome == 'empty' %}
+                                <span class="badge outcome-empty">无数据</span>
+                            {% else %}
+                                <span class="badge outcome-other">其它</span>
+                            {% endif %}
+                            &nbsp;·&nbsp;
+                            <span class="badge bucket-all_zero" title="attempt 内所有 segment 都是 0">全0 ×{{ gs.all_zero }}</span>
+                            <span class="badge bucket-all_one" title="attempt 内所有 segment 都是 1">全1 ×{{ gs.all_one }}</span>
+                            <span class="badge bucket-mixed" title="单次 attempt 内 segment reward 不一致">段混 ×{{ gs.mixed }}</span>
+                            <span class="badge bucket-none" title="没有任何数字 reward">无 ×{{ gs.none }}</span>
                         </span>
                     </summary>
                     <div class="tree-body">
