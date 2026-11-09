@@ -168,6 +168,7 @@
 - `staticmethod` `def list_by_attempt(limit: int=500, offset: int=0) -> List[DBSegment]`
 - `staticmethod` `def get_by_id() -> Optional[DBSegment]`
 - `staticmethod` `def list_by_task(limit: int=2000, offset: int=0) -> List[DBSegment]`
+- `staticmethod` `def count_by_rollout_for_task() -> Dict[int, int]`
 - `staticmethod` `def delete_by_attempt() -> int`
 - `staticmethod` `def delete_by_task() -> int`
 
@@ -309,7 +310,7 @@
 | `task_controller` | GET | `/api/tasks` | `api_list_tasks` | 任务列表端点。 |
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
 | `task_controller` | POST | `/api/tasks` | `api_create_task` | 创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。 |
-| `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；带 rollouts/attempts/segments 三张子表。 |
+| `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
