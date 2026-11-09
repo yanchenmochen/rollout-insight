@@ -128,6 +128,10 @@ def _rollout_to_dict(r: Any, n_segments: int = 0) -> Dict[str, Any]:
         "scanned_at": _format_dt(getattr(r, "scanned_at", None)),
         "pt_path": getattr(r, "pt_path", None),
         "task_id": getattr(r, "task_id", None),
+        # raw_reward 三指标（page_task_detail 再填充）
+        "n_passed": 0,
+        "n_aborted": 0,
+        "n_valid_groups": 0,
     }
 
 
@@ -597,16 +601,18 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
 
             rollouts: List[Dict[str, Any]] = []
             if Rollout is not None:
+                # 按业务键 rollout_id 升序（0,1,2…），不用 primary_id（扫描入库顺序）
                 for r in (
                     session.query(Rollout)
                     .filter(Rollout.task_id == task_id)
-                    .order_by(Rollout.primary_id.asc())
+                    .order_by(Rollout.rollout_id.asc(), Rollout.primary_id.asc())
                     .all()
                 ):
                     rollouts.append(_rollout_to_dict(r))
 
-        # 按 rollout 业务键聚合 segment 数（独立短事务，复用 DBSegmentService）
+        # 按 rollout 业务键聚合 segment 数 + raw_reward 三指标
         segment_counts: Dict[int, int] = {}
+        reward_metrics: Dict[int, Dict[str, int]] = {}
         try:
             from db.db_segment_service import DBSegmentService
 
@@ -615,9 +621,26 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
             logger.warning(
                 "统计 task_id={} 各 rollout n_segments 失败: {}", task_id, exc
             )
+        try:
+            from db.db_attempt_service import DBAttemptService
+
+            reward_metrics = DBAttemptService.summarize_reward_metrics_by_rollout(
+                task_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "统计 task_id={} 各 rollout raw_reward 指标失败: {}", task_id, exc
+            )
         for item in rollouts:
             rid = item.get("rollout_id")
             item["n_segments"] = int(segment_counts.get(rid, 0)) if rid is not None else 0
+            metrics = reward_metrics.get(int(rid), {}) if rid is not None else {}
+            item["n_passed"] = int(metrics.get("n_passed", 0))
+            item["n_aborted"] = int(metrics.get("n_aborted", 0))
+            item["n_timeout"] = int(metrics.get("n_timeout", 0))
+            item["n_failed"] = int(metrics.get("n_failed", 0))
+            item["n_other"] = int(metrics.get("n_other", 0))
+            item["n_valid_groups"] = int(metrics.get("n_valid_groups", 0))
 
         return templates.TemplateResponse(
             request,
