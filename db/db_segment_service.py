@@ -7,9 +7,9 @@
 存在则覆盖可更新字段，不存在则 INSERT。
 """
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 
 from db.db_element import Session
 from db.db_segment import DBSegment
@@ -114,6 +114,31 @@ class DBSegmentService:
                 DBSegment.segment_index.asc(),
             )
             return q.offset(offset).limit(limit).all()
+
+    @staticmethod
+    def count_by_rollout_for_task(task_id: int) -> Dict[int, int]:
+        """按业务键 rollout_id 统计某 task 下各 rollout 的 segment 总数。
+
+        返回 ``{rollout_id: n_segments}``；无 segment 的 rollout 不会出现在结果中。
+        """
+        from db.db_attempt import DBAttempt
+
+        with Session() as session:
+            rows = (
+                session.query(
+                    DBAttempt.rollout_id,
+                    func.count(DBSegment.primary_id),
+                )
+                .join(DBSegment, DBSegment.attempt_id == DBAttempt.primary_id)
+                .filter(DBAttempt.task_id == task_id)
+                .group_by(DBAttempt.rollout_id)
+                .all()
+            )
+            return {
+                int(rollout_id): int(count)
+                for rollout_id, count in rows
+                if rollout_id is not None
+            }
 
     @staticmethod
     def delete_by_attempt(attempt_id: int) -> int:

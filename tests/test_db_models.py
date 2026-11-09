@@ -185,6 +185,15 @@ class TestDbModels(unittest.TestCase):
         seg_b = DBSegmentService.list_by_attempt(ids["attempt_b"].primary_id)
         self.assertEqual(len(seg_b), 1)
 
+    def test_count_by_rollout_for_task(self) -> None:
+        """count_by_rollout_for_task 按业务键 rollout_id 聚合 segment 数。"""
+        ids = _build_test_entities(task_name=f"count_seg_{_unique_suffix()}")
+        task = ids["task"]
+        counts = DBSegmentService.count_by_rollout_for_task(task.primary_id)
+        # _build_test_entities：rollout_id=0 下共 3 个 segment（attempt_a×2 + attempt_b×1）
+        self.assertEqual(counts.get(0), 3)
+        self.assertEqual(DBSegmentService.count_by_rollout_for_task(-1), {})
+
     def test_unique_constraint_rollout(self) -> None:
         """rollout 表 (task_id, rollout_id) 唯一约束必须抛 IntegrityError。"""
         ids = _build_test_entities(task_name=f"uq_rollout_{_unique_suffix()}")

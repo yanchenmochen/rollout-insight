@@ -265,8 +265,6 @@
             <h3>本任务导航</h3>
             <a href="#overview" class="active">概览</a>
             <a href="#rollouts">Rollout 列表 ({{ rollouts | length }})</a>
-            <a href="#attempts">Attempt 列表 ({{ attempts | length }})</a>
-            <a href="#segments">Segment 列表 ({{ segments | length }})</a>
             <a href="#nanhu">关联南湖 job</a>
         </aside>
 
@@ -312,11 +310,11 @@
                 </tr>
                 <tr>
                     <th>Attempt 总数</th>
-                    <td>{{ task.attempt_count or (attempts | length) }}</td>
+                    <td>{{ task.attempt_count if task.attempt_count is not none else 0 }}</td>
                 </tr>
                 <tr>
                     <th>Segment 总数</th>
-                    <td>{{ task.segment_count or (segments | length) }}</td>
+                    <td>{{ task.segment_count if task.segment_count is not none else 0 }}</td>
                 </tr>
                 <tr>
                     <th>mean_reward（聚合）</th>
@@ -348,6 +346,7 @@
                         <th>rollout_id</th>
                         <th class="col-num">n_samples</th>
                         <th class="col-num">n_attempts</th>
+                        <th class="col-num">n_segments</th>
                         <th class="col-num">mean_reward</th>
                         <th>scanned_at</th>
                         <th>pt_path</th>
@@ -363,6 +362,7 @@
                             <td class="col-id">{{ r.rollout_id if r.rollout_id is not none else "-" }}</td>
                             <td class="col-num">{{ r.n_samples if r.n_samples is not none else "-" }}</td>
                             <td class="col-num">{{ r.n_attempts if r.n_attempts is not none else "-" }}</td>
+                            <td class="col-num">{{ r.n_segments if r.n_segments is not none else 0 }}</td>
                             <td class="col-num">
                                 {% if r.mean_reward is not none %}{{ "%.4f"|format(r.mean_reward) }}{% else %}-{% endif %}
                             </td>
@@ -371,81 +371,7 @@
                         </tr>
                         {% endfor %}
                     {% else %}
-                        <tr><td colspan="7" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section" id="attempts">
-            <h2>Attempt 列表 <small>{{ attempts | length }} 个</small></h2>
-            <table class="sub-table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>rollout</th>
-                        <th>group_index</th>
-                        <th>instance_id</th>
-                        <th>segment 数</th>
-                        <th>创建时间</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% if attempts %}
-                        {% for a in attempts %}
-                        <tr>
-                            <td class="col-id">{{ a.id }}</td>
-                            <td class="col-id">{{ a.rollout_id if a.rollout_id is not none else "-" }}</td>
-                            <td>{{ a.group_index if a.group_index is not none else "-" }}</td>
-                            <td class="mono">{{ a.instance_id or "-" }}</td>
-                            <td>{{ a.segment_count if a.segment_count is not none else "-" }}</td>
-                            <td>{{ a.create_time or "-" }}</td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr><td colspan="6" class="empty-row">暂无 attempt</td></tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section" id="segments">
-            <h2>Segment 列表 <small>{{ segments | length }} 个</small></h2>
-            <table class="sub-table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>attempt</th>
-                        <th>序号</th>
-                        <th>instance_id</th>
-                        <th class="col-num">reward</th>
-                        <th class="col-num">turns</th>
-                        <th class="col-num">tool_calls</th>
-                        <th>status</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% if segments %}
-                        {% for s in segments %}
-                        <tr>
-                            <td class="col-id">{{ s.id }}</td>
-                            <td class="col-id">{{ s.attempt_id if s.attempt_id is not none else "-" }}</td>
-                            <td>{% if s.segment_index is not none and s.segment_count is not none %}{{ s.segment_index }} / {{ s.segment_count }}{% else %}-{% endif %}</td>
-                            <td class="mono">{{ s.instance_id or "-" }}</td>
-                            <td class="col-num">
-                                {% if s.reward is not none %}{{ "%.4f"|format(s.reward) }}{% else %}-{% endif %}
-                            </td>
-                            <td class="col-num">{{ s.agent_turns if s.agent_turns is not none else "-" }}</td>
-                            <td class="col-num">{{ s.tool_calls if s.tool_calls is not none else "-" }}</td>
-                            <td>{{ s.status or "-" }}</td>
-                            <td>
-                                <a class="btn btn-secondary btn-sm" href="/api/segments/{{ s.id }}">查看 transcript</a>
-                            </td>
-                        </tr>
-                    70|                    {% endfor %}
-                    {% else %}
-                        <tr><td colspan="9" class="empty-row">暂无 segment</td></tr>
+                        <tr><td colspan="8" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
                     {% endif %}
                 </tbody>
             </table>

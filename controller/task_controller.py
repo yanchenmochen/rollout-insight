@@ -114,7 +114,7 @@ def _task_to_dict(task: Any) -> Dict[str, Any]:
     }
 
 
-def _rollout_to_dict(r: Any) -> Dict[str, Any]:
+def _rollout_to_dict(r: Any, n_segments: int = 0) -> Dict[str, Any]:
     if r is None:
         return {}
     return {
@@ -123,6 +123,7 @@ def _rollout_to_dict(r: Any) -> Dict[str, Any]:
         "rollout_id": getattr(r, "rollout_id", None),
         "n_samples": getattr(r, "n_samples", None),
         "n_attempts": getattr(r, "n_attempts", None),
+        "n_segments": int(n_segments or 0),
         "mean_reward": getattr(r, "mean_reward", None),
         "scanned_at": _format_dt(getattr(r, "scanned_at", None)),
         "pt_path": getattr(r, "pt_path", None),
@@ -557,11 +558,9 @@ async def api_create_task(
 
 @router.get("/api/tasks/{task_id}", include_in_schema=False)
 async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
-    """渲染 task_detail.html；带 rollouts/attempts/segments 三张子表。"""
+    """渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。"""
     Task = _task_model()
     Rollout = _rollout_model()
-    Attempt = _attempt_model()
-    Segment = _segment_model()
     Session = _session_factory()
 
     if Task is None or Session is None:
@@ -572,8 +571,6 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                 "page_title": f"任务 #{task_id}",
                 "task": _empty_task_dict(task_id),
                 "rollouts": [],
-                "attempts": [],
-                "segments": [],
                 "warning": "任务模型尚未就绪（2A 阶段未完成）",
             },
             status_code=200,
@@ -593,17 +590,12 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                         "page_title": f"任务 #{task_id}",
                         "task": placeholder,
                         "rollouts": [],
-                        "attempts": [],
-                        "segments": [],
                         "warning": f"任务 #{task_id} 不存在",
                     },
                     status_code=200,
                 )
 
             rollouts: List[Dict[str, Any]] = []
-            attempts: List[Dict[str, Any]] = []
-            segments: List[Dict[str, Any]] = []
-
             if Rollout is not None:
                 for r in (
                     session.query(Rollout)
@@ -612,77 +604,20 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                     .all()
                 ):
                     rollouts.append(_rollout_to_dict(r))
-            if Attempt is not None:
-                # 通过 (task_id, rollout_id 业务键) 关联到本任务
-                if Rollout is not None:
-                    rollout_biz_ids = [
-                        r["rollout_id"] for r in rollouts if r.get("rollout_id") is not None
-                    ]
-                    if rollout_biz_ids:
-                        for a in (
-                            session.query(Attempt)
-                            .filter(
-                                Attempt.task_id == task_id,
-                                Attempt.rollout_id.in_(rollout_biz_ids),
-                            )
-                            .order_by(Attempt.primary_id.asc())
-                            .limit(500)
-                            .all()
-                        ):
-                            attempts.append(_attempt_to_dict(a))
-            if Segment is not None:
-                attempt_ids = [a["primary_id"] for a in attempts if a.get("primary_id") is not None]
-                if attempt_ids and Attempt is not None:
-                    # 批量查 attempt 表，用于补 segment dict 的 instance_id / tool_calls 等
-                    attempt_objs = (
-                        session.query(Attempt)
-                        .filter(Attempt.primary_id.in_(attempt_ids))
-                        .all()
-                    )
-                    attempt_map = {a.primary_id: a for a in attempt_objs}
-                    for s in (
-                        session.query(Segment)
-                        .filter(Segment.attempt_id.in_(attempt_ids))
-                        .order_by(Segment.attempt_id.asc(), Segment.segment_index.asc())
-                        .limit(1000)
-                        .all()
-                    ):
-                        seg_attempt = attempt_map.get(getattr(s, "attempt_id", None))
-                        # 借用 segment_controller._segment_to_dict：让 segment 模板拿得到
-                        # instance_id / agent_turns / tool_calls（这些字段在 attempt 表）
-                        from controller.segment_controller import (
-                            _segment_to_dict as _seg_to_dict,
-                        )
-                        seg_dict = _seg_to_dict(s, seg_attempt)
-                        # 再补 task_id 和 pt_path（用于页面跳转）
-                        if seg_attempt is not None:
-                            seg_dict["rollout_id"] = getattr(seg_attempt, "rollout_id", None)
-                            # 通过 (task_id, rollout_id 业务键) 找 rollout
-                            if Rollout is not None and seg_dict["rollout_id"] is not None:
-                                ro = (
-                                    session.query(Rollout)
-                                    .filter(
-                                        Rollout.task_id == task_id,
-                                        Rollout.rollout_id == seg_dict["rollout_id"],
-                                    )
-                                    .first()
-                                )
-                                if ro is not None:
-                                    seg_dict["pt_path"] = getattr(ro, "pt_path", None)
-                        segments.append(seg_dict)
-                else:
-                    # 无 attempts 时（极端情况）只列 segment 主键
-                    for s in (
-                        session.query(Segment)
-                        .filter(Segment.attempt_id.in_(attempt_ids))
-                        .order_by(Segment.attempt_id.asc(), Segment.segment_index.asc())
-                        .limit(1000)
-                        .all()
-                    ):
-                        from controller.segment_controller import (
-                            _segment_to_dict as _seg_to_dict,
-                        )
-                        segments.append(_seg_to_dict(s))
+
+        # 按 rollout 业务键聚合 segment 数（独立短事务，复用 DBSegmentService）
+        segment_counts: Dict[int, int] = {}
+        try:
+            from db.db_segment_service import DBSegmentService
+
+            segment_counts = DBSegmentService.count_by_rollout_for_task(task_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "统计 task_id={} 各 rollout n_segments 失败: {}", task_id, exc
+            )
+        for item in rollouts:
+            rid = item.get("rollout_id")
+            item["n_segments"] = int(segment_counts.get(rid, 0)) if rid is not None else 0
 
         return templates.TemplateResponse(
             request,
@@ -691,8 +626,6 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                 "page_title": f"任务 #{task_id} - {obj.task_name}",
                 "task": _task_to_dict(obj),
                 "rollouts": rollouts,
-                "attempts": attempts,
-                "segments": segments,
             },
         )
     except Exception as exc:  # noqa: BLE001
