@@ -30,6 +30,11 @@ from data.rollout_insight_exception import RolloutInsightException
 __all__ = [
     "load_pt",
     "parse_attempts_and_segments",
+    "resolve_sample_reward",
+    "sample_abort_reason",
+    "cluster_abort_reasons",
+    "classify_sample_outcome",
+    "cluster_attempt_outcomes",
     "split_response_to_turns",
     "token_estimate",
     "_attempt_layout",  # 暴露给测试
@@ -115,6 +120,325 @@ def _status_text(status: Any) -> str:
     return str(status).split(".")[-1].lower()
 
 
+# abort / 不可测：不得把 sample.reward 兜底 0.0 当成评测失败
+_ABORT_STATUSES = frozenset(
+    {"aborted", "abort", "cancelled", "canceled", "invalid", "failed_infra"}
+)
+
+
+def resolve_sample_reward(sample: Dict[str, Any]) -> Optional[float]:
+    """解析单条 sample 的可测 reward。
+
+    优先级：
+    1. ``status`` 为 abort / 有 ``abort_reason`` → ``None``（不可测，不是全0）
+    2. ``metadata`` 含 ``raw_reward`` 键 → 用该值（可为 None）
+    3. 否则回退 ``sample.reward``
+
+    注意：abort 样本上 ``sample.reward`` 常被写成 ``0.0``，不能当失败。
+    """
+    if not isinstance(sample, dict):
+        return None
+    status = _status_text(sample.get("status"))
+    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    if status in _ABORT_STATUSES or metadata.get("abort_reason"):
+        return None
+    if "raw_reward" in metadata:
+        rr = metadata.get("raw_reward")
+        if rr is None:
+            return None
+        if isinstance(rr, (int, float)):
+            return float(rr)
+        return None
+    r = sample.get("reward")
+    if isinstance(r, (int, float)):
+        return float(r)
+    return None
+
+
+def sample_abort_reason(sample: Dict[str, Any]) -> Optional[str]:
+    """若 sample 为 abort，返回聚类用原因字符串；否则 None。
+
+    只认 ``status ∈ abort`` 或显式 ``metadata.abort_reason``。
+    **不**把 ``train_drop_reason``（如 zero_std_1.0 / ungradable）当成 abort——
+    那是训练过滤标签，常出现在已完成且有 reward 的样本上。
+    """
+    if not isinstance(sample, dict):
+        return None
+    status = _status_text(sample.get("status"))
+    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    abort_reason = metadata.get("abort_reason")
+    if status in _ABORT_STATUSES:
+        text = str(abort_reason).strip() if abort_reason else ""
+        return text or f"status:{status or 'aborted'}"
+    if abort_reason:
+        return str(abort_reason).strip() or None
+    return None
+
+
+def cluster_abort_reasons(
+    dump: Dict[str, Any], *, group_index: Optional[int] = None
+) -> Dict[str, Any]:
+    """对 dump 内 abort attempt 按 ``abort_reason`` 聚类（兼容旧调用）。
+
+    完整失败分析请用 ``cluster_attempt_outcomes``。
+    """
+    full = cluster_attempt_outcomes(dump, group_index=group_index)
+    abort_only = [
+        r for r in (full.get("by_reason") or []) if r.get("category") == "abort"
+    ]
+    by_group: Dict[int, Dict[str, Any]] = {}
+    for gi, ginfo in (full.get("by_group") or {}).items():
+        rows = [r for r in (ginfo.get("by_reason") or []) if r.get("category") == "abort"]
+        by_group[int(gi)] = {
+            "total": int(sum(int(r.get("count") or 0) for r in rows)),
+            "by_reason": rows,
+        }
+    return {
+        "total": int(full.get("n_abort") or 0),
+        "n_groups_with_abort": int(full.get("n_groups_with_abort") or 0),
+        "by_reason": abort_only,
+        "by_group": by_group,
+    }
+
+
+def classify_sample_outcome(sample: Dict[str, Any]) -> Dict[str, str]:
+    """把单条 sample 归为 pass / abort / timeout / fail / other。
+
+    优先级：abort → timeout → pass → fail → other。
+    """
+    if not isinstance(sample, dict):
+        return {"category": "other", "reason": "invalid_sample", "label": "other:invalid_sample"}
+    status = _status_text(sample.get("status"))
+    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+
+    abort_reason = sample_abort_reason(sample)
+    if abort_reason:
+        return {
+            "category": "abort",
+            "reason": abort_reason,
+            "label": f"abort:{abort_reason}",
+        }
+
+    # 超时 / 上下文打满：status=truncated，或 conversation/driver 错误码
+    err_code = str(
+        metadata.get("conversation_error_code")
+        or metadata.get("train_truncation_reason")
+        or ""
+    ).strip()
+    driver_err = str(metadata.get("driver_error") or "").lower()
+    is_timeout = status in {"truncated", "timeout"} or any(
+        tok in err_code.lower() or tok in driver_err
+        for tok in ("timeout", "context_limit", "context_exhausted", "timed_out")
+    )
+    if is_timeout:
+        reason = err_code or (
+            "driver_context_limit" if "context" in driver_err else (status or "timeout")
+        )
+        return {
+            "category": "timeout",
+            "reason": reason,
+            "label": f"timeout:{reason}",
+        }
+
+    reward = resolve_sample_reward(sample)
+    if isinstance(reward, float) and abs(reward - 1.0) <= 1e-9:
+        return {"category": "pass", "reason": "resolved", "label": "pass:resolved"}
+
+    diagnosis = str(metadata.get("diagnosis") or "").strip()
+    failure_class = str(metadata.get("failure_class") or "").strip()
+    if isinstance(reward, float) and abs(reward) <= 1e-9:
+        reason = diagnosis or failure_class or "reward_0"
+        return {
+            "category": "fail",
+            "reason": reason,
+            "label": f"fail:{reason}",
+        }
+
+    if reward is None:
+        reason = diagnosis or failure_class or f"status:{status or 'unknown'}"
+        return {
+            "category": "other",
+            "reason": reason,
+            "label": f"other:{reason}",
+        }
+
+    return {
+        "category": "other",
+        "reason": f"reward={reward}",
+        "label": f"other:reward={reward}",
+    }
+
+
+def cluster_attempt_outcomes(
+    dump: Dict[str, Any], *, group_index: Optional[int] = None
+) -> Dict[str, Any]:
+    """跨组 / 组内失败情形聚类（abort / timeout / 正常失败 / 通过）。
+
+    Returns:
+        {
+          "n_attempts", "n_pass", "n_abort", "n_timeout", "n_fail", "n_other",
+          "n_failure": abort+timeout+fail+other,
+          "n_groups_with_abort", "n_groups_with_failure",
+          "by_category": [{"category","count","pct"}, ...],
+          "by_reason": [{"category","reason","label","count","pct"}, ...],  # 不含 pass
+          "by_group": {gi: {n_*, by_category, by_reason}},
+          "group_trend": [{"group_index","n_attempts","n_pass","n_abort","n_timeout","n_fail","n_other","n_failure"}, ...]
+        }
+    """
+    from collections import Counter, defaultdict
+
+    empty = {
+        "n_attempts": 0,
+        "n_pass": 0,
+        "n_abort": 0,
+        "n_timeout": 0,
+        "n_fail": 0,
+        "n_other": 0,
+        "n_failure": 0,
+        "n_groups_with_abort": 0,
+        "n_groups_with_failure": 0,
+        "by_category": [],
+        "by_reason": [],
+        "by_group": {},
+        "group_trend": [],
+    }
+    samples = dump.get("samples") if isinstance(dump, dict) else None
+    if not isinstance(samples, list):
+        return empty
+
+    cat_overall: Counter = Counter()
+    reason_overall: Counter = Counter()  # key=(category, reason)
+    per_group_cat: Dict[int, Counter] = defaultdict(Counter)
+    per_group_reason: Dict[int, Counter] = defaultdict(Counter)
+
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        gi = sample.get("group_index")
+        if group_index is not None:
+            try:
+                if int(gi) != int(group_index):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        outcome = classify_sample_outcome(sample)
+        cat = outcome["category"]
+        reason = outcome["reason"]
+        cat_overall[cat] += 1
+        if cat != "pass":
+            reason_overall[(cat, reason)] += 1
+        if isinstance(gi, int):
+            per_group_cat[gi][cat] += 1
+            if cat != "pass":
+                per_group_reason[gi][(cat, reason)] += 1
+
+    def _cat_rows(counter: Counter) -> List[Dict[str, Any]]:
+        total = sum(counter.values()) or 1
+        order = ["abort", "timeout", "fail", "other", "pass"]
+        rows = []
+        for cat in order:
+            if cat not in counter:
+                continue
+            count = int(counter[cat])
+            rows.append(
+                {
+                    "category": cat,
+                    "count": count,
+                    "pct": round(100.0 * count / total, 1),
+                }
+            )
+        for cat, count in counter.most_common():
+            if cat in order:
+                continue
+            rows.append(
+                {
+                    "category": str(cat),
+                    "count": int(count),
+                    "pct": round(100.0 * count / total, 1),
+                }
+            )
+        return rows
+
+    def _reason_rows(counter: Counter) -> List[Dict[str, Any]]:
+        total = sum(counter.values()) or 1
+        rows = []
+        for (cat, reason), count in counter.most_common():
+            rows.append(
+                {
+                    "category": cat,
+                    "reason": reason,
+                    "label": f"{cat}:{reason}",
+                    "count": int(count),
+                    "pct": round(100.0 * count / total, 1),
+                }
+            )
+        return rows
+
+    by_group: Dict[int, Dict[str, Any]] = {}
+    group_trend: List[Dict[str, Any]] = []
+    for gi in sorted(per_group_cat.keys()):
+        c = per_group_cat[gi]
+        n_attempts = int(sum(c.values()))
+        n_pass = int(c.get("pass", 0))
+        n_abort = int(c.get("abort", 0))
+        n_timeout = int(c.get("timeout", 0))
+        n_fail = int(c.get("fail", 0))
+        n_other = int(c.get("other", 0))
+        n_failure = n_abort + n_timeout + n_fail + n_other
+        by_group[gi] = {
+            "n_attempts": n_attempts,
+            "n_pass": n_pass,
+            "n_abort": n_abort,
+            "n_timeout": n_timeout,
+            "n_fail": n_fail,
+            "n_other": n_other,
+            "n_failure": n_failure,
+            "by_category": _cat_rows(c),
+            "by_reason": _reason_rows(per_group_reason[gi]),
+        }
+        group_trend.append(
+            {
+                "group_index": gi,
+                "n_attempts": n_attempts,
+                "n_pass": n_pass,
+                "n_abort": n_abort,
+                "n_timeout": n_timeout,
+                "n_fail": n_fail,
+                "n_other": n_other,
+                "n_failure": n_failure,
+                "fail_rate_pct": round(100.0 * n_failure / n_attempts, 1)
+                if n_attempts
+                else 0.0,
+            }
+        )
+
+    n_attempts = int(sum(cat_overall.values()))
+    n_pass = int(cat_overall.get("pass", 0))
+    n_abort = int(cat_overall.get("abort", 0))
+    n_timeout = int(cat_overall.get("timeout", 0))
+    n_fail = int(cat_overall.get("fail", 0))
+    n_other = int(cat_overall.get("other", 0))
+    return {
+        "n_attempts": n_attempts,
+        "n_pass": n_pass,
+        "n_abort": n_abort,
+        "n_timeout": n_timeout,
+        "n_fail": n_fail,
+        "n_other": n_other,
+        "n_failure": n_abort + n_timeout + n_fail + n_other,
+        "n_groups_with_abort": sum(
+            1 for g in by_group.values() if int(g.get("n_abort") or 0) > 0
+        ),
+        "n_groups_with_failure": sum(
+            1 for g in by_group.values() if int(g.get("n_failure") or 0) > 0
+        ),
+        "by_category": _cat_rows(cat_overall),
+        "by_reason": _reason_rows(reason_overall),
+        "by_group": by_group,
+        "group_trend": group_trend,
+    }
+
+
 def _segment_payload(
     sample: Dict[str, Any],
     attempt_key: Tuple[Optional[int], Any],
@@ -139,6 +463,7 @@ def _segment_payload(
         response_length = len(response_text) if isinstance(response_text, str) else 0
     loss_mask = sample.get("loss_mask") or []
     mask_sum = sum(loss_mask) if isinstance(loss_mask, (list, tuple)) else 0
+    status = _status_text(sample.get("status"))
     return {
         "group_index": attempt_key[0],
         "attempt_id": attempt_key[1],
@@ -147,8 +472,8 @@ def _segment_payload(
         "segment_count": segment_count,
         "instance_id": metadata.get("instance_id") or sample.get("label") or "",
         "sandbox_id": metadata.get("sandbox_id") or "",
-        "reward": sample.get("reward"),
-        "status": _status_text(sample.get("status")),
+        "reward": resolve_sample_reward(sample),
+        "status": status,
         "agent_turns": metadata.get("agent_turns"),
         "tool_calls": metadata.get("tool_calls"),
         "tool_results": metadata.get("tool_results"),

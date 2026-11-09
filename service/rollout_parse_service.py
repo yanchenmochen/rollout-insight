@@ -230,14 +230,29 @@ def parse_rollout(pt_path: str, force: bool = False) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _classify_reward_bucket(rewards: List[float]) -> str:
+_ABORT_STATUSES = frozenset(
+    {"aborted", "abort", "cancelled", "canceled", "invalid", "failed_infra"}
+)
+
+
+def _is_abort_status(status: Any) -> bool:
+    text = str(status or "").split(".")[-1].lower()
+    return text in _ABORT_STATUSES
+
+
+def _classify_reward_bucket(
+    rewards: List[float], *, aborted: bool = False
+) -> str:
     """把 attempts 的 segment reward 列表归类为 reward_bucket 标签。
 
+    - 'aborted' —— attempt / segment 为 abort（不可测；即使 reward 被写成 0.0）
     - 'none'  —— 没有任何 segment 有数字 reward
     - 'all_zero' —— 所有 segment 都是 0（不含 None）
     - 'all_one' —— 所有 segment 都是 1（不含 None）
     - 'mixed' —— 既有非 0 又非 1，或 reward 落在 0~1 之间
     """
+    if aborted:
+        return "aborted"
     if not rewards:
         return "none"
     if all(abs(r) <= _REWARD_EPS for r in rewards):
@@ -264,8 +279,8 @@ def parse_attempt_token_stats(attempt_pk: int) -> Dict[str, Any]:
             "total_resp_len": int,
             "total_mask_sum": int,
             "total_trainable_tokens": int,
-            "reward_bucket": str ('all_zero' | 'all_one' | 'mixed' | 'none'),
-            "rewards": [float, ...],      # 各 segment reward 数字版（不含 None）
+            "reward_bucket": str ('aborted' | 'all_zero' | 'all_one' | 'mixed' | 'none'),
+            "rewards": [float, ...],      # 各 segment 可测 reward（不含 None / abort）
         }
 
     Raises:
@@ -327,12 +342,17 @@ def parse_attempt_token_stats(attempt_pk: int) -> Dict[str, Any]:
             out["n_tool_calls"] = int(getattr(att, "tool_calls", 0) or 0)
             out["n_diff_lines"] = int(getattr(att, "diff_line_count", 0) or 0)
 
+            attempt_aborted = _is_abort_status(getattr(att, "status", None))
+            any_seg_aborted = False
             for s in segs:
                 out["total_resp_len"] += int(getattr(s, "response_length", 0) or 0)
                 out["total_mask_sum"] += int(getattr(s, "mask_sum", 0) or 0)
                 out["total_trainable_tokens"] += int(
                     getattr(s, "trainable_tokens", 0) or 0
                 )
+                if _is_abort_status(getattr(s, "status", None)):
+                    any_seg_aborted = True
+                    continue  # abort 的兜底 0.0 不能进可测 rewards
                 r = getattr(s, "reward", None)
                 if isinstance(r, (int, float)):
                     out["rewards"].append(float(r))
@@ -344,7 +364,9 @@ def parse_attempt_token_stats(attempt_pk: int) -> Dict[str, Any]:
                     pass  # 占位：实际数据由 attempt 表提供
 
             out["segment_count"] = len(segs)
-            out["reward_bucket"] = _classify_reward_bucket(out["rewards"])
+            out["reward_bucket"] = _classify_reward_bucket(
+                out["rewards"], aborted=attempt_aborted or any_seg_aborted
+            )
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             "parse_attempt_token_stats: DB 操作失败 attempt_pk={} err={}",
