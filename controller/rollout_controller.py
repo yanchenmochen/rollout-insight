@@ -233,22 +233,37 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
 
         for a in attempts:
             segs = seg_map.get(int(a.primary_id), [])
-            rewards = [
-                float(s.reward) for s in segs if isinstance(getattr(s, "reward", None), (int, float))
-            ]
+            attempt_status = str(getattr(a, "status", None) or "").split(".")[-1].lower()
+            attempt_aborted = attempt_status in _ABORT_STATUS_SET
+            rewards: List[float] = []
             seg_dicts: List[Dict[str, Any]] = []
             for s in segs:
+                seg_status = str(getattr(s, "status", None) or "").split(".")[-1].lower()
+                seg_aborted = seg_status in _ABORT_STATUS_SET
+                if seg_aborted:
+                    attempt_aborted = True
+                raw_reward = getattr(s, "reward", None)
+                # abort 上常残留 reward=0.0，展示与分桶都当作无奖励
+                display_reward = None if seg_aborted else raw_reward
+                if (
+                    not seg_aborted
+                    and isinstance(display_reward, (int, float))
+                ):
+                    rewards.append(float(display_reward))
                 seg_dicts.append(
                     {
                         "primary_id": int(s.primary_id),
                         "segment_index": getattr(s, "segment_index", None),
                         "segment_count": getattr(s, "segment_count", None),
                         "status": getattr(s, "status", None),
-                        "reward": getattr(s, "reward", None),
+                        "reward": display_reward,
                         "sandbox_id": getattr(s, "sandbox_id", None) or "",
                     }
                 )
             stats = stats_cache.get(int(a.primary_id), {}) or {}
+            bucket = stats.get("reward_bucket") or "none"
+            if attempt_aborted:
+                bucket = "aborted"
             out["attempts"].append(
                 {
                     "primary_id": int(a.primary_id),
@@ -258,7 +273,7 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
                     "sandbox_id": getattr(a, "sandbox_id", None) or "",
                     "instance_id": getattr(a, "instance_id", None) or "",
                     "status": getattr(a, "status", None) or "",
-                    "reward": getattr(a, "reward", None),
+                    "reward": None if attempt_aborted else getattr(a, "reward", None),
                     "segment_count": len(seg_dicts),
                     "mean_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
                     "segments": seg_dicts,
@@ -270,14 +285,14 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
                     "total_trainable_tokens": int(
                         stats.get("total_trainable_tokens", 0) or 0
                     ),
-                    "reward_bucket": stats.get("reward_bucket") or "none",
+                    "reward_bucket": bucket,
                     "agent_turns": int(getattr(a, "agent_turns", 0) or 0),
                 }
             )
     return out
 
 
-_GROUP_BRIEF_CACHE: Dict[str, Dict[int, Dict[str, str]]] = {}
+_PT_ANNOTATION_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _prompt_text_of(sample: Dict[str, Any]) -> str:
@@ -295,18 +310,50 @@ def _prompt_text_of(sample: Dict[str, Any]) -> str:
     return str(prompt or "").strip()
 
 
-def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
-    """每个 group 取第一条 sample 的题目名和 prompt。结果按 pt 路径缓存。"""
+def _empty_failure_clusters() -> Dict[str, Any]:
+    return {
+        "n_attempts": 0,
+        "n_pass": 0,
+        "n_abort": 0,
+        "n_timeout": 0,
+        "n_fail": 0,
+        "n_other": 0,
+        "n_failure": 0,
+        "n_groups_with_abort": 0,
+        "n_groups_with_failure": 0,
+        "by_category": [],
+        "by_reason": [],
+        "by_group": {},
+        "group_trend": [],
+    }
+
+
+def _load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]:
+    """一次读 pt：group_briefs + 失败情形聚类。按路径缓存。"""
+    empty = {
+        "group_briefs": {},
+        "failure_clusters": _empty_failure_clusters(),
+        "abort_clusters": {
+            "total": 0,
+            "n_groups_with_abort": 0,
+            "by_reason": [],
+            "by_group": {},
+        },
+    }
     if not pt_path:
-        return {}
-    cached = _GROUP_BRIEF_CACHE.get(pt_path)
+        return empty
+    cached = _PT_ANNOTATION_CACHE.get(pt_path)
     if cached is not None:
         return cached
-    briefs: Dict[int, Dict[str, str]] = {}
     try:
-        from utils.rollout_pt_parser import load_pt
+        from utils.rollout_pt_parser import (
+            cluster_abort_reasons,
+            cluster_attempt_outcomes,
+            load_pt,
+        )
 
         dump = load_pt(pt_path)
+        briefs: Dict[int, Dict[str, str]] = {}
         for sample in dump.get("samples") or []:
             if not isinstance(sample, dict):
                 continue
@@ -319,11 +366,22 @@ def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
                 "title": title,
                 "prompt": _prompt_text_of(sample),
             }
+        failure = cluster_attempt_outcomes(dump)
+        result = {
+            "group_briefs": briefs,
+            "failure_clusters": failure,
+            "abort_clusters": cluster_abort_reasons(dump),
+        }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("读取 group prompt 失败 pt={}: {}", pt_path, exc)
-        briefs = {}
-    _GROUP_BRIEF_CACHE[pt_path] = briefs
-    return briefs
+        logger.warning("读取 pt 注解失败 pt={}: {}", pt_path, exc)
+        result = empty
+    _PT_ANNOTATION_CACHE[pt_path] = result
+    return result
+
+
+def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
+    """每个 group 取第一条 sample 的题目名和 prompt。结果按 pt 路径缓存。"""
+    return _load_pt_annotations(pt_path).get("group_briefs") or {}
 
 
 def _attempt_segment_count(attempt: Dict[str, Any]) -> int:
@@ -340,18 +398,33 @@ def _attempt_segment_count(attempt: Dict[str, Any]) -> int:
         return 0
 
 
-def _group_outcome(all_zero: int, all_one: int, mixed: int, none: int, n_attempts: int) -> str:
+_ABORT_STATUS_SET = frozenset(
+    {"aborted", "abort", "cancelled", "canceled", "invalid", "failed_infra"}
+)
+
+
+def _group_outcome(
+    all_zero: int,
+    all_one: int,
+    mixed: int,
+    none: int,
+    aborted: int,
+    n_attempts: int,
+) -> str:
     """组级结果标签（与 attempt 级 bucket 正交）。
 
+    - has_abort：组内存在 abort / 不可测 attempt（优先于其它标签，UI 标红）
     - all_pass：全部 attempt 都是全1
     - all_fail：全部 attempt 都是全0
-    - split：组内既有全0又有全1（跨 attempt 分化；用户口中的「混合奖励」多指这个）
+    - split：组内既有全0又有全1（跨 attempt 分化；UI 标绿）
     - seg_mixed：存在段内混合 attempt（单次 attempt 内 segment reward 不一致）
     - empty：全无数字 reward
     - other：其余组合（如仅全1+无）
     """
     if n_attempts <= 0:
         return "empty"
+    if aborted > 0:
+        return "has_abort"
     if none == n_attempts:
         return "empty"
     if all_one == n_attempts:
@@ -371,13 +444,12 @@ def summarize_groups(
 ) -> List[Dict[str, Any]]:
     """按 group_index 聚合概览行。
 
-    attempt 级计数（满足 ``全0 + 全1 + 段内混合 + 无 = n_attempts``）：
-    - all_zero / all_one / mixed / none —— 来自每个 attempt 的 ``reward_bucket``
-      （mixed = **单次 attempt 内** segment reward 不一致，不是组内分化）
+    attempt 级计数（满足 ``全0 + 全1 + 段内混合 + 无奖励 + abort = n_attempts``）：
+    - all_zero / all_one / mixed / none / aborted —— 来自每个 attempt 的 ``reward_bucket``
+      （mixed = **单次 attempt 内** segment reward 不一致；aborted ≠ 全0）
 
     组级：
-    - outcome —— ``all_pass|all_fail|split|seg_mixed|empty|other``
-      （``split`` = 组内既有全挂又有全过的 attempt，即跨 attempt 分化）
+    - outcome —— ``has_abort|all_pass|all_fail|split|seg_mixed|empty|other``
     """
     briefs = group_briefs or {}
     by_gi: Dict[int, List[Dict[str, Any]]] = {}
@@ -394,11 +466,14 @@ def summarize_groups(
     rows: List[Dict[str, Any]] = []
     for gi in sorted(by_gi):
         items = by_gi[gi]
-        azero = aone = amixed = anone = 0
+        azero = aone = amixed = anone = aborted = 0
         n_segments = 0
         for a in items:
             b = str(a.get("reward_bucket") or "none").lower()
-            if b == "all_zero":
+            status = str(a.get("status") or "").split(".")[-1].lower()
+            if b == "aborted" or status in _ABORT_STATUS_SET:
+                aborted += 1
+            elif b == "all_zero":
                 azero += 1
             elif b == "all_one":
                 aone += 1
@@ -427,7 +502,10 @@ def summarize_groups(
                 "all_one": aone,
                 "mixed": amixed,
                 "none": anone,
-                "outcome": _group_outcome(azero, aone, amixed, anone, n_attempts),
+                "aborted": aborted,
+                "outcome": _group_outcome(
+                    azero, aone, amixed, anone, aborted, n_attempts
+                ),
             }
         )
     return rows
@@ -458,6 +536,15 @@ async def page_rollout_detail(
     distinct_groups: List[int] = []
     group_briefs: Dict[int, Dict[str, str]] = {}
     group_summaries: List[Dict[str, Any]] = []
+    abort_clusters: Dict[str, Any] = {
+        "total": 0,
+        "n_groups_with_abort": 0,
+        "by_reason": [],
+        "by_group": {},
+    }
+    abort_clusters_view: Dict[str, Any] = abort_clusters
+    failure_clusters: Dict[str, Any] = _empty_failure_clusters()
+    failure_clusters_view: Dict[str, Any] = failure_clusters
 
     if Rollout is None or Session is None:
         warning = "Rollout 模型尚未就绪"
@@ -498,7 +585,12 @@ async def page_rollout_detail(
                             )
                     else:
                         filtered_attempts = attempts
-                    group_briefs = _group_briefs(rollout.get("pt_path"))
+                    annotations = _load_pt_annotations(rollout.get("pt_path"))
+                    group_briefs = annotations.get("group_briefs") or {}
+                    abort_clusters = annotations.get("abort_clusters") or abort_clusters
+                    failure_clusters = (
+                        annotations.get("failure_clusters") or failure_clusters
+                    )
                     for a in attempts:
                         gi = a.get("group_index")
                         brief = group_briefs.get(gi) if isinstance(gi, int) else None
@@ -510,6 +602,93 @@ async def page_rollout_detail(
                                 "prompt": "",
                             }
                     group_summaries = summarize_groups(attempts, group_briefs)
+                    # 对齐任务页 rollout 列表：每组补 通过/abort/超时/正常失败/有效/mean_reward
+                    try:
+                        from db.db_attempt_service import DBAttemptService
+
+                        biz_rid = rollout.get("rollout_id")
+                        tid = rollout.get("task_id")
+                        if tid is not None and biz_rid is not None:
+                            g_metrics = DBAttemptService.summarize_reward_metrics_by_group(
+                                int(tid), int(biz_rid)
+                            )
+                            for gs in group_summaries:
+                                gi = gs.get("group_index")
+                                m = g_metrics.get(int(gi), {}) if gi is not None else {}
+                                gs["n_passed"] = int(m.get("n_passed", 0))
+                                gs["n_aborted"] = int(m.get("n_aborted", 0))
+                                gs["n_timeout"] = int(m.get("n_timeout", 0))
+                                gs["n_failed"] = int(m.get("n_failed", 0))
+                                gs["n_other"] = int(m.get("n_other", 0))
+                                gs["is_valid"] = bool(m.get("is_valid", False))
+                                gs["mean_reward"] = m.get("mean_reward")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "聚合 group reward 指标失败 rollout_pk={}: {}",
+                            rollout_id,
+                            exc,
+                        )
+                    # 组过滤时：柱状图只展示该组失败分布
+                    if group is not None:
+                        gi = int(group)
+                        g_info = (abort_clusters.get("by_group") or {}).get(gi) or {
+                            "total": 0,
+                            "by_reason": [],
+                        }
+                        abort_clusters_view = {
+                            "total": int(g_info.get("total") or 0),
+                            "n_groups_with_abort": 1 if g_info.get("total") else 0,
+                            "by_reason": g_info.get("by_reason") or [],
+                            "by_group": {gi: g_info},
+                            "scope": "group",
+                            "group_index": gi,
+                        }
+                        f_info = (failure_clusters.get("by_group") or {}).get(gi) or {
+                            "n_attempts": 0,
+                            "n_pass": 0,
+                            "n_abort": 0,
+                            "n_timeout": 0,
+                            "n_fail": 0,
+                            "n_other": 0,
+                            "n_failure": 0,
+                            "by_category": [],
+                            "by_reason": [],
+                        }
+                        failure_clusters_view = {
+                            **f_info,
+                            "n_groups_with_abort": 1
+                            if int(f_info.get("n_abort") or 0)
+                            else 0,
+                            "n_groups_with_failure": 1
+                            if int(f_info.get("n_failure") or 0)
+                            else 0,
+                            "by_group": {gi: f_info},
+                            "group_trend": [
+                                {
+                                    "group_index": gi,
+                                    "n_attempts": int(f_info.get("n_attempts") or 0),
+                                    "n_pass": int(f_info.get("n_pass") or 0),
+                                    "n_abort": int(f_info.get("n_abort") or 0),
+                                    "n_timeout": int(f_info.get("n_timeout") or 0),
+                                    "n_fail": int(f_info.get("n_fail") or 0),
+                                    "n_other": int(f_info.get("n_other") or 0),
+                                    "n_failure": int(f_info.get("n_failure") or 0),
+                                    "fail_rate_pct": round(
+                                        100.0
+                                        * int(f_info.get("n_failure") or 0)
+                                        / max(int(f_info.get("n_attempts") or 0), 1),
+                                        1,
+                                    ),
+                                }
+                            ],
+                            "scope": "group",
+                            "group_index": gi,
+                        }
+                    else:
+                        abort_clusters_view = dict(abort_clusters)
+                        abort_clusters_view["scope"] = "rollout"
+                        failure_clusters_view = dict(failure_clusters)
+                        failure_clusters_view["scope"] = "rollout"
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 rollout 详情失败 rollout_id={}: {}", rollout_id, exc)
             warning = f"加载失败: {exc}"
@@ -527,6 +706,8 @@ async def page_rollout_detail(
             "current_group": group,
             "group_briefs": group_briefs,
             "group_summaries": group_summaries,
+            "abort_clusters": abort_clusters_view,
+            "failure_clusters": failure_clusters_view,
             "warning": warning,
         },
     )
@@ -573,6 +754,12 @@ async def api_get_rollout_json(
                 }
             ),
             "group_summaries": summarize_groups(all_attempts),
+            "abort_clusters": _load_pt_annotations(
+                data["rollout"].get("pt_path")
+            ).get("abort_clusters"),
+            "failure_clusters": _load_pt_annotations(
+                data["rollout"].get("pt_path")
+            ).get("failure_clusters"),
             "attempts": [
                 {
                     "primary_id": a["primary_id"],

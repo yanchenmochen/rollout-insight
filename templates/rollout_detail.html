@@ -85,18 +85,125 @@
     .badge.bucket-all_one { background: #cde7d6; color: var(--ri-success); }
     .badge.bucket-mixed { background: #f0e2c5; color: #8a5a12; }
     .badge.bucket-none { background: #e0e0e0; color: #424242; }
+    .badge.bucket-aborted { background: #f8d7da; color: #842029; }
     .badge.outcome-all_pass { background: #cde7d6; color: var(--ri-success); }
     .badge.outcome-all_fail { background: #f3c8c8; color: #9b2c2c; }
-    .badge.outcome-split { background: #dde7fb; color: #1e5080; }
+    .badge.outcome-split { background: #cde7d6; color: var(--ri-success); }
+    .badge.outcome-has_abort { background: #f8d7da; color: #842029; }
     .badge.outcome-seg_mixed { background: #f0e2c5; color: #8a5a12; }
     .badge.outcome-empty { background: #e0e0e0; color: #424242; }
     .badge.outcome-other { background: #eef3f8; color: #445566; }
+    .sub-table tbody tr.row-abort { background: #fde8ea; }
+    .sub-table tbody tr.row-split { background: #e8f6ee; }
+    .sub-table tbody tr.row-abort.is-active,
+    .sub-table tbody tr.row-split.is-active { outline: 2px solid var(--ri-accent); }
+    .group-link.has-abort {
+        background: #f8d7da; color: #842029; border: 1px solid #f1aeb5;
+    }
+    .group-link.is-split {
+        background: #cde7d6; color: #1e5c3a; border: 1px solid #a3d4b5;
+    }
+    .group-link.has-abort.active { background: #842029; color: #fff; }
+    .group-link.is-split.active { background: #2d6a4f; color: #fff; }
     .legend-note {
         margin-top: 10px; font-size: 12px; color: var(--ri-muted); line-height: 1.55;
     }
     .legend-note code {
         font-family: ui-monospace, monospace; font-size: 11.5px;
         background: #eef3f8; padding: 1px 5px; border-radius: 3px;
+    }
+
+    /* 失败情形 / abort 柱状图 */
+    .abort-chart { margin-top: 8px; }
+    .abort-bar-row {
+        display: grid;
+        grid-template-columns: minmax(140px, 2fr) 1fr 48px;
+        gap: 10px;
+        align-items: center;
+        margin: 6px 0;
+        font-size: 12.5px;
+    }
+    .abort-bar-label {
+        font-family: ui-monospace, monospace;
+        color: var(--ri-ink);
+        word-break: break-all;
+    }
+    .abort-bar-track {
+        height: 16px;
+        background: #f0f3f6;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .abort-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #e57373, #c62828);
+        border-radius: 4px;
+        min-width: 2px;
+    }
+    .abort-bar-fill.cat-abort { background: linear-gradient(90deg, #e57373, #c62828); }
+    .abort-bar-fill.cat-timeout { background: linear-gradient(90deg, #ffb74d, #ef6c00); }
+    .abort-bar-fill.cat-fail { background: linear-gradient(90deg, #ce93d8, #6a1b9a); }
+    .abort-bar-fill.cat-other { background: linear-gradient(90deg, #90a4ae, #546e7a); }
+    .abort-bar-fill.cat-pass { background: linear-gradient(90deg, #81c784, #2e7d32); }
+    .abort-bar-count {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: #842029;
+    }
+    .abort-meta { font-size: 12px; color: var(--ri-muted); margin-bottom: 8px; }
+    .fail-stat-row {
+        display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px;
+    }
+    .fail-stat-chip {
+        display: inline-flex; align-items: baseline; gap: 6px;
+        padding: 4px 10px; border-radius: 4px; font-size: 12px;
+        background: #f5f5f5; border: 1px solid #e0e0e0;
+    }
+    .fail-stat-chip strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+    .fail-stat-chip.chip-abort { border-color: #ffcdd2; background: #ffebee; color: #c62828; }
+    .fail-stat-chip.chip-timeout { border-color: #ffe0b2; background: #fff3e0; color: #ef6c00; }
+    .fail-stat-chip.chip-fail { border-color: #e1bee7; background: #f3e5f5; color: #6a1b9a; }
+    .fail-stat-chip.chip-pass { border-color: #c8e6c9; background: #e8f5e9; color: #2e7d32; }
+    .fail-stat-chip.chip-other { border-color: #cfd8dc; background: #eceff1; color: #546e7a; }
+    .trend-stack {
+        display: flex; height: 14px; width: 100%;
+        border-radius: 3px; overflow: hidden; background: #eceff1;
+    }
+    .trend-seg { height: 100%; min-width: 0; }
+    .trend-seg.cat-abort { background: #e53935; }
+    .trend-seg.cat-timeout { background: #fb8c00; }
+    .trend-seg.cat-fail { background: #8e24aa; }
+    .trend-seg.cat-other { background: #78909c; }
+    .trend-seg.cat-pass { background: #43a047; }
+    .fail-subhead {
+        margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--ri-text);
+    }
+    .pie-layout {
+        display: flex; flex-wrap: wrap; gap: 24px; align-items: center;
+        margin: 10px 0 14px;
+    }
+    .pie-chart {
+        width: 160px; height: 160px; border-radius: 50%;
+        flex: 0 0 auto;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+    }
+    .pie-legend {
+        list-style: none; margin: 0; padding: 0; font-size: 13px;
+    }
+    .pie-legend li {
+        display: flex; align-items: center; gap: 8px;
+        margin: 6px 0; color: var(--ri-ink);
+    }
+    .pie-legend .swatch {
+        width: 12px; height: 12px; border-radius: 2px; flex: 0 0 auto;
+    }
+    .pie-legend .cnt {
+        margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700;
+        min-width: 36px; text-align: right;
+    }
+    .pie-legend .pct {
+        color: var(--ri-muted); font-size: 12px; min-width: 42px; text-align: right;
     }
 
     .tree-body { padding: 10px 16px 14px; border-top: 1px dashed #e4e8ec; background: #ffffff; }
@@ -264,7 +371,7 @@
 </div>
 
 <div class="section" id="group-overview">
-    <h2>Group 概览 <small>{{ group_summaries | length }} 个 group</small></h2>
+    <h2>Group 列表概览 <small>{{ group_summaries | length }} 个 group</small></h2>
     <table class="sub-table">
         <thead>
             <tr>
@@ -272,65 +379,264 @@
                 <th>instance / title</th>
                 <th class="col-num" title="该 group 的 attempt 数">attempts</th>
                 <th class="col-num" title="该 group 下全部 attempt 的 segment 总数">segments</th>
-                <th title="组级结果：全过 / 全挂 / 分化 / 段内混合 / 无数据">组结果</th>
-                <th class="col-num" title="attempt 内所有 segment reward 均为 0">全0</th>
-                <th class="col-num" title="attempt 内所有 segment reward 均为 1">全1</th>
-                <th class="col-num" title="单次 attempt 内 segment reward 不一致（≠组内分化）">段内混合</th>
-                <th class="col-num" title="该 attempt 没有任何数字 reward">无奖励</th>
+                <th class="col-num" title="可测且 reward=1">通过</th>
+                <th class="col-num" title="可测且 reward=0">正常失败</th>
+                <th class="col-num" title="status=truncated / timeout">超时</th>
+                <th class="col-num" title="abort / 不可测">abort</th>
+                <th class="col-num" title="去掉 abort/超时 后仍有过有挂 → 有效组">有效</th>
+                <th class="col-num" title="组内可测 reward 均值">mean_reward</th>
+                <th title="组级结果标签">组结果</th>
             </tr>
         </thead>
         <tbody>
             {% if group_summaries %}
                 {% for g in group_summaries %}
-                <tr class="{% if current_group == g.group_index %}is-active{% endif %}">
+                <tr class="{% if current_group == g.group_index %}is-active{% endif %} {% if g.outcome == 'has_abort' %}row-abort{% elif g.outcome == 'split' or g.is_valid %}row-split{% endif %}">
                     <td class="col-id">
                         <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ g.group_index }}"
                            title="只看该 group">{{ g.group_index }}</a>
                     </td>
                     <td class="col-title" title="{{ g.title or '' }}">{{ g.title or '-' }}</td>
                     <td class="col-num">{{ g.n_attempts }}</td>
-                    <td class="col-num"><strong>{{ g.n_segments }}</strong></td>
+                    <td class="col-num">{{ g.n_segments }}</td>
+                    <td class="col-num"><strong>{{ g.n_passed if g.n_passed is not none else g.all_one }}</strong></td>
+                    <td class="col-num">{{ g.n_failed if g.n_failed is not none else g.all_zero }}</td>
+                    <td class="col-num">{{ g.n_timeout if g.n_timeout is not none else 0 }}</td>
+                    <td class="col-num">{{ g.n_aborted if g.n_aborted is not none else g.aborted }}</td>
+                    <td class="col-num">{% if g.is_valid %}是{% else %}—{% endif %}</td>
+                    <td class="col-num">
+                        {% if g.mean_reward is not none %}{{ "%.4f"|format(g.mean_reward) }}{% else %}-{% endif %}
+                    </td>
                     <td>
-                        {% if g.outcome == 'all_pass' %}
-                            <span class="badge outcome-all_pass" title="全部 attempt 都是全1">全过</span>
+                        {% if g.outcome == 'has_abort' %}
+                            <span class="badge outcome-has_abort" title="组内存在 abort / 不可测 attempt">含abort</span>
+                        {% elif g.outcome == 'all_pass' %}
+                            <span class="badge outcome-all_pass">全过</span>
                         {% elif g.outcome == 'all_fail' %}
-                            <span class="badge outcome-all_fail" title="全部 attempt 都是全0">全挂</span>
+                            <span class="badge outcome-all_fail">全挂</span>
                         {% elif g.outcome == 'split' %}
-                            <span class="badge outcome-split" title="组内既有全0又有全1的 attempt（跨 attempt 分化）">分化</span>
+                            <span class="badge outcome-split" title="组内既有全0又有全1">分化</span>
                         {% elif g.outcome == 'seg_mixed' %}
-                            <span class="badge outcome-seg_mixed" title="存在段内混合的 attempt">含段混</span>
+                            <span class="badge outcome-seg_mixed">含段混</span>
                         {% elif g.outcome == 'empty' %}
-                            <span class="badge outcome-empty" title="无数字 reward">无数据</span>
+                            <span class="badge outcome-empty">无数据</span>
                         {% else %}
                             <span class="badge outcome-other">其它</span>
                         {% endif %}
                     </td>
-                    <td class="col-num">
-                        <span class="badge bucket-all_zero" title="全0 attempt 数">×{{ g.all_zero }}</span>
-                    </td>
-                    <td class="col-num">
-                        <span class="badge bucket-all_one" title="全1 attempt 数">×{{ g.all_one }}</span>
-                    </td>
-                    <td class="col-num">
-                        <span class="badge bucket-mixed" title="段内混合 attempt 数">×{{ g.mixed }}</span>
-                    </td>
-                    <td class="col-num">
-                        <span class="badge bucket-none" title="无数字 reward 的 attempt 数">×{{ g.none }}</span>
-                    </td>
                 </tr>
                 {% endfor %}
             {% else %}
-                <tr><td colspan="9" class="empty-row">暂无 group 数据</td></tr>
+                <tr><td colspan="11" class="empty-row">暂无 group 数据</td></tr>
             {% endif %}
         </tbody>
     </table>
     <p class="legend-note">
-        <strong>计数恒等式</strong>：<code>全0 + 全1 + 段内混合 + 无奖励 = attempts</code>。
-        <strong>全0/全1</strong> = 该次 attempt 下所有 segment 的 reward 全是 0 / 全是 1；
-        <strong>段内混合</strong> = 同一次 attempt 内 segment reward 不一致；
-        <strong>无奖励</strong> = 该 attempt 没有任何数字 reward。
-        <strong>组结果·分化</strong> = 组内既有全挂 attempt 又有全过 attempt（如 全0×6 + 全1×2），这是跨 attempt 分化，不是「段内混合」。
+        列语义与任务页 <strong>Rollout 列表</strong>对齐：
+        <strong>通过</strong>=reward=1；
+        <strong>正常失败</strong>=可测 reward=0；
+        <strong>超时</strong>=status=truncated；
+        <strong>abort</strong>=不可测；
+        <strong>有效</strong>=去掉 abort/超时后仍「有过有挂」（对应 filtered 保留组）。
+        展开下方可看旧版 全0/全1/段混 细分。
     </p>
+    <details style="margin-top:8px;">
+        <summary style="cursor:pointer; font-size:13px; color:var(--ri-muted);">展开 attempt 桶细分（全0 / 全1 / 段内混合 / 无奖励）</summary>
+        <table class="sub-table" style="margin-top:8px;">
+            <thead>
+                <tr>
+                    <th class="col-id">group</th>
+                    <th class="col-num">全0</th>
+                    <th class="col-num">全1</th>
+                    <th class="col-num">段内混合</th>
+                    <th class="col-num">abort</th>
+                    <th class="col-num">无奖励</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in group_summaries %}
+                <tr>
+                    <td class="col-id">{{ g.group_index }}</td>
+                    <td class="col-num"><span class="badge bucket-all_zero">×{{ g.all_zero }}</span></td>
+                    <td class="col-num"><span class="badge bucket-all_one">×{{ g.all_one }}</span></td>
+                    <td class="col-num"><span class="badge bucket-mixed">×{{ g.mixed }}</span></td>
+                    <td class="col-num"><span class="badge bucket-aborted">×{{ g.aborted }}</span></td>
+                    <td class="col-num"><span class="badge bucket-none">×{{ g.none }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+</div>
+
+<div class="section" id="failure-clusters">
+    <h2>失败情形聚类
+        <small>
+            {% if failure_clusters and failure_clusters.scope == 'group' %}
+                group {{ failure_clusters.group_index }} · 失败 {{ failure_clusters.n_failure or 0 }} / {{ failure_clusters.n_attempts or 0 }} attempts
+            {% else %}
+                跨组 · 失败 {{ failure_clusters.n_failure or 0 }} / {{ failure_clusters.n_attempts or 0 }} attempts · {{ failure_clusters.n_groups_with_failure or 0 }} 个组有失败
+            {% endif %}
+        </small>
+    </h2>
+    {% if failure_clusters and failure_clusters.scope == 'group' %}
+        <p class="abort-meta">
+            当前为 <strong>组内</strong> 失败分布（abort / 超时 / 正常失败）。
+            <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}">查看整次 rollout 跨组统计</a>
+        </p>
+    {% else %}
+        <p class="abort-meta">当前为 <strong>整次 rollout 跨组</strong> 统计；点上方某个 group 过滤后，本图会切到该组分布。</p>
+    {% endif %}
+
+    {% if failure_clusters and (failure_clusters.n_attempts or 0) > 0 %}
+        <div class="fail-stat-row">
+            <span class="fail-stat-chip chip-abort" title="沙箱/基础设施 abort">abort <strong>{{ failure_clusters.n_abort or 0 }}</strong></span>
+            <span class="fail-stat-chip chip-timeout" title="截断 / 上下文打满 / 超时">超时 <strong>{{ failure_clusters.n_timeout or 0 }}</strong></span>
+            <span class="fail-stat-chip chip-fail" title="可测 reward=0（评测失败）">正常失败 <strong>{{ failure_clusters.n_fail or 0 }}</strong></span>
+            <span class="fail-stat-chip chip-pass" title="可测 reward=1">通过 <strong>{{ failure_clusters.n_pass or 0 }}</strong></span>
+            {% if (failure_clusters.n_other or 0) > 0 %}
+            <span class="fail-stat-chip chip-other">其它 <strong>{{ failure_clusters.n_other }}</strong></span>
+            {% endif %}
+        </div>
+
+        {# 饼图：按大类占比；conic-gradient 切片累计百分比 #}
+        {% set _pie_n = failure_clusters.n_attempts or 1 %}
+        {% set _p_pass = (100.0 * (failure_clusters.n_pass or 0) / _pie_n) | round(2) %}
+        {% set _p_fail = (100.0 * (failure_clusters.n_fail or 0) / _pie_n) | round(2) %}
+        {% set _p_timeout = (100.0 * (failure_clusters.n_timeout or 0) / _pie_n) | round(2) %}
+        {% set _p_abort = (100.0 * (failure_clusters.n_abort or 0) / _pie_n) | round(2) %}
+        {% set _p_other = (100.0 * (failure_clusters.n_other or 0) / _pie_n) | round(2) %}
+        {% set _a0 = 0 %}
+        {% set _a1 = _a0 + _p_pass %}
+        {% set _a2 = _a1 + _p_fail %}
+        {% set _a3 = _a2 + _p_timeout %}
+        {% set _a4 = _a3 + _p_abort %}
+        <div class="fail-subhead">失败类型分布（饼图）</div>
+        <div class="pie-layout">
+            <div class="pie-chart" style="background: conic-gradient(
+                #2e7d32 {{ _a0 }}% {{ _a1 }}%,
+                #a5d6a7 {{ _a1 }}% {{ _a2 }}%,
+                #fb8c00 {{ _a2 }}% {{ _a3 }}%,
+                #e53935 {{ _a3 }}% {{ _a4 }}%,
+                #78909c {{ _a4 }}% 100%
+            );" title="通过 {{ failure_clusters.n_pass or 0 }} · 正常失败 {{ failure_clusters.n_fail or 0 }} · 超时 {{ failure_clusters.n_timeout or 0 }} · abort {{ failure_clusters.n_abort or 0 }}"></div>
+            <ul class="pie-legend">
+                <li><span class="swatch" style="background:#2e7d32;"></span>通过<span class="cnt">{{ failure_clusters.n_pass or 0 }}</span><span class="pct">{{ _p_pass }}%</span></li>
+                <li><span class="swatch" style="background:#a5d6a7;"></span>正常失败<span class="cnt">{{ failure_clusters.n_fail or 0 }}</span><span class="pct">{{ _p_fail }}%</span></li>
+                <li><span class="swatch" style="background:#fb8c00;"></span>超时/截断<span class="cnt">{{ failure_clusters.n_timeout or 0 }}</span><span class="pct">{{ _p_timeout }}%</span></li>
+                <li><span class="swatch" style="background:#e53935;"></span>abort<span class="cnt">{{ failure_clusters.n_abort or 0 }}</span><span class="pct">{{ _p_abort }}%</span></li>
+                {% if (failure_clusters.n_other or 0) > 0 %}
+                <li><span class="swatch" style="background:#78909c;"></span>其它<span class="cnt">{{ failure_clusters.n_other }}</span><span class="pct">{{ _p_other }}%</span></li>
+                {% endif %}
+            </ul>
+        </div>
+
+        <div class="fail-subhead">大类占比（柱图，含通过）</div>
+        <div class="abort-chart">
+            {% for row in failure_clusters.by_category %}
+            <div class="abort-bar-row" title="{{ row.category }} · {{ row.count }} ({{ row.pct }}%)">
+                <div class="abort-bar-label">
+                    {% if row.category == 'abort' %}abort（基础设施）
+                    {% elif row.category == 'timeout' %}超时 / 截断
+                    {% elif row.category == 'fail' %}正常失败（reward=0）
+                    {% elif row.category == 'pass' %}通过
+                    {% elif row.category == 'other' %}其它
+                    {% else %}{{ row.category }}{% endif %}
+                </div>
+                <div class="abort-bar-track">
+                    <div class="abort-bar-fill cat-{{ row.category }}" style="width: {{ row.pct }}%;"></div>
+                </div>
+                <div class="abort-bar-count">{{ row.count }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if failure_clusters.by_reason %}
+        <div class="fail-subhead">失败根因（不含通过）</div>
+        <div class="abort-chart">
+            {% for row in failure_clusters.by_reason %}
+            <div class="abort-bar-row" title="{{ row.label }} · {{ row.count }} ({{ row.pct }}%)">
+                <div class="abort-bar-label">{{ row.label }}</div>
+                <div class="abort-bar-track">
+                    <div class="abort-bar-fill cat-{{ row.category }}" style="width: {{ row.pct }}%;"></div>
+                </div>
+                <div class="abort-bar-count">{{ row.count }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if failure_clusters.scope != 'group' and failure_clusters.group_trend %}
+        <div class="fail-subhead">跨组失败趋势（每组构成）</div>
+        <table class="sub-table" style="margin-top:4px;">
+            <thead>
+                <tr>
+                    <th class="col-id">group</th>
+                    <th>构成</th>
+                    <th class="col-num">失败率</th>
+                    <th class="col-num">abort</th>
+                    <th class="col-num">超时</th>
+                    <th class="col-num">正常失败</th>
+                    <th class="col-num">通过</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in failure_clusters.group_trend %}
+                {% set n = row.n_attempts or 1 %}
+                <tr>
+                    <td class="col-id">
+                        <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ row.group_index }}">{{ row.group_index }}</a>
+                    </td>
+                    <td>
+                        <div class="trend-stack" title="abort {{ row.n_abort }} / 超时 {{ row.n_timeout }} / 失败 {{ row.n_fail }} / 通过 {{ row.n_pass }}">
+                            {% if row.n_abort %}<span class="trend-seg cat-abort" style="width: {{ (100.0 * row.n_abort / n)|round(1) }}%;"></span>{% endif %}
+                            {% if row.n_timeout %}<span class="trend-seg cat-timeout" style="width: {{ (100.0 * row.n_timeout / n)|round(1) }}%;"></span>{% endif %}
+                            {% if row.n_fail %}<span class="trend-seg cat-fail" style="width: {{ (100.0 * row.n_fail / n)|round(1) }}%;"></span>{% endif %}
+                            {% if row.n_other %}<span class="trend-seg cat-other" style="width: {{ (100.0 * row.n_other / n)|round(1) }}%;"></span>{% endif %}
+                            {% if row.n_pass %}<span class="trend-seg cat-pass" style="width: {{ (100.0 * row.n_pass / n)|round(1) }}%;"></span>{% endif %}
+                        </div>
+                    </td>
+                    <td class="col-num">{{ row.fail_rate_pct }}%</td>
+                    <td class="col-num">{{ row.n_abort }}</td>
+                    <td class="col-num">{{ row.n_timeout }}</td>
+                    <td class="col-num">{{ row.n_fail }}</td>
+                    <td class="col-num">{{ row.n_pass }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if failure_clusters.scope != 'group' and failure_clusters.by_group %}
+        <details style="margin-top:12px;">
+            <summary style="cursor:pointer; font-size:13px; color:var(--ri-muted);">按 group 展开失败根因</summary>
+            <table class="sub-table" style="margin-top:8px;">
+                <thead>
+                    <tr>
+                        <th class="col-id">group</th>
+                        <th>主要根因</th>
+                        <th class="col-num">失败数</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for gi, ginfo in failure_clusters.by_group.items() %}
+                    <tr>
+                        <td class="col-id">
+                            <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ gi }}">{{ gi }}</a>
+                        </td>
+                        <td class="col-title" title="{{ ginfo.by_reason[0].label if ginfo.by_reason else '' }}">
+                            {% if ginfo.by_reason %}{{ ginfo.by_reason[0].label }}{% if ginfo.by_reason|length > 1 %} 等 {{ ginfo.by_reason|length }} 类{% endif %}{% else %}-{% endif %}
+                        </td>
+                        <td class="col-num">{{ ginfo.n_failure }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+        {% endif %}
+    {% else %}
+        <div class="empty-inline">本范围内无 attempt 可分析</div>
+    {% endif %}
 </div>
 
 <div class="section">
@@ -344,9 +650,10 @@
             按 group 过滤:
             <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}"
                class="group-link {% if current_group is none %}active{% endif %}">全部</a>
-            {% for g in distinct_groups %}
-                <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ g }}"
-                   class="group-link {% if current_group == g %}active{% endif %}">group {{ g }}</a>
+            {% for gs in group_summaries %}
+                <a href="/api/tasks/{{ task.id if task else 0 }}/rollouts/{{ rollout.id }}?group={{ gs.group_index }}"
+                   class="group-link {% if current_group == gs.group_index %}active{% endif %} {% if gs.outcome == 'has_abort' %}has-abort{% elif gs.outcome == 'split' %}is-split{% endif %}"
+                   title="{% if gs.outcome == 'has_abort' %}含 abort{% elif gs.outcome == 'split' %}有0有1（分化）{% else %}{{ gs.title }}{% endif %}">group {{ gs.group_index }}</a>
             {% endfor %}
         </span>
     </div>
@@ -371,7 +678,7 @@
                     {% endif %}
                 {% endfor %}
                 {% set brief = (group_briefs or {}).get(gi, {}) %}
-                <details class="tree group-row" open id="group-{{ gi }}">
+                <details class="tree group-row" id="group-{{ gi }}">
                     <summary>
                         <span class="sum-title">group <strong>{{ gi }}</strong>
                             {% if gs.title %} · {{ gs.title }}{% elif brief.title %} · {{ brief.title }}{% endif %}
@@ -381,7 +688,9 @@
                             &nbsp;·&nbsp;
                             <span class="stat-chip" title="该 group 下全部 attempt 的 segment 总数">segments <strong>{{ gs.n_segments }}</strong></span>
                             &nbsp;·&nbsp;
-                            {% if gs.outcome == 'all_pass' %}
+                            {% if gs.outcome == 'has_abort' %}
+                                <span class="badge outcome-has_abort">含abort</span>
+                            {% elif gs.outcome == 'all_pass' %}
                                 <span class="badge outcome-all_pass">全过</span>
                             {% elif gs.outcome == 'all_fail' %}
                                 <span class="badge outcome-all_fail">全挂</span>
@@ -395,10 +704,11 @@
                                 <span class="badge outcome-other">其它</span>
                             {% endif %}
                             &nbsp;·&nbsp;
-                            <span class="badge bucket-all_zero" title="attempt 内所有 segment 都是 0">全0 ×{{ gs.all_zero }}</span>
-                            <span class="badge bucket-all_one" title="attempt 内所有 segment 都是 1">全1 ×{{ gs.all_one }}</span>
+                            <span class="badge bucket-all_zero" title="可测 attempt 全 0">全0 ×{{ gs.all_zero }}</span>
+                            <span class="badge bucket-all_one" title="可测 attempt 全 1">全1 ×{{ gs.all_one }}</span>
                             <span class="badge bucket-mixed" title="单次 attempt 内 segment reward 不一致">段混 ×{{ gs.mixed }}</span>
-                            <span class="badge bucket-none" title="没有任何数字 reward">无 ×{{ gs.none }}</span>
+                            <span class="badge bucket-aborted" title="abort / 不可测">abort ×{{ gs.aborted }}</span>
+                            <span class="badge bucket-none" title="其它无数字 reward">无 ×{{ gs.none }}</span>
                         </span>
                     </summary>
                     <div class="tree-body">

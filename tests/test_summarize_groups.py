@@ -56,6 +56,7 @@ class TestSummarizeGroups(unittest.TestCase):
             g7["n_attempts"],
         )
         self.assertEqual(g7["outcome"], "other")  # 全1 + 无，无跨 attempt 分化
+        self.assertEqual(g7.get("aborted", 0), 0)
 
         g10 = rows[1]
         self.assertEqual(g10["title"], "repo_pr1")
@@ -66,8 +67,13 @@ class TestSummarizeGroups(unittest.TestCase):
         self.assertEqual(g10["all_one"], 1)
         self.assertEqual(g10["mixed"], 1)
         self.assertEqual(g10["none"], 0)
+        self.assertEqual(g10["aborted"], 0)
         self.assertEqual(
-            g10["all_zero"] + g10["all_one"] + g10["mixed"] + g10["none"],
+            g10["all_zero"]
+            + g10["all_one"]
+            + g10["mixed"]
+            + g10["none"]
+            + g10["aborted"],
             g10["n_attempts"],
         )
         self.assertEqual(g10["outcome"], "split")  # 既有全0又有全1
@@ -93,10 +99,49 @@ class TestSummarizeGroups(unittest.TestCase):
         self.assertEqual(g["all_one"], 2)
         self.assertEqual(g["mixed"], 0)
         self.assertEqual(g["none"], 0)
+        self.assertEqual(g["aborted"], 0)
         self.assertEqual(g["outcome"], "split")
         self.assertEqual(
-            g["all_zero"] + g["all_one"] + g["mixed"] + g["none"], g["n_attempts"]
+            g["all_zero"] + g["all_one"] + g["mixed"] + g["none"] + g["aborted"],
+            g["n_attempts"],
         )
+
+    def test_abort_not_counted_as_all_zero(self):
+        """g1/g13：abort 不得折成全0；outcome=has_abort。"""
+        # g1: 7×全0 + 1×abort
+        g1 = (
+            [{"group_index": 1, "reward_bucket": "all_zero", "segment_count": 1}] * 7
+            + [
+                {
+                    "group_index": 1,
+                    "reward_bucket": "aborted",
+                    "status": "aborted",
+                    "segment_count": 1,
+                }
+            ]
+        )
+        # g13: 7×全1 + 1×abort（旧逻辑会误报分化 全0×1）
+        g13 = (
+            [{"group_index": 13, "reward_bucket": "all_one", "segment_count": 1}] * 7
+            + [
+                {
+                    "group_index": 13,
+                    "status": "aborted",
+                    "reward_bucket": "all_zero",  # 旧错误桶；应用 status 纠正
+                    "segment_count": 1,
+                }
+            ]
+        )
+        rows = {r["group_index"]: r for r in summarize_groups(g1 + g13)}
+        self.assertEqual(rows[1]["all_zero"], 7)
+        self.assertEqual(rows[1]["aborted"], 1)
+        self.assertEqual(rows[1]["all_one"], 0)
+        self.assertEqual(rows[1]["outcome"], "has_abort")
+        self.assertEqual(rows[13]["all_one"], 7)
+        self.assertEqual(rows[13]["aborted"], 1)
+        self.assertEqual(rows[13]["all_zero"], 0)
+        self.assertEqual(rows[13]["outcome"], "has_abort")
+
 
     def test_skips_missing_group_index(self):
         rows = summarize_groups(
