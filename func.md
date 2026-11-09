@@ -103,6 +103,11 @@
 ### `utils/rollout_pt_parser.py`
 
 - `def load_pt(path: str) -> Dict[str, Any]` — 加载 .pt dump：优先 zip/pickle，不要求环境能 ``import torch``。
+- `def resolve_sample_reward(sample: Dict[str, Any]) -> Optional[float]` — 解析单条 sample 的可测 reward。
+- `def sample_abort_reason(sample: Dict[str, Any]) -> Optional[str]` — 若 sample 为 abort，返回聚类用原因字符串；否则 None。
+- `def cluster_abort_reasons(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[str…` — 对 dump 内 abort attempt 按 ``abort_reason`` 聚类（兼容旧调用）。
+- `def classify_sample_outcome(sample: Dict[str, Any]) -> Dict[str, str]` — 把单条 sample 归为 pass / abort / timeout / fail / other。
+- `def cluster_attempt_outcomes(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败情形聚类（abort / timeout / 正常失败 / 通过）。
 - `def samples_index_for(_sample: Dict[str, Any]) -> int` — 占位：见 _segment_payload 中的 try/except；这里返回 0 让 except 兜底。
 - `def parse_attempts_and_segments(dump: Dict[str, Any]) -> Dict[str, Any]` — 把 dump 拆成 attempts + segments + 整文 response。
 - `def split_response_to_turns(response_text: str) -> List[Dict[str, Any]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分整文 response。
@@ -135,6 +140,8 @@
 - `staticmethod` `def get_by_id() -> Optional[DBAttempt]`
 - `staticmethod` `def delete_by_rollout(rollout_id: int) -> int`
 - `staticmethod` `def delete_by_task() -> int`
+- `classmethod` `def summarize_reward_metrics_by_rollout(task_id: int) -> Dict[int, Dict[str, int]]`
+- `classmethod` `def summarize_reward_metrics_by_group(task_id: int, rollout_id: int) -> Dict[int, Dict[str, Any…`
 
 #### `DBNanhuJobService` (`db/db_nanhu_job_service.py`)
 
