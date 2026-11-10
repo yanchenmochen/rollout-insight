@@ -17,7 +17,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
@@ -29,7 +28,6 @@ from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from utils.auth_session import current_user, require_login
 from utils.config_loader import config
-
 # v0.5.1：业务路由统一要求登录（未登录 → 302 或 401，由 require_login 自行判断）
 router = APIRouter(dependencies=[Depends(require_login)])
 
@@ -641,6 +639,37 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
             item["n_failed"] = int(metrics.get("n_failed", 0))
             item["n_other"] = int(metrics.get("n_other", 0))
             item["n_valid_groups"] = int(metrics.get("n_valid_groups", 0))
+            item["n_reward_1"] = int(metrics.get("n_reward_1", 0))
+            item["n_reward_0"] = int(metrics.get("n_reward_0", 0))
+            item["n_no_reward"] = int(metrics.get("n_no_reward", 0))
+            # 柱图分母用 attempt 表实计，不用 dump meta 的 n_attempts（后者偶发偏小）
+            counted = int(metrics.get("n_attempts", 0))
+            item["n_attempts_counted"] = counted
+            item["chart_total"] = max(
+                counted,
+                item["n_passed"]
+                + item["n_failed"]
+                + item["n_timeout"]
+                + item["n_aborted"]
+                + item["n_other"],
+                1,
+            )
+
+        # 类型柱 / 进入训练 / Top 原因：SSR 只出壳，由前端渐进拉 annotations.json
+        for item in rollouts:
+            item["type_segments"] = []
+            item["n_train_kept"] = 0
+            item["n_train_dropped"] = 0
+            item["n_train_samples"] = 0
+            item["train_keep_pct"] = 0.0
+
+        stack_train_stats: Dict[str, Any] = {
+            "n_samples": 0,
+            "n_train_kept": 0,
+            "n_train_dropped": 0,
+            "keep_pct": 0.0,
+            "by_drop_reason": [],
+        }
 
         return templates.TemplateResponse(
             request,
@@ -649,6 +678,12 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
                 "page_title": f"任务 #{task_id} - {obj.task_name}",
                 "task": _task_to_dict(obj),
                 "rollouts": rollouts,
+                "stack_abort_reasons": [],
+                "stack_timeout_reasons": [],
+                "stack_fail_reasons": [],
+                "stack_type_legend": [],
+                "stack_train_stats": stack_train_stats,
+                "annotations_lazy": True,
             },
         )
     except Exception as exc:  # noqa: BLE001
@@ -656,6 +691,24 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"加载任务失败: {exc}"
         ) from exc
+
+
+@router.get("/api/tasks/{task_id}/annotations/meta.json")
+async def api_task_annotations_meta(task_id: int) -> Response:
+    """返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。"""
+    from service.task_annotation_service import list_task_annotation_meta
+
+    data = list_task_annotation_meta(task_id)
+    return Response.success(msg="ok", data=data)
+
+
+@router.get("/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json")
+async def api_rollout_annotations(task_id: int, rollout_pk: int) -> Response:
+    """单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。"""
+    from service.task_annotation_service import get_rollout_annotation_payload
+
+    data = get_rollout_annotation_payload(task_id, rollout_pk)
+    return Response.success(msg="ok", data=data)
 
 
 @router.post("/api/tasks/{task_id}/rescan")

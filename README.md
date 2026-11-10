@@ -93,11 +93,12 @@ rollout-insight/
 | GET  | `/healthz` | 健康检查（返回 version） |
 | GET  | `/api/tasks` | 任务列表（带分页/状态过滤） |
 | POST | `/api/tasks` | 创建任务（form-encoded） |
-| GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染） |
+| GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染；结局/奖励柱 SSR，类型细分渐进加载） |
+| GET  | `/api/tasks/{id}/annotations/meta.json` | 任务详情类型柱渐进加载：待拉取的 rollout 列表 |
+| GET  | `/api/tasks/{id}/rollouts/{rollout_pk}/annotations.json` | 单 rollout 类型柱 / 进入训练 / 失败摘要 |
 | POST | `/api/tasks/{id}/rescan` | 触发 RolloutScanService.rescan_task |
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
-| GET  | `/api/tasks/create` | 渲染 task_create.html |
-| GET  | `/api/segments/search` | Segment 检索（task_id 必填） |
+| GET  | `/api/tasks/create` | 渲染 task_create.html || GET  | `/api/segments/search` | Segment 检索（task_id 必填） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
 | GET  | `/api/segments/{id}/transcript.json` | Segment transcript（JSON） |
 

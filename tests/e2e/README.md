@@ -21,6 +21,7 @@ pytest tests/e2e -m e2e --browser chromium
 | 登录 | `test_auth.py` | `GET /api/auth/me` | JSON 里用户名是 admin |
 | 任务 | `test_tasks.py` | 任务列表 | `#taskTableBody`、筛选表单可见 |
 | 任务 | `test_tasks.py` | 打开第一条任务 | `#rollouts` 可见 |
+| 任务 | `test_tasks.py` | 详情渐进注解 | SSR 有结局柱；发出 `annotations/meta.json` 与 `annotations.json` |
 | 任务 | `test_tasks.py` | 创建页 | 任务名、rollout_root、提交按钮可见（不提交） |
 | Rollout | `test_rollouts.py` | 点任务详情里的 rollout ID | `#treeRoot` 下至少 1 个 group |
 | Rollout | `test_rollouts.py` | 展开 group → attempt | 摘要含 tool；prompt 块可展开 |

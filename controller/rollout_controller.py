@@ -292,97 +292,22 @@ def _load_rollout_full(rollout_pk: int) -> Dict[str, Any]:
     return out
 
 
-_PT_ANNOTATION_CACHE: Dict[str, Dict[str, Any]] = {}
-
-
-def _prompt_text_of(sample: Dict[str, Any]) -> str:
-    prompt = sample.get("prompt") or ""
-    if isinstance(prompt, list):
-        parts: List[str] = []
-        for item in prompt:
-            if isinstance(item, dict):
-                parts.append(str(item.get("content") or item.get("text") or ""))
-            else:
-                parts.append(str(item))
-        return "\n".join(p for p in parts if p).strip()
-    if isinstance(prompt, dict):
-        return str(prompt.get("content") or prompt.get("text") or "").strip()
-    return str(prompt or "").strip()
-
-
 def _empty_failure_clusters() -> Dict[str, Any]:
-    return {
-        "n_attempts": 0,
-        "n_pass": 0,
-        "n_abort": 0,
-        "n_timeout": 0,
-        "n_fail": 0,
-        "n_other": 0,
-        "n_failure": 0,
-        "n_groups_with_abort": 0,
-        "n_groups_with_failure": 0,
-        "by_category": [],
-        "by_reason": [],
-        "by_group": {},
-        "group_trend": [],
-    }
+    from service.task_annotation_service import empty_failure_clusters
+
+    return empty_failure_clusters()
 
 
 def _load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]:
-    """一次读 pt：group_briefs + 失败情形聚类。按路径缓存。"""
-    empty = {
-        "group_briefs": {},
-        "failure_clusters": _empty_failure_clusters(),
-        "abort_clusters": {
-            "total": 0,
-            "n_groups_with_abort": 0,
-            "by_reason": [],
-            "by_group": {},
-        },
-    }
-    if not pt_path:
-        return empty
-    cached = _PT_ANNOTATION_CACHE.get(pt_path)
-    if cached is not None:
-        return cached
-    try:
-        from utils.rollout_pt_parser import (
-            cluster_abort_reasons,
-            cluster_attempt_outcomes,
-            load_pt,
-        )
+    """薄封装：注解加载已下沉到 ``service.task_annotation_service``。"""
+    from service.task_annotation_service import load_pt_annotations
 
-        dump = load_pt(pt_path)
-        briefs: Dict[int, Dict[str, str]] = {}
-        for sample in dump.get("samples") or []:
-            if not isinstance(sample, dict):
-                continue
-            gi = sample.get("group_index")
-            if not isinstance(gi, int) or gi in briefs:
-                continue
-            md = sample.get("metadata") or {}
-            title = str(md.get("instance_id") or sample.get("label") or "").strip()
-            briefs[gi] = {
-                "title": title,
-                "prompt": _prompt_text_of(sample),
-            }
-        failure = cluster_attempt_outcomes(dump)
-        result = {
-            "group_briefs": briefs,
-            "failure_clusters": failure,
-            "abort_clusters": cluster_abort_reasons(dump),
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("读取 pt 注解失败 pt={}: {}", pt_path, exc)
-        result = empty
-    _PT_ANNOTATION_CACHE[pt_path] = result
-    return result
+    return load_pt_annotations(pt_path)
 
 
 def _group_briefs(pt_path: Optional[str]) -> Dict[int, Dict[str, str]]:
     """每个 group 取第一条 sample 的题目名和 prompt。结果按 pt 路径缓存。"""
     return _load_pt_annotations(pt_path).get("group_briefs") or {}
-
 
 def _attempt_segment_count(attempt: Dict[str, Any]) -> int:
     """单个 attempt 的 segment 数；优先用 segment_count，否则回退 len(segments)。"""
@@ -591,6 +516,20 @@ async def page_rollout_detail(
                     failure_clusters = (
                         annotations.get("failure_clusters") or failure_clusters
                     )
+                    outcome_index = annotations.get("attempt_outcomes") or {}
+                    for a in attempts:
+                        gi = a.get("group_index")
+                        aid = a.get("attempt_id")
+                        if isinstance(gi, int) and aid is not None:
+                            try:
+                                info = outcome_index.get((int(gi), int(aid))) or {}
+                            except (TypeError, ValueError):
+                                info = {}
+                            if info:
+                                a["abort_reason"] = info.get("abort_reason")
+                                a["outcome_category"] = info.get("outcome_category")
+                                a["outcome_reason"] = info.get("outcome_reason")
+                                a["outcome_label"] = info.get("outcome_label")
                     for a in attempts:
                         gi = a.get("group_index")
                         brief = group_briefs.get(gi) if isinstance(gi, int) else None

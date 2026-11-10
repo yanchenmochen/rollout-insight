@@ -229,10 +229,15 @@
         color: #856404;
     }
 
-    /* 跨 rollout attempt 堆叠柱图 */
+    /* 跨 rollout attempt 堆叠柱图（每步三柱：结局 / 奖励 / 类型） */
     .stack-legend {
         display: flex; flex-wrap: wrap; gap: 12px;
-        font-size: 12px; color: var(--ri-muted); margin-bottom: 10px;
+        font-size: 12px; color: var(--ri-muted); margin-bottom: 6px;
+    }
+    .stack-legend-block { margin-bottom: 8px; }
+    .stack-legend-title {
+        font-size: 11.5px; font-weight: 600; color: var(--ri-ink);
+        margin-bottom: 4px;
     }
     .stack-legend .lg {
         display: inline-block; width: 12px; height: 12px;
@@ -243,40 +248,136 @@
     .lg-timeout { background: #fb8c00; }
     .lg-abort { background: #e53935; }
     .lg-other { background: #78909c; }
+    .lg-rw1 { background: #1b5e20; }
+    .lg-rw0 { background: #81c784; }
+    .lg-norw { background: #b0bec5; }
     .rollout-stack-chart {
-        display: flex; align-items: flex-end; gap: 6px;
-        min-height: 180px; overflow-x: auto; padding: 4px 2px 0;
-        border-bottom: 1px solid var(--ri-border);
+        display: flex; flex-direction: column; gap: 12px;
+        padding: 6px 0 10px; border-bottom: 1px solid var(--ri-border);
     }
     .stack-col {
-        flex: 0 0 auto; width: 28px;
-        display: flex; flex-direction: column; align-items: center;
+        display: grid;
+        grid-template-columns: 88px minmax(0, 1fr);
+        gap: 10px 12px;
+        align-items: center;
+        width: 100%;
+        min-width: 0;
+    }
+    .stack-row-meta {
+        display: flex; flex-direction: column; gap: 2px;
+        min-width: 0;
+    }
+    .stack-group-bars {
+        display: flex; flex-direction: column; gap: 4px;
+        width: 100%; min-width: 0;
+    }
+    .stack-bar-row {
+        display: flex; align-items: center; gap: 6px; width: 100%;
+    }
+    .stack-bar-row .cap {
+        flex: 0 0 2.5em; width: 2.5em; font-size: 11px; color: var(--ri-muted);
+        text-align: right; line-height: 1.2; white-space: nowrap;
+        overflow: visible; letter-spacing: 0;
     }
     .stack-bar {
-        width: 100%; height: 150px;
-        display: flex; flex-direction: column-reverse;
-        border-radius: 3px 3px 0 0; overflow: hidden;
+        flex: 1 1 auto; width: auto; height: 18px; min-width: 0;
+        display: flex; flex-direction: row;
+        border-radius: 0 3px 3px 0; overflow: hidden;
         background: #f0f3f6;
     }
-    .stack-bar .seg { width: 100%; min-height: 0; }
+    .stack-bar.is-outcome { height: 20px; }
+    .stack-bar .seg {
+        height: 100%; min-width: 0; cursor: default;
+    }
+    .stack-bar .seg:hover {
+        filter: brightness(1.08);
+        outline: 1px solid rgba(0, 0, 0, 0.18);
+        outline-offset: -1px;
+        z-index: 1;
+    }
+    .stack-bar.is-skeleton {
+        position: relative;
+        background: linear-gradient(90deg, #e8ecf0 0%, #f4f6f8 45%, #e8ecf0 90%);
+        background-size: 200% 100%;
+        animation: ri-skel-pulse 1.2s ease-in-out infinite;
+    }
+    .stack-bar.is-skeleton::after {
+        content: "";
+        position: absolute; inset: 0;
+        background: transparent;
+    }
+    @keyframes ri-skel-pulse {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+    }
+    .ann-loading { color: var(--ri-muted); font-size: 12px; }
+    .ann-error { color: #9b2c2c; font-size: 12px; }
+    #stackTypeLegendHost:empty { display: none; }
     .seg-pass { background: #2e7d32; }
     .seg-fail { background: #a5d6a7; }
     .seg-timeout { background: #fb8c00; }
     .seg-abort { background: #e53935; }
     .seg-other { background: #78909c; }
+    .seg-rw1 { background: #1b5e20; }
+    .seg-rw0 { background: #81c784; }
+    .seg-norw { background: #b0bec5; }
     .stack-label {
-        margin-top: 6px; font-size: 11px; font-variant-numeric: tabular-nums;
+        font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
         color: var(--ri-accent); text-decoration: none;
     }
     .stack-label:hover { text-decoration: underline; }
     .stack-sub {
-        font-size: 10px; color: var(--ri-muted); font-variant-numeric: tabular-nums;
+        font-size: 11px; color: var(--ri-muted); font-variant-numeric: tabular-nums;
+        line-height: 1.35;
     }
+    .stack-train {
+        font-size: 11px; color: var(--ri-ink); font-variant-numeric: tabular-nums;
+    }
+    .stack-train em { color: var(--ri-muted); font-style: normal; margin-left: 2px; }
+    .stack-train-summary {
+        margin: 10px 0 8px; padding: 10px 12px;
+        background: #f3f7fb; border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); font-size: 12.5px; line-height: 1.55;
+    }
+    .stack-train-summary strong { color: var(--ri-ink); }
     .empty-inline { color: var(--ri-muted); font-size: 12px; padding: 6px 4px; }
-
+    .stack-explain { margin-top: 4px; }
+    .stack-reason-grid {
+        display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px;
+        margin-top: 4px;
+    }
+    .stack-reason-block {
+        background: #f8fafb; border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); padding: 10px 12px;
+    }
+    .stack-reason-title {
+        font-size: 12.5px; font-weight: 600; color: var(--ri-ink);
+        margin-bottom: 6px;
+    }
+    .stack-reason-list {
+        list-style: none; margin: 0; padding: 0; font-size: 12px;
+    }
+    .stack-reason-list li {
+        display: flex; justify-content: space-between; gap: 10px;
+        padding: 3px 0; border-bottom: 1px dashed #e8ecef;
+        align-items: baseline;
+    }
+    .stack-reason-list li:last-child { border-bottom: none; }
+    .stack-reason-list code {
+        font-family: ui-monospace, monospace; font-size: 11.5px;
+        color: #333; word-break: break-all;
+    }
+    .stack-reason-list span {
+        flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--ri-ink);
+    }
+    .stack-reason-list em { color: var(--ri-muted); font-style: normal; margin-left: 4px; }
     @media (max-width: 900px) {
         .layout-split { flex-direction: column; }
         .layout-split .left-nav { flex: 1 1 auto; width: 100%; }
+        .stack-reason-grid { grid-template-columns: 1fr; }
+        .stack-col { grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
+        .stack-bar { height: 16px; }
+        .stack-bar.is-outcome { height: 18px; }
     }
 </style>
 {% endblock %}
@@ -384,38 +485,158 @@
         </div>
 
         <div class="section" id="rollout-stack">
-            <h2>Attempt 分布趋势 <small>每个 rollout 一根柱 · 共 {{ rollouts | length }} 步</small></h2>
+            <h2>Attempt 分布趋势 <small>纵向每步一行 · 三根横柱（结局 / 奖励 / 类型）· 共 {{ rollouts | length }} 步</small></h2>
             {% if rollouts %}
-            <div class="stack-legend">
-                <span><i class="lg lg-pass"></i>通过</span>
-                <span><i class="lg lg-fail"></i>正常失败</span>
-                <span><i class="lg lg-timeout"></i>超时/截断</span>
-                <span><i class="lg lg-abort"></i>abort</span>
-                <span><i class="lg lg-other"></i>其它</span>
+            <div class="stack-legend-block">
+                <div class="stack-legend-title">结局柱</div>
+                <div class="stack-legend">
+                    <span><i class="lg lg-pass"></i>通过</span>
+                    <span><i class="lg lg-fail"></i>正常失败</span>
+                    <span><i class="lg lg-timeout"></i>超时/截断</span>
+                    <span><i class="lg lg-abort"></i>abort</span>
+                    <span><i class="lg lg-other"></i>其它</span>
+                </div>
+            </div>
+            <div class="stack-legend-block">
+                <div class="stack-legend-title">奖励柱（超时也可有奖；abort 无测置灰）</div>
+                <div class="stack-legend">
+                    <span><i class="lg lg-rw1"></i>reward≈1</span>
+                    <span><i class="lg lg-rw0"></i>reward≈0</span>
+                    <span><i class="lg lg-norw"></i>无奖励/不可测</span>
+                </div>
+            </div>
+            <div class="stack-legend-block" id="stackTypeLegendHost"{% if not stack_type_legend and not annotations_lazy %} style="display:none"{% endif %}>
+                <div class="stack-legend-title">类型柱（失败细分 · 超时有奖/无奖×原因 · abort 原因）{% if annotations_lazy %}<span class="ann-loading" id="typeLegendStatus"> · 加载中…</span>{% endif %}</div>
+                <div class="stack-legend" id="stackTypeLegend">
+                    {% for lg in stack_type_legend or [] %}
+                    <span title="{{ lg.key }}"><i class="lg" style="background:{{ lg.color }};"></i>{{ lg.label }}</span>
+                    {% endfor %}
+                </div>
             </div>
             <div class="rollout-stack-chart">
                 {% for r in rollouts %}
-                {% set n = r.n_attempts if r.n_attempts else 1 %}
+                {% set n = r.chart_total if r.chart_total else 1 %}
                 {% set np = r.n_passed or 0 %}
                 {% set nf = r.n_failed or 0 %}
                 {% set nt = r.n_timeout or 0 %}
                 {% set na = r.n_aborted or 0 %}
                 {% set no = r.n_other or 0 %}
-                <div class="stack-col" title="rollout {{ r.rollout_id }} · 通过 {{ np }} / 失败 {{ nf }} / 超时 {{ nt }} / abort {{ na }} / 共 {{ r.n_attempts or 0 }}">
-                    <div class="stack-bar">
-                        {% if np %}<span class="seg seg-pass" style="flex: {{ np }} 0 0;"></span>{% endif %}
-                        {% if nf %}<span class="seg seg-fail" style="flex: {{ nf }} 0 0;"></span>{% endif %}
-                        {% if nt %}<span class="seg seg-timeout" style="flex: {{ nt }} 0 0;"></span>{% endif %}
-                        {% if na %}<span class="seg seg-abort" style="flex: {{ na }} 0 0;"></span>{% endif %}
-                        {% if no %}<span class="seg seg-other" style="flex: {{ no }} 0 0;"></span>{% endif %}
+                {% set nr1 = r.n_reward_1 or 0 %}
+                {% set nr0 = r.n_reward_0 or 0 %}
+                {% set nnr = r.n_no_reward or 0 %}
+                {% set nk = r.n_train_kept or 0 %}
+                {% set ns = r.n_train_samples if r.n_train_samples else n %}
+                <div class="stack-col" data-rollout-pk="{{ r.id }}" title="rollout {{ r.rollout_id }} · 通过 {{ np }} / 失败 {{ nf }} / 超时 {{ nt }} / abort {{ na }} · 奖1={{ nr1 }} 奖0={{ nr0 }} 无奖={{ nnr }} · 进入训练 {{ nk }}/{{ ns }}">
+                    <div class="stack-row-meta">
+                        <a class="stack-label" href="/api/tasks/{{ task.id }}/rollouts/{{ r.id }}">{{ r.rollout_id if r.rollout_id is not none else '-' }}</a>
+                        <div class="stack-sub">通过 {{ np }}/{{ n }}</div>
+                        <div class="stack-train" data-train-cell title="无 train_drop_reason 的样本数">{% if annotations_lazy %}<span class="ann-loading">加载中…</span>{% else %}训 {{ nk }}/{{ ns }}{% if r.train_keep_pct is not none %}<em>{{ r.train_keep_pct }}%</em>{% endif %}{% endif %}</div>
                     </div>
-                    <a class="stack-label" href="/api/tasks/{{ task.id }}/rollouts/{{ r.id }}">{{ r.rollout_id if r.rollout_id is not none else '-' }}</a>
-                    <div class="stack-sub">{{ np }}/{{ r.n_attempts or 0 }}</div>
+                    <div class="stack-group-bars">
+                        <div class="stack-bar-row">
+                            <span class="cap" title="结局">结局</span>
+                            <div class="stack-bar is-outcome">
+                                {% if np %}<span class="seg seg-pass" style="flex: {{ np }} 0 0;" title="通过 · {{ np }}"></span>{% endif %}
+                                {% if nf %}<span class="seg seg-fail" style="flex: {{ nf }} 0 0;" title="正常失败 · {{ nf }}"></span>{% endif %}
+                                {% if nt %}<span class="seg seg-timeout" style="flex: {{ nt }} 0 0;" title="超时/截断 · {{ nt }}"></span>{% endif %}
+                                {% if na %}<span class="seg seg-abort" style="flex: {{ na }} 0 0;" title="abort · {{ na }}"></span>{% endif %}
+                                {% if no %}<span class="seg seg-other" style="flex: {{ no }} 0 0;" title="其它 · {{ no }}"></span>{% endif %}
+                            </div>
+                        </div>
+                        <div class="stack-bar-row">
+                            <span class="cap" title="奖励">奖励</span>
+                            <div class="stack-bar">
+                                {% if nr1 %}<span class="seg seg-rw1" style="flex: {{ nr1 }} 0 0;" title="reward≈1 · {{ nr1 }}"></span>{% endif %}
+                                {% if nr0 %}<span class="seg seg-rw0" style="flex: {{ nr0 }} 0 0;" title="reward≈0 · {{ nr0 }}"></span>{% endif %}
+                                {% if nnr %}<span class="seg seg-norw" style="flex: {{ nnr }} 0 0;" title="无奖励/不可测 · {{ nnr }}"></span>{% endif %}
+                            </div>
+                        </div>
+                        <div class="stack-bar-row">
+                            <span class="cap" title="类型">类型</span>
+                            <div class="stack-bar{% if annotations_lazy and not (r.type_segments or []) %} is-skeleton{% endif %}" data-type-bar>
+                                {% for seg in r.type_segments or [] %}
+                                {% if seg.count %}
+                                <span class="seg" style="flex: {{ seg.count }} 0 0; background: {{ seg.color }};" title="{{ seg.label }} · {{ seg.count }}"></span>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
-            <p class="meta" style="margin-top:8px;">柱高固定为该步全部 attempts；绿=通过，浅绿=正常失败(reward=0)，橙=超时/截断，红=abort。</p>
-            {% else %}
+            <div class="stack-explain">
+                <p class="meta" style="margin:8px 0 6px;">
+                    分母为 <strong>attempt 表实计</strong>（本任务多为 128；与 dump 元数据 <code>n_attempts</code> 偶发不一致时以实计为准）。
+                    纵向每步一行，三根<strong>横柱</strong>等长归一：结=结局，奖=奖励（超时可有奖；abort 无测置灰），型=失败/超时/abort 细分（超时再按有奖/无奖着色）。
+                </p>
+                <div class="stack-train-summary" id="stackTrainSummary"{% if not (stack_train_stats and stack_train_stats.n_samples) and not annotations_lazy %} style="display:none"{% endif %}>
+                    {% if annotations_lazy and not (stack_train_stats and stack_train_stats.n_samples) %}
+                    <span class="ann-loading">进入训练样本统计加载中…</span>
+                    {% elif stack_train_stats and stack_train_stats.n_samples %}
+                    <strong>进入训练样本</strong>：
+                    {{ stack_train_stats.n_train_kept }} / {{ stack_train_stats.n_samples }}
+                    （保留 {{ stack_train_stats.keep_pct }}%；丢弃 {{ stack_train_stats.n_train_dropped }}）。
+                    判定：sample 无 <code>metadata.train_drop_reason</code> 计为进入训练。
+                    {% if stack_train_stats.by_drop_reason %}
+                    <br/>丢弃原因 Top：
+                    {% for row in stack_train_stats.by_drop_reason[:5] %}
+                    <code>{{ row.reason }}</code> {{ row.count }}{% if not loop.last %} · {% endif %}
+                    {% endfor %}
+                    {% endif %}
+                    {% endif %}
+                </div>
+                <div class="stack-reason-grid">
+                    <div class="stack-reason-block">
+                        <div class="stack-reason-title"><i class="lg lg-fail"></i> 正常失败 · 具体类型</div>
+                        <div id="stackFailReasons">
+                        {% if annotations_lazy and not stack_fail_reasons %}
+                        <div class="ann-loading">加载中…</div>
+                        {% elif stack_fail_reasons %}
+                        <ul class="stack-reason-list">
+                            {% for row in stack_fail_reasons %}
+                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="empty-inline">本任务无正常失败 attempt</div>
+                        {% endif %}
+                        </div>
+                    </div>
+                    <div class="stack-reason-block">
+                        <div class="stack-reason-title"><i class="lg lg-timeout"></i> 超时/截断 · 具体类型</div>
+                        <div id="stackTimeoutReasons">
+                        {% if annotations_lazy and not stack_timeout_reasons %}
+                        <div class="ann-loading">加载中…</div>
+                        {% elif stack_timeout_reasons %}
+                        <ul class="stack-reason-list">
+                            {% for row in stack_timeout_reasons %}
+                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="empty-inline">本任务无超时/截断 attempt</div>
+                        {% endif %}
+                        </div>
+                    </div>
+                    <div class="stack-reason-block">
+                        <div class="stack-reason-title"><i class="lg lg-abort"></i> abort · 具体异常</div>
+                        <div id="stackAbortReasons">
+                        {% if annotations_lazy and not stack_abort_reasons %}
+                        <div class="ann-loading">加载中…</div>
+                        {% elif stack_abort_reasons %}
+                        <ul class="stack-reason-list">
+                            {% for row in stack_abort_reasons %}
+                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="empty-inline">本任务无 abort attempt</div>
+                        {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>            {% else %}
             <div class="empty-inline">暂无 rollout 可画图</div>
             {% endif %}
         </div>
@@ -434,6 +655,7 @@
                         <th class="col-num" title="status=truncated / timeout">超时</th>
                         <th class="col-num" title="status=aborted / 不可测 attempt 数">abort</th>
                         <th class="col-num" title="去掉 abort/超时 后仍有过有挂的 group 数（filtered 保留组）">有效组</th>
+                        <th class="col-num" title="无 metadata.train_drop_reason 的样本数（进入训练）">进入训练</th>
                         <th class="col-num" title="≈ 通过/n_attempts（abort 按 0 计入分母）">mean_reward</th>
                         <th>scanned_at</th>
                     </tr>
@@ -441,27 +663,29 @@
                 <tbody>
                     {% if rollouts %}
                         {% for r in rollouts %}
-                        <tr>
+                        <tr data-rollout-pk="{{ r.id }}">
                             <td class="col-id">
                                 <a href="/api/tasks/{{ task.id }}/rollouts/{{ r.id }}"
                                    title="打开 rollout 详情">{{ r.rollout_id if r.rollout_id is not none else "-" }}</a>
                             </td>
                             <td class="col-num">{{ r.n_samples if r.n_samples is not none else "-" }}</td>
-                            <td class="col-num">{{ r.n_attempts if r.n_attempts is not none else "-" }}</td>
+                            <td class="col-num" title="{% if r.n_attempts_counted and r.n_attempts is not none and r.n_attempts_counted != r.n_attempts %}dump meta={{ r.n_attempts }}，以 attempt 表 {{ r.n_attempts_counted }} 为准{% endif %}">{{ r.n_attempts_counted if r.n_attempts_counted is not none else (r.n_attempts if r.n_attempts is not none else "-") }}</td>
                             <td class="col-num">{{ r.n_segments if r.n_segments is not none else 0 }}</td>
                             <td class="col-num"><strong>{{ r.n_passed if r.n_passed is not none else 0 }}</strong></td>
                             <td class="col-num">{{ r.n_failed if r.n_failed is not none else 0 }}</td>
                             <td class="col-num">{{ r.n_timeout if r.n_timeout is not none else 0 }}</td>
                             <td class="col-num">{% if r.n_aborted %}{{ r.n_aborted }}{% else %}0{% endif %}</td>
                             <td class="col-num">{{ r.n_valid_groups if r.n_valid_groups is not none else 0 }}</td>
+                            <td class="col-num" data-train-table title="保留 {{ r.n_train_kept or 0 }} / 样本 {{ r.n_train_samples or r.n_samples or '-' }}">
+                                {% if annotations_lazy and not r.n_train_samples %}<span class="ann-loading">加载中…</span>{% elif r.n_train_samples %}{{ r.n_train_kept or 0 }}/{{ r.n_train_samples }}{% else %}-{% endif %}
+                            </td>
                             <td class="col-num">
                                 {% if r.mean_reward is not none %}{{ "%.4f"|format(r.mean_reward) }}{% else %}-{% endif %}
                             </td>
                             <td>{{ r.scanned_at or "-" }}</td>
                         </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr><td colspan="11" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
+                        {% endfor %}                    {% else %}
+                        <tr><td colspan="12" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
                     {% endif %}
                 </tbody>
             </table>
@@ -470,7 +694,8 @@
                 <strong>正常失败</strong> = 可测 reward=0；
                 <strong>超时</strong> = status=truncated；
                 <strong>abort</strong> = 不可测 attempt（不计入成功，也不算真·失败）；
-                <strong>有效组</strong> = 去掉 abort/超时 后仍「有过有挂」的 group 数（filtered 训练子集对应的组）。
+                <strong>有效组</strong> = 去掉 abort/超时 后仍「有过有挂」的 group 数（filtered 训练子集对应的组）；
+                <strong>进入训练</strong> = 无 <code>train_drop_reason</code> 的样本数 / 该步样本总数。
             </p>
         </div>
 
@@ -529,9 +754,321 @@
 {% block extra_js %}
 <script>
     const TASK_ID = {{ task.id | tojson }};
+    const ANNOTATIONS_LAZY = {{ (annotations_lazy or false) | tojson }};
 
-    async function postAction(url) {
-        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+    // -------------------------------------------------------------------------
+    // 类型柱 / 进入训练 / Top 原因：并发 2 渐进加载（对齐 turns.json 懒加载）
+    // -------------------------------------------------------------------------
+    const TYPE_PALETTE = {
+        pass: "#2e7d32",
+        other: "#546e7a",
+        fail: ["#6a1b9a", "#8e24aa", "#ab47bc", "#ce93d8", "#4a148c", "#9c27b0", "#7b1fa2", "#ba68c8"],
+        timeoutRw1: ["#ef6c00", "#ff9800", "#f57c00", "#ffa726", "#fb8c00"],
+        timeoutRw0: ["#8d6e63", "#a1887f", "#6d4c41", "#bcaaa4", "#5d4037"],
+        timeoutNone: ["#90a4ae", "#78909c", "#607d8b"],
+        abort: ["#c62828", "#e53935", "#ef5350", "#b71c1c", "#e57373", "#ff8a80", "#d32f2f"],
+    };
+
+    function escapeHtml(s) {
+        if (s == null) return "";
+        return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function hashKey(key) {
+        let h = 0;
+        const s = String(key || "");
+        for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+        return Math.abs(h);
+    }
+
+    function colorForKey(key) {
+        const k = String(key || "");
+        if (k === "pass") return TYPE_PALETTE.pass;
+        let palette = TYPE_PALETTE.other;
+        if (k.indexOf("fail:") === 0) palette = TYPE_PALETTE.fail;
+        else if (k.indexOf("timeout:") === 0 && k.slice(-4) === ":rw1") palette = TYPE_PALETTE.timeoutRw1;
+        else if (k.indexOf("timeout:") === 0 && k.slice(-4) === ":rw0") palette = TYPE_PALETTE.timeoutRw0;
+        else if (k.indexOf("timeout:") === 0) palette = TYPE_PALETTE.timeoutNone;
+        else if (k.indexOf("abort:") === 0) palette = TYPE_PALETTE.abort;
+        if (typeof palette === "string") return palette;
+        return palette[hashKey(k) % palette.length];
+    }
+
+    function labelForKey(key, fallback) {
+        const k = String(key || "");
+        if (fallback) return fallback;
+        if (k === "pass") return "通过";
+        if (k.indexOf("fail:") === 0) return "失败·" + k.slice(5);
+        if (k.indexOf("abort:") === 0) return "abort·" + k.slice(6);
+        if (k.indexOf("timeout:") === 0) {
+            let body = k.slice(8);
+            let rw = "无测";
+            if (body.slice(-4) === ":rw1") { rw = "有奖"; body = body.slice(0, -4); }
+            else if (body.slice(-4) === ":rw0") { rw = "无奖"; body = body.slice(0, -4); }
+            else if (body.slice(-5) === ":none") { body = body.slice(0, -5); }
+            return "超时·" + rw + "·" + body;
+        }
+        return k;
+    }
+
+    function topCounts(mapObj, limit) {
+        const rows = Object.keys(mapObj).map(function (k) {
+            return { reason: k, count: mapObj[k] };
+        });
+        rows.sort(function (a, b) { return b.count - a.count; });
+        const sliced = rows.slice(0, limit || 8);
+        const total = sliced.reduce(function (s, r) { return s + r.count; }, 0) || 1;
+        return sliced.map(function (r) {
+            return { reason: r.reason, count: r.count, pct: Math.round(1000 * r.count / total) / 10 };
+        });
+    }
+
+    function renderReasonList(el, rows, emptyText) {
+        if (!el) return;
+        if (!rows || !rows.length) {
+            el.innerHTML = '<div class="empty-inline">' + escapeHtml(emptyText) + "</div>";
+            return;
+        }
+        el.innerHTML = '<ul class="stack-reason-list">' + rows.map(function (row) {
+            return "<li><code>" + escapeHtml(row.reason) + "</code><span>" + row.count
+                + " <em>" + row.pct + "%</em></span></li>";
+        }).join("") + "</ul>";
+    }
+
+    function renderTypeBar(barEl, segments) {
+        if (!barEl) return;
+        barEl.classList.remove("is-skeleton");
+        const parts = (segments || []).filter(function (s) { return (s.count || 0) > 0; });
+        if (!parts.length) {
+            barEl.innerHTML = "";
+            return;
+        }
+        barEl.innerHTML = parts.map(function (seg) {
+            const key = seg.key || "";
+            const color = colorForKey(key);
+            const label = labelForKey(key, seg.label);
+            return '<span class="seg" style="flex: ' + Number(seg.count || 0)
+                + " 0 0; background: " + color + ';" title="'
+                + escapeHtml(label) + " · " + Number(seg.count || 0) + '"></span>';
+        }).join("");
+    }
+
+    function applyRolloutAnnotation(payload) {
+        const pk = payload && payload.rollout_pk;
+        if (pk == null) return;
+        const col = document.querySelector('.stack-col[data-rollout-pk="' + pk + '"]');
+        if (col) {
+            renderTypeBar(col.querySelector("[data-type-bar]"), payload.type_segments || []);
+            const ts = payload.train_sample_stats || {};
+            const nk = Number(ts.n_train_kept || 0);
+            const ns = Number(ts.n_samples || 0);
+            const pct = Number(ts.keep_pct || 0);
+            const trainEl = col.querySelector("[data-train-cell]");
+            if (trainEl) {
+                trainEl.innerHTML = ns
+                    ? ("训 " + nk + "/" + ns + (pct ? "<em>" + pct + "%</em>" : ""))
+                    : "-";
+            }
+        }
+        const row = document.querySelector('#rollouts tr[data-rollout-pk="' + pk + '"]');
+        if (row) {
+            const cell = row.querySelector("[data-train-table]");
+            const ts = payload.train_sample_stats || {};
+            const nk = Number(ts.n_train_kept || 0);
+            const ns = Number(ts.n_samples || 0);
+            if (cell) {
+                cell.textContent = ns ? (nk + "/" + ns) : "-";
+                cell.title = "保留 " + nk + " / 样本 " + (ns || "-");
+            }
+        }
+    }
+
+    function refreshAggregates(collected) {
+        const typeTotals = {};
+        const failC = {};
+        const timeoutC = {};
+        const abortC = {};
+        const dropC = {};
+        let trainKept = 0;
+        let trainDropped = 0;
+        let trainSamples = 0;
+
+        collected.forEach(function (payload) {
+            if (!payload) return;
+            (payload.type_segments || []).forEach(function (seg) {
+                const k = String(seg.key || "");
+                if (!k) return;
+                typeTotals[k] = (typeTotals[k] || 0) + Number(seg.count || 0);
+            });
+            const fc = payload.failure_clusters || {};
+            (fc.by_reason || []).forEach(function (row) {
+                const cat = row.category;
+                const reason = String(row.reason || "").trim() || "(unknown)";
+                const cnt = Number(row.count || 0);
+                if (cat === "abort") abortC[reason] = (abortC[reason] || 0) + cnt;
+                else if (cat === "timeout") timeoutC[reason] = (timeoutC[reason] || 0) + cnt;
+                else if (cat === "fail") failC[reason] = (failC[reason] || 0) + cnt;
+            });
+            const ts = payload.train_sample_stats || {};
+            trainKept += Number(ts.n_train_kept || 0);
+            trainDropped += Number(ts.n_train_dropped || 0);
+            trainSamples += Number(ts.n_samples || 0);
+            (ts.by_drop_reason || []).forEach(function (row) {
+                const reason = String(row.reason || "(unknown)");
+                dropC[reason] = (dropC[reason] || 0) + Number(row.count || 0);
+            });
+        });
+
+        const legendKeys = [];
+        if (typeTotals.pass) legendKeys.push("pass");
+        Object.keys(typeTotals).sort(function (a, b) {
+            return (typeTotals[b] || 0) - (typeTotals[a] || 0);
+        }).forEach(function (k) {
+            if (k.indexOf("fail:") === 0) legendKeys.push(k);
+        });
+        Object.keys(typeTotals).sort(function (a, b) {
+            return (typeTotals[b] || 0) - (typeTotals[a] || 0);
+        }).forEach(function (k) {
+            if (k.indexOf("timeout:") === 0 && k.slice(-4) === ":rw1") legendKeys.push(k);
+        });
+        Object.keys(typeTotals).sort(function (a, b) {
+            return (typeTotals[b] || 0) - (typeTotals[a] || 0);
+        }).forEach(function (k) {
+            if (k.indexOf("timeout:") === 0 && k.slice(-4) === ":rw0") legendKeys.push(k);
+        });
+        Object.keys(typeTotals).sort(function (a, b) {
+            return (typeTotals[b] || 0) - (typeTotals[a] || 0);
+        }).forEach(function (k) {
+            if (k.indexOf("timeout:") === 0 && k.slice(-4) !== ":rw1" && k.slice(-4) !== ":rw0") {
+                legendKeys.push(k);
+            }
+        });
+        Object.keys(typeTotals).sort(function (a, b) {
+            return (typeTotals[b] || 0) - (typeTotals[a] || 0);
+        }).forEach(function (k) {
+            if (k.indexOf("abort:") === 0) legendKeys.push(k);
+        });
+        Object.keys(typeTotals).forEach(function (k) {
+            if (k && legendKeys.indexOf(k) < 0 && k !== "pass") legendKeys.push(k);
+        });
+
+        const legendEl = document.getElementById("stackTypeLegend");
+        const host = document.getElementById("stackTypeLegendHost");
+        const status = document.getElementById("typeLegendStatus");
+        if (legendEl) {
+            legendEl.innerHTML = legendKeys.map(function (k) {
+                const color = colorForKey(k);
+                const label = labelForKey(k);
+                return '<span title="' + escapeHtml(k) + '"><i class="lg" style="background:'
+                    + color + ';"></i>' + escapeHtml(label) + "</span>";
+            }).join("");
+        }
+        if (host) host.style.display = legendKeys.length ? "" : "none";
+        if (status) status.textContent = "";
+
+        const trainSummary = document.getElementById("stackTrainSummary");
+        if (trainSummary) {
+            if (!trainSamples) {
+                trainSummary.innerHTML = '<span class="ann-loading">暂无进入训练样本统计</span>';
+            } else {
+                const keepPct = Math.round(1000 * trainKept / trainSamples) / 10;
+                const drops = topCounts(dropC, 5);
+                let html = "<strong>进入训练样本</strong>：" + trainKept + " / " + trainSamples
+                    + "（保留 " + keepPct + "%；丢弃 " + trainDropped + "）。"
+                    + "判定：sample 无 <code>metadata.train_drop_reason</code> 计为进入训练。";
+                if (drops.length) {
+                    html += "<br/>丢弃原因 Top：" + drops.map(function (row) {
+                        return "<code>" + escapeHtml(row.reason) + "</code> " + row.count;
+                    }).join(" · ");
+                }
+                trainSummary.innerHTML = html;
+                trainSummary.style.display = "";
+            }
+        }
+
+        renderReasonList(document.getElementById("stackFailReasons"), topCounts(failC, 8), "本任务无正常失败 attempt");
+        renderReasonList(document.getElementById("stackTimeoutReasons"), topCounts(timeoutC, 8), "本任务无超时/截断 attempt");
+        renderReasonList(document.getElementById("stackAbortReasons"), topCounts(abortC, 8), "本任务无 abort attempt");
+    }
+
+    async function fetchJson(url) {
+        const resp = await fetch(url, { headers: { Accept: "application/json" } });
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data.data;
+    }
+
+    async function progressiveLoadAnnotations() {
+        if (!ANNOTATIONS_LAZY) return;
+        let meta;
+        try {
+            meta = await fetchJson("/api/tasks/" + encodeURIComponent(TASK_ID) + "/annotations/meta.json");
+        } catch (err) {
+            const status = document.getElementById("typeLegendStatus");
+            if (status) status.innerHTML = ' · <span class="ann-error">注解列表加载失败</span>';
+            ["stackFailReasons", "stackTimeoutReasons", "stackAbortReasons"].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = '<div class="ann-error">加载失败</div>';
+            });
+            return;
+        }
+        const items = (meta && meta.rollouts) || [];
+        if (!items.length) {
+            refreshAggregates([]);
+            return;
+        }
+        const collected = [];
+        let cursor = 0;
+        const concurrency = 2;
+
+        async function worker() {
+            while (cursor < items.length) {
+                const idx = cursor++;
+                const item = items[idx];
+                const url = "/api/tasks/" + encodeURIComponent(TASK_ID)
+                    + "/rollouts/" + encodeURIComponent(item.rollout_pk) + "/annotations.json";
+                try {
+                    const payload = await fetchJson(url);
+                    collected[idx] = payload;
+                    applyRolloutAnnotation(payload);
+                } catch (err) {
+                    collected[idx] = null;
+                    const col = document.querySelector('.stack-col[data-rollout-pk="' + item.rollout_pk + '"]');
+                    if (col) {
+                        const bar = col.querySelector("[data-type-bar]");
+                        if (bar) {
+                            bar.classList.remove("is-skeleton");
+                            bar.innerHTML = "";
+                            bar.title = "类型细分加载失败";
+                        }
+                        const trainEl = col.querySelector("[data-train-cell]");
+                        if (trainEl) trainEl.innerHTML = '<span class="ann-error">失败</span>';
+                    }
+                    const row = document.querySelector('#rollouts tr[data-rollout-pk="' + item.rollout_pk + '"]');
+                    if (row) {
+                        const cell = row.querySelector("[data-train-table]");
+                        if (cell) cell.innerHTML = '<span class="ann-error">失败</span>';
+                    }
+                }
+            }
+        }
+
+        await Promise.all(Array.from({ length: concurrency }, function () { return worker(); }));
+        refreshAggregates(collected.filter(Boolean));
+    }
+
+    if (ANNOTATIONS_LAZY) {
+        progressiveLoadAnnotations();
+    }
+
+    async function postAction(url) {        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
         const data = await resp.json().catch(function () { return {}; });
         if (!data || data.code !== 0) {
             throw new Error((data && data.msg) || ("HTTP " + resp.status));

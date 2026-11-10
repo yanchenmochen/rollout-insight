@@ -580,8 +580,16 @@ class RolloutScanService:
             n_att,
             n_seg,
         )
-        return rollout, n_att, n_seg
+        # 扫描成功后预写注解 sidecar，任务详情未点开时也可暖缓存
+        try:
+            from service.task_annotation_service import warm_pt_annotation_sidecar
 
+            warm_pt_annotation_sidecar(str(pt_path))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "扫描后预热注解 sidecar 失败 pt={} err={}", pt_path, exc
+            )
+        return rollout, n_att, n_seg
     def _purge_task_data(self, task_id: int) -> None:
         """清空该 task 下的所有 rollout/attempt/segment（保留 task 本身）。
 
