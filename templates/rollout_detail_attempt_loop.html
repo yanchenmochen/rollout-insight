@@ -19,7 +19,8 @@
     {%- endmacro %}
 
     {% for a in attempts %}
-    <details class="tree attempt-row" data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
+    <details class="tree attempt-row {% if a.outcome_category %}is-{{ a.outcome_category }}{% elif a.reward_bucket == 'aborted' %}is-abort{% endif %}"
+             data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
         <summary>
             <span class="sum-id">attempt #{{ a.primary_id }}</span>
             <span class="sum-title">
@@ -27,6 +28,13 @@
             </span>
             <span class="sum-meta">
                 {{ bucket_badge(a.reward_bucket) }}
+                {% if a.abort_reason %}
+                    <span class="abort-reason-chip" title="abort_reason: {{ a.abort_reason }}">{{ a.abort_reason }}</span>
+                {% elif a.outcome_category == 'timeout' and a.outcome_reason %}
+                    <span class="abort-reason-chip" style="background:#fff3e0;color:#e65100;border-color:#ffe0b2;" title="timeout: {{ a.outcome_reason }}">{{ a.outcome_reason }}</span>
+                {% elif a.outcome_category == 'fail' and a.outcome_reason %}
+                    <span class="abort-reason-chip" style="background:#f3e5f5;color:#6a1b9a;border-color:#e1bee7;" title="fail: {{ a.outcome_reason }}">{{ a.outcome_reason }}</span>
+                {% endif %}
             </span>
         </summary>
         <div class="tree-body">
