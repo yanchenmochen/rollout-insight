@@ -211,7 +211,8 @@ class DBAttemptService:
         """按业务键 ``rollout_id`` 聚合 attempt 分布（对齐 TB generated/paired/filtered）。
 
         返回 ``{rollout_id: {n_passed, n_aborted, n_timeout, n_failed, n_other,
-        n_valid_groups, n_attempts, n_reward_1, n_reward_0, n_no_reward}}``：
+        n_valid_groups, n_attempts, n_reward_1, n_reward_0, n_no_reward,
+        n_timeout_rw1, n_timeout_rw0, n_timeout_norw}}``：
 
         - ``n_passed``：可测且 reward≈1（= generated 分子）
         - ``n_aborted``：abort / 不可测
@@ -220,6 +221,8 @@ class DBAttemptService:
         - ``n_valid_groups``：去掉 abort/timeout 后仍「有过有挂」的 group 数
         - ``n_reward_1`` / ``n_reward_0``：含超时上的可测奖励（超时也可能有奖）
         - ``n_no_reward``：abort 等不可测（置灰段）
+        - ``n_timeout_rw1`` / ``n_timeout_rw0`` / ``n_timeout_norw``：
+          超时边界内的奖励拆分（供奖励柱对齐结局柱）
         """
         if task_id is None:
             raise RolloutInsightException(
@@ -255,6 +258,9 @@ class DBAttemptService:
                     "n_reward_1": 0,
                     "n_reward_0": 0,
                     "n_no_reward": 0,
+                    "n_timeout_rw1": 0,
+                    "n_timeout_rw0": 0,
+                    "n_timeout_norw": 0,
                     "groups": {},
                 },
             )
@@ -270,12 +276,16 @@ class DBAttemptService:
                     rv = float(reward)
                     if abs(rv - 1.0) <= cls._REWARD_EPS:
                         bucket["n_reward_1"] += 1
+                        bucket["n_timeout_rw1"] += 1
                     elif abs(rv) <= cls._REWARD_EPS:
                         bucket["n_reward_0"] += 1
+                        bucket["n_timeout_rw0"] += 1
                     else:
                         bucket["n_no_reward"] += 1
+                        bucket["n_timeout_norw"] += 1
                 else:
                     bucket["n_no_reward"] += 1
+                    bucket["n_timeout_norw"] += 1
                 continue
             gmap = bucket["groups"].setdefault(
                 int(group_index) if group_index is not None else -1,
@@ -320,6 +330,9 @@ class DBAttemptService:
                 "n_reward_1": int(bucket["n_reward_1"]),
                 "n_reward_0": int(bucket["n_reward_0"]),
                 "n_no_reward": int(bucket["n_no_reward"]),
+                "n_timeout_rw1": int(bucket["n_timeout_rw1"]),
+                "n_timeout_rw0": int(bucket["n_timeout_rw0"]),
+                "n_timeout_norw": int(bucket["n_timeout_norw"]),
             }
         return out
 

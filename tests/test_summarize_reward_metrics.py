@@ -72,6 +72,10 @@ class TestSummarizeRewardMetricsByRollout(unittest.TestCase):
         self.assertEqual(m["n_reward_1"], 2)  # pass + timeout:1
         self.assertEqual(m["n_reward_0"], 2)  # fail + timeout:0
         self.assertEqual(m["n_no_reward"], 1)  # abort
+        # 超时边界内拆分（对齐结局柱超时段）
+        self.assertEqual(m["n_timeout_rw1"], 1)
+        self.assertEqual(m["n_timeout_rw0"], 1)
+        self.assertEqual(m["n_timeout_norw"], 0)
 
 
 class TestSummarizeRewardMetricsByGroup(unittest.TestCase):

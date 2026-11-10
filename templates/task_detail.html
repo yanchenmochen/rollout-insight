@@ -498,11 +498,11 @@
                 </div>
             </div>
             <div class="stack-legend-block">
-                <div class="stack-legend-title">奖励柱（超时也可有奖；abort 无测置灰）</div>
+                <div class="stack-legend-title">奖励柱（边界对齐结局：通过·奖1 / 失败·奖0 / 超时内拆奖1·奖0 / abort 无测）</div>
                 <div class="stack-legend">
-                    <span><i class="lg lg-rw1"></i>reward≈1</span>
-                    <span><i class="lg lg-rw0"></i>reward≈0</span>
-                    <span><i class="lg lg-norw"></i>无奖励/不可测</span>
+                    <span><i class="lg lg-rw1"></i>reward≈1（通过或超时有奖）</span>
+                    <span><i class="lg lg-rw0"></i>reward≈0（失败或超时无奖）</span>
+                    <span><i class="lg lg-norw"></i>无奖励/不可测（abort 等）</span>
                 </div>
             </div>
             <div class="stack-legend-block" id="stackTypeLegendHost"{% if not stack_type_legend and not annotations_lazy %} style="display:none"{% endif %}>
@@ -521,12 +521,14 @@
                 {% set nt = r.n_timeout or 0 %}
                 {% set na = r.n_aborted or 0 %}
                 {% set no = r.n_other or 0 %}
-                {% set nr1 = r.n_reward_1 or 0 %}
-                {% set nr0 = r.n_reward_0 or 0 %}
-                {% set nnr = r.n_no_reward or 0 %}
+                {% set ntr1 = r.n_timeout_rw1 or 0 %}
+                {% set ntr0 = r.n_timeout_rw0 or 0 %}
+                {% set ntrn = r.n_timeout_norw or 0 %}
                 {% set nk = r.n_train_kept or 0 %}
                 {% set ns = r.n_train_samples if r.n_train_samples else n %}
-                <div class="stack-col" data-rollout-pk="{{ r.id }}" title="rollout {{ r.rollout_id }} · 通过 {{ np }} / 失败 {{ nf }} / 超时 {{ nt }} / abort {{ na }} · 奖1={{ nr1 }} 奖0={{ nr0 }} 无奖={{ nnr }} · 进入训练 {{ nk }}/{{ ns }}">
+                {% set outcome_tip = "结局分布：通过 " ~ np ~ " · 正常失败 " ~ nf ~ " · 超时/截断 " ~ nt ~ " · abort " ~ na ~ ((" · 其它 " ~ no) if no else "") %}
+                {% set reward_tip = "奖励分布（对齐结局）：通过·奖1 " ~ np ~ " · 失败·奖0 " ~ nf ~ " · 超时·奖1 " ~ ntr1 ~ " · 超时·奖0 " ~ ntr0 ~ ((" · 超时·无测 " ~ ntrn) if ntrn else "") ~ " · abort·无测 " ~ na ~ ((" · 其它 " ~ no) if no else "") %}
+                <div class="stack-col" data-rollout-pk="{{ r.id }}">
                     <div class="stack-row-meta">
                         <a class="stack-label" href="/api/tasks/{{ task.id }}/rollouts/{{ r.id }}">{{ r.rollout_id if r.rollout_id is not none else '-' }}</a>
                         <div class="stack-sub">通过 {{ np }}/{{ n }}</div>
@@ -535,20 +537,25 @@
                     <div class="stack-group-bars">
                         <div class="stack-bar-row">
                             <span class="cap" title="结局">结局</span>
-                            <div class="stack-bar is-outcome">
-                                {% if np %}<span class="seg seg-pass" style="flex: {{ np }} 0 0;" title="通过 · {{ np }}"></span>{% endif %}
-                                {% if nf %}<span class="seg seg-fail" style="flex: {{ nf }} 0 0;" title="正常失败 · {{ nf }}"></span>{% endif %}
-                                {% if nt %}<span class="seg seg-timeout" style="flex: {{ nt }} 0 0;" title="超时/截断 · {{ nt }}"></span>{% endif %}
-                                {% if na %}<span class="seg seg-abort" style="flex: {{ na }} 0 0;" title="abort · {{ na }}"></span>{% endif %}
-                                {% if no %}<span class="seg seg-other" style="flex: {{ no }} 0 0;" title="其它 · {{ no }}"></span>{% endif %}
+                            <div class="stack-bar is-outcome" title="{{ outcome_tip }}">
+                                {% if np %}<span class="seg seg-pass" style="flex: {{ np }} 0 0;" title="{{ outcome_tip }}"></span>{% endif %}
+                                {% if nf %}<span class="seg seg-fail" style="flex: {{ nf }} 0 0;" title="{{ outcome_tip }}"></span>{% endif %}
+                                {% if nt %}<span class="seg seg-timeout" style="flex: {{ nt }} 0 0;" title="{{ outcome_tip }}"></span>{% endif %}
+                                {% if na %}<span class="seg seg-abort" style="flex: {{ na }} 0 0;" title="{{ outcome_tip }}"></span>{% endif %}
+                                {% if no %}<span class="seg seg-other" style="flex: {{ no }} 0 0;" title="{{ outcome_tip }}"></span>{% endif %}
                             </div>
                         </div>
                         <div class="stack-bar-row">
                             <span class="cap" title="奖励">奖励</span>
-                            <div class="stack-bar">
-                                {% if nr1 %}<span class="seg seg-rw1" style="flex: {{ nr1 }} 0 0;" title="reward≈1 · {{ nr1 }}"></span>{% endif %}
-                                {% if nr0 %}<span class="seg seg-rw0" style="flex: {{ nr0 }} 0 0;" title="reward≈0 · {{ nr0 }}"></span>{% endif %}
-                                {% if nnr %}<span class="seg seg-norw" style="flex: {{ nnr }} 0 0;" title="无奖励/不可测 · {{ nnr }}"></span>{% endif %}
+                            <div class="stack-bar" title="{{ reward_tip }}">
+                                {# 边界对齐结局：通过 | 失败 | 超时(奖1/奖0/无测) | abort | 其它 #}
+                                {% if np %}<span class="seg seg-rw1" style="flex: {{ np }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if nf %}<span class="seg seg-rw0" style="flex: {{ nf }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if ntr1 %}<span class="seg seg-rw1" style="flex: {{ ntr1 }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if ntr0 %}<span class="seg seg-rw0" style="flex: {{ ntr0 }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if ntrn %}<span class="seg seg-norw" style="flex: {{ ntrn }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if na %}<span class="seg seg-norw" style="flex: {{ na }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
+                                {% if no %}<span class="seg seg-norw" style="flex: {{ no }} 0 0;" title="{{ reward_tip }}"></span>{% endif %}
                             </div>
                         </div>
                         <div class="stack-bar-row">
@@ -568,7 +575,7 @@
             <div class="stack-explain">
                 <p class="meta" style="margin:8px 0 6px;">
                     分母为 <strong>attempt 表实计</strong>（本任务多为 128；与 dump 元数据 <code>n_attempts</code> 偶发不一致时以实计为准）。
-                    纵向每步一行，三根<strong>横柱</strong>等长归一：结=结局，奖=奖励（超时可有奖；abort 无测置灰），型=失败/超时/abort 细分（超时再按有奖/无奖着色）。
+                    纵向每步一行，三根<strong>横柱</strong>等长归一：结局按通过/失败/超时/abort；奖励柱<strong>边界对齐结局</strong>（超时段内再拆奖1/奖0）；类型柱为失败/超时/abort 细分。悬停任一段显示该柱分布总览。
                 </p>
                 <div class="stack-train-summary" id="stackTrainSummary"{% if not (stack_train_stats and stack_train_stats.n_samples) and not annotations_lazy %} style="display:none"{% endif %}>
                     {% if annotations_lazy and not (stack_train_stats and stack_train_stats.n_samples) %}
@@ -845,16 +852,22 @@
         barEl.classList.remove("is-skeleton");
         const parts = (segments || []).filter(function (s) { return (s.count || 0) > 0; });
         if (!parts.length) {
+            barEl.removeAttribute("title");
             barEl.innerHTML = "";
             return;
         }
+        const overview = "类型分布：" + parts.map(function (seg) {
+            const key = seg.key || "";
+            const label = labelForKey(key, seg.label);
+            return label + " " + Number(seg.count || 0);
+        }).join(" · ");
+        barEl.title = overview;
         barEl.innerHTML = parts.map(function (seg) {
             const key = seg.key || "";
             const color = colorForKey(key);
-            const label = labelForKey(key, seg.label);
             return '<span class="seg" style="flex: ' + Number(seg.count || 0)
                 + " 0 0; background: " + color + ';" title="'
-                + escapeHtml(label) + " · " + Number(seg.count || 0) + '"></span>';
+                + escapeHtml(overview) + '"></span>';
         }).join("");
     }
 

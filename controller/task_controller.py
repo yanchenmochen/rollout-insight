@@ -642,6 +642,10 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
             item["n_reward_1"] = int(metrics.get("n_reward_1", 0))
             item["n_reward_0"] = int(metrics.get("n_reward_0", 0))
             item["n_no_reward"] = int(metrics.get("n_no_reward", 0))
+            # 超时边界内奖励拆分（奖励柱与结局柱对齐）
+            item["n_timeout_rw1"] = int(metrics.get("n_timeout_rw1", 0))
+            item["n_timeout_rw0"] = int(metrics.get("n_timeout_rw0", 0))
+            item["n_timeout_norw"] = int(metrics.get("n_timeout_norw", 0))
             # 柱图分母用 attempt 表实计，不用 dump meta 的 n_attempts（后者偶发偏小）
             counted = int(metrics.get("n_attempts", 0))
             item["n_attempts_counted"] = counted
