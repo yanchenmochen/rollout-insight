@@ -88,6 +88,12 @@
 
 - `def load_config(config_path: Optional[str]=None) -> Dict` — 加载配置文件，并基于 program_root 计算其他路径。
 
+### `utils/failure_insight.py`
+
+- `def empty_failure_insights() -> Dict[str, Any]` — 空的失败深挖结构（fail / timeout / abort clusters + by_group）。
+- `def extract_sample_failure_detail(sample: Dict[str, Any], *, sample_index: int=0) -> Optional[D…` — 抽取单条非通过 sample 的深挖细节；通过样本返回 None。
+- `def cluster_failure_insights(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败深挖聚类。
+
 ### `utils/log_setup.py`
 
 - `def setup_rollout_insight_logging(log_base: str='') -> None` — 配置 rollout-insight 的 loguru 输出。
@@ -297,6 +303,7 @@
 - `staticmethod` `def empty_failure_clusters() -> Dict[str, Any]`
 - `staticmethod` `def empty_type_breakdown() -> Dict[str, Any]`
 - `staticmethod` `def empty_train_sample_stats() -> Dict[str, Any]`
+- `staticmethod` `def empty_failure_insights() -> Dict[str, Any]`
 - `staticmethod` `def empty_annotations() -> Dict[str, Any]`
 - `staticmethod` `def sidecar_path_for(pt_path: str) -> str`
 - `staticmethod` `def load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]`
