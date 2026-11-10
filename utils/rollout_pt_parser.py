@@ -35,6 +35,9 @@ __all__ = [
     "cluster_abort_reasons",
     "classify_sample_outcome",
     "cluster_attempt_outcomes",
+    "summarize_stack_type_breakdown",
+    "summarize_train_sample_stats",
+    "index_attempt_outcomes",
     "split_response_to_turns",
     "token_estimate",
     "_attempt_layout",  # 暴露给测试
@@ -173,6 +176,39 @@ def sample_abort_reason(sample: Dict[str, Any]) -> Optional[str]:
     if abort_reason:
         return str(abort_reason).strip() or None
     return None
+
+
+def index_attempt_outcomes(dump: Dict[str, Any]) -> Dict[Tuple[int, int], Dict[str, Any]]:
+    """按扫描入库键 ``(group_index, attempt_id)`` 索引每条 sample 的结局。
+
+    ``attempt_id`` 与 ``rollout_scan_service`` 一致：优先 ``sample.rollout_id``，
+    缺省时用 enumerate 下标（abort 样本常见 ``rollout_id=None``）。
+    """
+    samples = dump.get("samples") if isinstance(dump, dict) else None
+    if not isinstance(samples, list):
+        return {}
+    out: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    for i, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            continue
+        gi = sample.get("group_index")
+        if not isinstance(gi, int):
+            continue
+        aid = sample.get("rollout_id")
+        if aid is None:
+            aid = i
+        try:
+            key = (int(gi), int(aid))
+        except (TypeError, ValueError):
+            continue
+        outcome = classify_sample_outcome(sample)
+        out[key] = {
+            "abort_reason": sample_abort_reason(sample),
+            "outcome_category": outcome.get("category"),
+            "outcome_reason": outcome.get("reason"),
+            "outcome_label": outcome.get("label"),
+        }
+    return out
 
 
 def cluster_abort_reasons(
@@ -436,6 +472,179 @@ def cluster_attempt_outcomes(
         "by_reason": _reason_rows(reason_overall),
         "by_group": by_group,
         "group_trend": group_trend,
+    }
+
+
+_STACK_REWARD_EPS = 1e-9
+
+
+def _timeout_reward_flag(reward: Optional[float]) -> str:
+    """超时样本的奖励标记：rw1 / rw0 / none。"""
+    if isinstance(reward, (int, float)):
+        rv = float(reward)
+        if abs(rv - 1.0) <= _STACK_REWARD_EPS:
+            return "rw1"
+        if abs(rv) <= _STACK_REWARD_EPS:
+            return "rw0"
+    return "none"
+
+
+def summarize_stack_type_breakdown(dump: Dict[str, Any]) -> Dict[str, Any]:
+    """为任务页「类型柱」汇总单次 rollout 的细分堆叠段。
+
+    - 正常失败按 ``diagnosis`` / ``failure_class`` 切分
+    - 超时按「是否有奖励」× 超时原因切分（``rw1`` / ``rw0`` / ``none``）
+    - abort 按 ``abort_reason`` 切分
+    - 通过合并为单段，便于与结局柱等高归一
+
+    Returns:
+        {
+          "n_attempts", "n_pass", "n_fail", "n_timeout", "n_abort", "n_other",
+          "n_timeout_rw1", "n_timeout_rw0", "n_timeout_none",
+          "segments": [
+            {"key","category","reason","reward_flag","count","label"}, ...
+          ]
+        }
+    """
+    from collections import Counter
+
+    empty = {
+        "n_attempts": 0,
+        "n_pass": 0,
+        "n_fail": 0,
+        "n_timeout": 0,
+        "n_abort": 0,
+        "n_other": 0,
+        "n_timeout_rw1": 0,
+        "n_timeout_rw0": 0,
+        "n_timeout_none": 0,
+        "segments": [],
+    }
+    samples = dump.get("samples") if isinstance(dump, dict) else None
+    if not isinstance(samples, list):
+        return empty
+
+    counter: Counter = Counter()
+    cat_n: Counter = Counter()
+    timeout_rw_n: Counter = Counter()
+
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        outcome = classify_sample_outcome(sample)
+        cat = str(outcome.get("category") or "other")
+        if cat not in {"pass", "fail", "timeout", "abort", "other"}:
+            cat = "other"
+        reason = str(outcome.get("reason") or "").strip() or "(unknown)"
+        cat_n[cat] += 1
+        if cat == "pass":
+            counter[("pass", "pass", None)] += 1
+            continue
+        if cat == "timeout":
+            flag = _timeout_reward_flag(resolve_sample_reward(sample))
+            timeout_rw_n[flag] += 1
+            counter[("timeout", reason, flag)] += 1
+            continue
+        counter[(cat, reason, None)] += 1
+
+    order_cat = {"pass": 0, "fail": 1, "timeout": 2, "abort": 3, "other": 4}
+    order_flag = {"rw1": 0, "rw0": 1, "none": 2, None: 0}
+
+    def _seg_sort_key(item: Tuple[Tuple[Any, ...], int]) -> Tuple[Any, ...]:
+        (cat, reason, flag), count = item
+        return (order_cat.get(cat, 9), order_flag.get(flag, 9), -count, str(reason))
+
+    segments: List[Dict[str, Any]] = []
+    for (cat, reason, flag), count in sorted(counter.items(), key=_seg_sort_key):
+        if cat == "pass":
+            label = "通过"
+            key = "pass"
+        elif cat == "timeout":
+            rw_zh = {"rw1": "有奖", "rw0": "无奖", "none": "无测"}.get(str(flag), str(flag))
+            label = f"超时·{rw_zh}·{reason}"
+            key = f"timeout:{reason}:{flag}"
+        else:
+            label = f"{cat}:{reason}"
+            key = f"{cat}:{reason}"
+        segments.append(
+            {
+                "key": key,
+                "category": cat,
+                "reason": reason,
+                "reward_flag": flag,
+                "count": int(count),
+                "label": label,
+            }
+        )
+
+    return {
+        "n_attempts": int(sum(cat_n.values())),
+        "n_pass": int(cat_n.get("pass", 0)),
+        "n_fail": int(cat_n.get("fail", 0)),
+        "n_timeout": int(cat_n.get("timeout", 0)),
+        "n_abort": int(cat_n.get("abort", 0)),
+        "n_other": int(cat_n.get("other", 0)),
+        "n_timeout_rw1": int(timeout_rw_n.get("rw1", 0)),
+        "n_timeout_rw0": int(timeout_rw_n.get("rw0", 0)),
+        "n_timeout_none": int(timeout_rw_n.get("none", 0)),
+        "segments": segments,
+    }
+
+
+def summarize_train_sample_stats(dump: Dict[str, Any]) -> Dict[str, Any]:
+    """统计进入训练的样本数（无 ``metadata.train_drop_reason`` 视为保留）。
+
+    Returns:
+        {
+          "n_samples", "n_train_kept", "n_train_dropped",
+          "keep_pct",
+          "by_drop_reason": [{"reason","count","pct"}, ...]
+        }
+    """
+    from collections import Counter
+
+    empty = {
+        "n_samples": 0,
+        "n_train_kept": 0,
+        "n_train_dropped": 0,
+        "keep_pct": 0.0,
+        "by_drop_reason": [],
+    }
+    samples = dump.get("samples") if isinstance(dump, dict) else None
+    if not isinstance(samples, list):
+        return empty
+
+    kept = 0
+    dropped = 0
+    drop_c: Counter = Counter()
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        metadata = (
+            sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+        )
+        tdr = metadata.get("train_drop_reason")
+        if tdr is None or str(tdr).strip() == "":
+            kept += 1
+        else:
+            dropped += 1
+            drop_c[str(tdr).strip() or "(unknown)"] += 1
+
+    n_samples = kept + dropped
+    drop_total = sum(drop_c.values()) or 1
+    return {
+        "n_samples": int(n_samples),
+        "n_train_kept": int(kept),
+        "n_train_dropped": int(dropped),
+        "keep_pct": round(100.0 * kept / n_samples, 1) if n_samples else 0.0,
+        "by_drop_reason": [
+            {
+                "reason": reason,
+                "count": int(count),
+                "pct": round(100.0 * count / drop_total, 1),
+            }
+            for reason, count in drop_c.most_common()
+        ],
     }
 
 
