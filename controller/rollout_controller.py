@@ -298,6 +298,12 @@ def _empty_failure_clusters() -> Dict[str, Any]:
     return empty_failure_clusters()
 
 
+def _empty_failure_insights() -> Dict[str, Any]:
+    from service.task_annotation_service import empty_failure_insights
+
+    return empty_failure_insights()
+
+
 def _load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]:
     """薄封装：注解加载已下沉到 ``service.task_annotation_service``。"""
     from service.task_annotation_service import load_pt_annotations
@@ -470,6 +476,8 @@ async def page_rollout_detail(
     abort_clusters_view: Dict[str, Any] = abort_clusters
     failure_clusters: Dict[str, Any] = _empty_failure_clusters()
     failure_clusters_view: Dict[str, Any] = failure_clusters
+    failure_insights: Dict[str, Any] = _empty_failure_insights()
+    failure_insights_view: Dict[str, Any] = failure_insights
 
     if Rollout is None or Session is None:
         warning = "Rollout 模型尚未就绪"
@@ -515,6 +523,9 @@ async def page_rollout_detail(
                     abort_clusters = annotations.get("abort_clusters") or abort_clusters
                     failure_clusters = (
                         annotations.get("failure_clusters") or failure_clusters
+                    )
+                    failure_insights = (
+                        annotations.get("failure_insights") or failure_insights
                     )
                     outcome_index = annotations.get("attempt_outcomes") or {}
                     for a in attempts:
@@ -623,11 +634,27 @@ async def page_rollout_detail(
                             "scope": "group",
                             "group_index": gi,
                         }
+                        fi_g = (failure_insights.get("by_group") or {}).get(gi) or {
+                            "n_fail": 0,
+                            "n_timeout": 0,
+                            "n_abort": 0,
+                            "fail": {"n_samples": 0, "clusters": []},
+                            "timeout": {"n_samples": 0, "clusters": []},
+                            "abort": {"n_samples": 0, "clusters": []},
+                        }
+                        failure_insights_view = {
+                            **fi_g,
+                            "by_group": {gi: fi_g},
+                            "scope": "group",
+                            "group_index": gi,
+                        }
                     else:
                         abort_clusters_view = dict(abort_clusters)
                         abort_clusters_view["scope"] = "rollout"
                         failure_clusters_view = dict(failure_clusters)
                         failure_clusters_view["scope"] = "rollout"
+                        failure_insights_view = dict(failure_insights)
+                        failure_insights_view["scope"] = "rollout"
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载 rollout 详情失败 rollout_id={}: {}", rollout_id, exc)
             warning = f"加载失败: {exc}"
@@ -647,6 +674,7 @@ async def page_rollout_detail(
             "group_summaries": group_summaries,
             "abort_clusters": abort_clusters_view,
             "failure_clusters": failure_clusters_view,
+            "failure_insights": failure_insights_view,
             "warning": warning,
         },
     )
@@ -699,6 +727,9 @@ async def api_get_rollout_json(
             "failure_clusters": _load_pt_annotations(
                 data["rollout"].get("pt_path")
             ).get("failure_clusters"),
+            "failure_insights": _load_pt_annotations(
+                data["rollout"].get("pt_path")
+            ).get("failure_insights"),
             "attempts": [
                 {
                     "primary_id": a["primary_id"],

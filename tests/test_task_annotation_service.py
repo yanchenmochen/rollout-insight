@@ -67,8 +67,14 @@ class TestTaskAnnotationSidecar(unittest.TestCase):
             # first load computes + writes sidecar
             first = tas.load_pt_annotations(self.pt_path)
             self.assertGreater(first["type_breakdown"]["n_attempts"], 0)
+            self.assertIn("failure_insights", first)
+            self.assertGreaterEqual(int(first["failure_insights"].get("n_fail") or 0), 1)
             sidecar = tas.sidecar_path_for(self.pt_path)
             self.assertTrue(os.path.isfile(sidecar))
+            with open(sidecar, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            self.assertEqual(int(payload.get("version") or 0), 2)
+            self.assertIn("failure_insights", payload.get("annotations") or {})
 
         tas.clear_annotation_cache_for_tests()
         with mock.patch(

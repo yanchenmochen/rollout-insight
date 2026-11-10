@@ -17,6 +17,8 @@ from loguru import logger
 __all__ = [
     "SIDECAR_SUFFIX",
     "empty_annotations",
+    "empty_failure_clusters",
+    "empty_failure_insights",
     "load_pt_annotations",
     "warm_pt_annotation_sidecar",
     "sidecar_path_for",
@@ -26,7 +28,7 @@ __all__ = [
 ]
 
 SIDECAR_SUFFIX = ".ri_ann.json"
-_SIDECAR_VERSION = 1
+_SIDECAR_VERSION = 2
 
 _PT_ANNOTATION_CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -111,10 +113,17 @@ def empty_train_sample_stats() -> Dict[str, Any]:
     }
 
 
+def empty_failure_insights() -> Dict[str, Any]:
+    from utils.failure_insight import empty_failure_insights as _empty
+
+    return _empty()
+
+
 def empty_annotations() -> Dict[str, Any]:
     return {
         "group_briefs": {},
         "failure_clusters": empty_failure_clusters(),
+        "failure_insights": empty_failure_insights(),
         "abort_clusters": {
             "total": 0,
             "n_groups_with_abort": 0,
@@ -214,6 +223,7 @@ def _annotations_complete(cached: Dict[str, Any]) -> bool:
         and "type_breakdown" in cached
         and "train_sample_stats" in cached
         and "failure_clusters" in cached
+        and "failure_insights" in cached
     )
 
 
@@ -245,6 +255,7 @@ def _read_sidecar(pt_path: str) -> Optional[Dict[str, Any]]:
     result = empty_annotations()
     result["group_briefs"] = _normalize_group_briefs(ann.get("group_briefs"))
     result["failure_clusters"] = ann.get("failure_clusters") or empty_failure_clusters()
+    result["failure_insights"] = ann.get("failure_insights") or empty_failure_insights()
     result["abort_clusters"] = ann.get("abort_clusters") or result["abort_clusters"]
     result["attempt_outcomes"] = _deserialize_attempt_outcomes(
         ann.get("attempt_outcomes") or {}
@@ -271,6 +282,8 @@ def _write_sidecar(pt_path: str, annotations: Dict[str, Any]) -> None:
             },
             "failure_clusters": annotations.get("failure_clusters")
             or empty_failure_clusters(),
+            "failure_insights": annotations.get("failure_insights")
+            or empty_failure_insights(),
             "abort_clusters": annotations.get("abort_clusters")
             or empty_annotations()["abort_clusters"],
             "attempt_outcomes": _serialize_attempt_outcomes(
@@ -297,6 +310,7 @@ def _write_sidecar(pt_path: str, annotations: Dict[str, Any]) -> None:
 
 
 def _compute_annotations(pt_path: str) -> Dict[str, Any]:
+    from utils.failure_insight import cluster_failure_insights
     from utils.rollout_pt_parser import (
         cluster_abort_reasons,
         cluster_attempt_outcomes,
@@ -324,6 +338,7 @@ def _compute_annotations(pt_path: str) -> Dict[str, Any]:
     return {
         "group_briefs": briefs,
         "failure_clusters": failure,
+        "failure_insights": cluster_failure_insights(dump),
         "abort_clusters": cluster_abort_reasons(dump),
         "attempt_outcomes": index_attempt_outcomes(dump),
         "type_breakdown": summarize_stack_type_breakdown(dump),
