@@ -211,13 +211,15 @@ class DBAttemptService:
         """按业务键 ``rollout_id`` 聚合 attempt 分布（对齐 TB generated/paired/filtered）。
 
         返回 ``{rollout_id: {n_passed, n_aborted, n_timeout, n_failed, n_other,
-        n_valid_groups, n_attempts}}``：
+        n_valid_groups, n_attempts, n_reward_1, n_reward_0, n_no_reward}}``：
 
         - ``n_passed``：可测且 reward≈1（= generated 分子）
         - ``n_aborted``：abort / 不可测
         - ``n_timeout``：``status`` 为 truncated/timeout（优先于 reward）
         - ``n_failed``：可测且 reward≈0 的正常失败
         - ``n_valid_groups``：去掉 abort/timeout 后仍「有过有挂」的 group 数
+        - ``n_reward_1`` / ``n_reward_0``：含超时上的可测奖励（超时也可能有奖）
+        - ``n_no_reward``：abort 等不可测（置灰段）
         """
         if task_id is None:
             raise RolloutInsightException(
@@ -250,6 +252,9 @@ class DBAttemptService:
                     "n_failed": 0,
                     "n_other": 0,
                     "n_attempts": 0,
+                    "n_reward_1": 0,
+                    "n_reward_0": 0,
+                    "n_no_reward": 0,
                     "groups": {},
                 },
             )
@@ -257,9 +262,20 @@ class DBAttemptService:
             cat = cls._classify_attempt_row(status, reward)
             if cat == "abort":
                 bucket["n_aborted"] += 1
+                bucket["n_no_reward"] += 1
                 continue
             if cat == "timeout":
                 bucket["n_timeout"] += 1
+                if isinstance(reward, (int, float)):
+                    rv = float(reward)
+                    if abs(rv - 1.0) <= cls._REWARD_EPS:
+                        bucket["n_reward_1"] += 1
+                    elif abs(rv) <= cls._REWARD_EPS:
+                        bucket["n_reward_0"] += 1
+                    else:
+                        bucket["n_no_reward"] += 1
+                else:
+                    bucket["n_no_reward"] += 1
                 continue
             gmap = bucket["groups"].setdefault(
                 int(group_index) if group_index is not None else -1,
@@ -267,12 +283,24 @@ class DBAttemptService:
             )
             if cat == "pass":
                 bucket["n_passed"] += 1
+                bucket["n_reward_1"] += 1
                 gmap["has_one"] = True
             elif cat == "fail":
                 bucket["n_failed"] += 1
+                bucket["n_reward_0"] += 1
                 gmap["has_zero"] = True
             else:
                 bucket["n_other"] += 1
+                if isinstance(reward, (int, float)):
+                    rv = float(reward)
+                    if abs(rv - 1.0) <= cls._REWARD_EPS:
+                        bucket["n_reward_1"] += 1
+                    elif abs(rv) <= cls._REWARD_EPS:
+                        bucket["n_reward_0"] += 1
+                    else:
+                        bucket["n_no_reward"] += 1
+                else:
+                    bucket["n_no_reward"] += 1
 
         out: Dict[int, Dict[str, int]] = {}
         for rid, bucket in by_rollout.items():
@@ -289,6 +317,9 @@ class DBAttemptService:
                 "n_other": int(bucket["n_other"]),
                 "n_valid_groups": int(n_valid),
                 "n_attempts": int(bucket["n_attempts"]),
+                "n_reward_1": int(bucket["n_reward_1"]),
+                "n_reward_0": int(bucket["n_reward_0"]),
+                "n_no_reward": int(bucket["n_no_reward"]),
             }
         return out
 

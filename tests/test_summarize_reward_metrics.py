@@ -68,6 +68,10 @@ class TestSummarizeRewardMetricsByRollout(unittest.TestCase):
         self.assertEqual(m["n_failed"], 1)
         self.assertEqual(m["n_passed"], 1)
         self.assertEqual(m["n_aborted"], 1)
+        # 奖励柱：超时可有奖；abort 计无测
+        self.assertEqual(m["n_reward_1"], 2)  # pass + timeout:1
+        self.assertEqual(m["n_reward_0"], 2)  # fail + timeout:0
+        self.assertEqual(m["n_no_reward"], 1)  # abort
 
 
 class TestSummarizeRewardMetricsByGroup(unittest.TestCase):
