@@ -105,9 +105,12 @@
 - `def load_pt(path: str) -> Dict[str, Any]` — 加载 .pt dump：优先 zip/pickle，不要求环境能 ``import torch``。
 - `def resolve_sample_reward(sample: Dict[str, Any]) -> Optional[float]` — 解析单条 sample 的可测 reward。
 - `def sample_abort_reason(sample: Dict[str, Any]) -> Optional[str]` — 若 sample 为 abort，返回聚类用原因字符串；否则 None。
+- `def index_attempt_outcomes(dump: Dict[str, Any]) -> Dict[Tuple[int, int], Dict[str, Any]]` — 按扫描入库键 ``(group_index, attempt_id)`` 索引每条 sample 的结局。
 - `def cluster_abort_reasons(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[str…` — 对 dump 内 abort attempt 按 ``abort_reason`` 聚类（兼容旧调用）。
 - `def classify_sample_outcome(sample: Dict[str, Any]) -> Dict[str, str]` — 把单条 sample 归为 pass / abort / timeout / fail / other。
 - `def cluster_attempt_outcomes(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败情形聚类（abort / timeout / 正常失败 / 通过）。
+- `def summarize_stack_type_breakdown(dump: Dict[str, Any]) -> Dict[str, Any]` — 为任务页「类型柱」汇总单次 rollout 的细分堆叠段。
+- `def summarize_train_sample_stats(dump: Dict[str, Any]) -> Dict[str, Any]` — 统计进入训练的样本数（无 ``metadata.train_drop_reason`` 视为保留）。
 - `def samples_index_for(_sample: Dict[str, Any]) -> int` — 占位：见 _segment_payload 中的 try/except；这里返回 0 让 except 兜底。
 - `def parse_attempts_and_segments(dump: Dict[str, Any]) -> Dict[str, Any]` — 把 dump 拆成 attempts + segments + 整文 response。
 - `def split_response_to_turns(response_text: str) -> List[Dict[str, Any]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分整文 response。
@@ -287,6 +290,22 @@
 
 - `staticmethod` `def ensure_transcript(segment_id: int, tokenizer_dir: str='', force: bool=False) -> Dict[str, A…`
 
+### `task_annotation_service_module` (`service/task_annotation_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def empty_failure_clusters() -> Dict[str, Any]`
+- `staticmethod` `def empty_type_breakdown() -> Dict[str, Any]`
+- `staticmethod` `def empty_train_sample_stats() -> Dict[str, Any]`
+- `staticmethod` `def empty_annotations() -> Dict[str, Any]`
+- `staticmethod` `def sidecar_path_for(pt_path: str) -> str`
+- `staticmethod` `def load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]`
+- `staticmethod` `def warm_pt_annotation_sidecar(pt_path: Optional[str]) -> bool`
+- `staticmethod` `def assign_stack_type_colors(key_totals: Counter) -> Dict[str, Dict[str, str]]`
+- `staticmethod` `def list_task_annotation_meta(task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def get_rollout_annotation_payload(task_id: int, rollout_pk: int) -> Dict[str, Any]`
+- `staticmethod` `def clear_annotation_cache_for_tests() -> None`
+
 ## controller/ — REST 路由（新增接口前对照）
 
 | 模块 | Method | Path | Function | 用途 |
@@ -318,6 +337,8 @@
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
 | `task_controller` | POST | `/api/tasks` | `api_create_task` | 创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。 |
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
+| `task_controller` | GET | `/api/tasks/{task_id}/annotations/meta.json` | `api_task_annotations_meta` | 返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。 |
+| `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
