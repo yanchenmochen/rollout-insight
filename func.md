@@ -69,6 +69,18 @@
 - `def split_turns(text: str) -> List[tuple[str, str]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分为 ``(role, content)``。
 - `def render_transcript(path: str | Path, sample_idx: int, tokenizer_dir: Optional[str]=None, inc…` — 渲染一个 sample 的完整 transcript（Markdown）。
 
+### `utils/attempt_artifacts.py`
+
+- `def clear_artifact_cache_for_tests() -> None` — 仅供单测清空进程内索引缓存。
+- `def locate_artifacts_dir(rollout_root: Optional[str]) -> Optional[Path]` — 从 ``task.rollout_root``（通常是 ``{run}/generated/rollout_dumps``）向上找 ``attempt_artifacts``。
+- `def summarize_entry(summary: Dict[str, Any], stem: str) -> Dict[str, Any]` — 把单条 summary JSON 压成索引行（列表 / 聚类所需字段）。
+- `def load_summary_index(artifacts_dir: Path, *, use_cache: bool=True) -> List[Dict[str, Any]]` — 返回 summaries 的索引行列表；按 summaries 目录 mtime + 文件数失效。
+- `def load_summary(artifacts_dir: Path, stem: str) -> Optional[Dict[str, Any]]` — 读取单条完整 summary JSON；不存在返回 None。
+- `def load_patch(artifacts_dir: Path, stem: str, max_chars: int=_PATCH_MAX) -> Dict[str, Any]` — 读取 unified diff；超长截断并标记 ``truncated``。
+- `def find_trajectory_path(artifacts_dir: Path, stem: str) -> Optional[Path]` — 在 failed_ / passed_trajectories 中查找同名 history.jsonl。
+- `def strip_ansi(text: Any) -> str` — 去掉终端颜色控制符（pytest / bash 输出常带）。
+- `def load_trajectory_events(path: Path, *, offset: int=0, limit: int=200, errors_only: bool=Fals…` — 分页读取并规整轨迹事件；同时返回全量统计（总数 / 错误数 / 工具分布 / 末尾错误）。
+
 ### `utils/auth_session.py`
 
 - `def get_session_secret(config_path: Optional[str]=None) -> str` — 从 config.json 读 ``session_secret``；首次启动随机生成并写回。
@@ -91,6 +103,7 @@
 ### `utils/failure_insight.py`
 
 - `def empty_failure_insights() -> Dict[str, Any]` — 空的失败深挖结构（fail / timeout / abort clusters + by_group）。
+- `def parse_pytest_failure(stdout_tail: str) -> Tuple[Optional[str], Optional[str]]` — 从 pytest stdout_tail 抽 ``(首个失败用例, 错误摘要)``；无法识别时为 None。
 - `def extract_sample_failure_detail(sample: Dict[str, Any], *, sample_index: int=0) -> Optional[D…` — 抽取单条非通过 sample 的深挖细节；通过样本返回 None。
 - `def cluster_failure_insights(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败深挖聚类。
 
@@ -124,6 +137,18 @@
 - `def token_estimate(text: str, chars_per_token: float=3.5) -> int` — 粗估 token 数：默认按字符数 / 3.5。
 - `def split_response_to_turns_with_tokenizer(response_text: str='', *, tokens: Optional[Sequence[…` — v0.5.0 T1：优先用 tokens + tokenizer 切分；否则 fallback 到 response 文本。
 
+### `utils/run_train_metrics.py`
+
+- `def empty_p0_payload(*, source: str='none', run_dir: str='') -> Dict[str, Any]` — （无 docstring）
+- `def clear_p0_cache_for_tests() -> None` — 仅供单测清空进程内缓存与后台刷新标记。
+- `def resolve_run_dir(rollout_root: Optional[str]) -> Optional[Path]` — 从 ``task.rollout_root``（通常指向 ``.../generated/rollout_dumps``）推 run 根目录。
+- `def discover_tbs_dir(run_dir: Path) -> Optional[Path]` — （无 docstring）
+- `def discover_main_log(run_dir: Path) -> Optional[Path]` — （无 docstring）
+- `def load_p0_metrics(rollout_root: Optional[str], *, use_cache: bool=True, allow_stale: bool=Tru…` — 对外入口：按 rollout_root 解析 P0 指标。
+- `def warm_p0_metrics(rollout_root: Optional[str]) -> bool` — 后台预热：优先走缓存；无缓存时才冷读 tbs。
+- `def load_p0_from_tbs(tbs_dir: Path) -> Dict[str, Any]` — 用 TensorBoard EventAccumulator 读 scalars。
+- `def load_p0_from_log(log_path: Path) -> Dict[str, Any]` — 流式扫描主日志，抽取 perf / filtered 字典中的 P0 字段。
+
 ## db/ — ORM 模型
 
 | ORM 类 | 文件 | 物理表 |
@@ -149,6 +174,7 @@
 - `staticmethod` `def get_by_id() -> Optional[DBAttempt]`
 - `staticmethod` `def delete_by_rollout(rollout_id: int) -> int`
 - `staticmethod` `def delete_by_task() -> int`
+- `classmethod` `def list_outcome_rows_by_task(task_id: int, rollout_id: Optional[int]=None) -> List[Dict[str, A…`
 - `classmethod` `def summarize_reward_metrics_by_rollout(task_id: int) -> Dict[int, Dict[str, int]]`
 - `classmethod` `def summarize_reward_metrics_by_group(task_id: int, rollout_id: int) -> Dict[int, Dict[str, Any…`
 
@@ -257,6 +283,17 @@
 - `staticmethod` `def analyze_transcript(path: str) -> Dict[str, Any]`
 - `staticmethod` `def batch_analyze(paths: Iterable[str]) -> List[Dict[str, Any]]`
 
+### `failure_analysis_service_module` (`service/failure_analysis_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def link_attempts_to_entries(rows: List[Dict[str, Any]], entries: List[Dict[str, Any]]) -> Dict…`
+- `staticmethod` `def build_failure_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]`
+- `staticmethod` `def list_tasks_with_failure_counts(limit: int=50) -> List[Dict[str, Any]]`
+- `staticmethod` `def get_task_failure_overview(task_id: int, rollout_id: Optional[int]=None) -> Dict[str, Any]`
+- `staticmethod` `def get_attempt_failure_detail(attempt_pk: int) -> Dict[str, Any]`
+- `staticmethod` `def get_attempt_trajectory(attempt_pk: int, offset: int=0, limit: int=200, errors_only: bool=Fa…`
+
 ### `nanhu_client_module` (`service/nanhu_client.py`)
 
 模块级公开函数（不在 class 内）：
@@ -283,6 +320,12 @@
 - `method` `def scan_task(task_id: int, force: bool=False) -> Dict[str, Any]`
 - `method` `def rescan_task(task_id: int) -> Dict[str, Any]`
 - `method` `def get_progress(task_id: int) -> Dict[str, Any]`
+
+### `run_train_metrics_service_module` (`service/run_train_metrics_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def get_task_p0_train_metrics(task_id: int) -> Dict[str, Any]`
 
 ### `segment_search_service_module` (`service/segment_search_service.py`)
 
@@ -326,6 +369,11 @@
 | `auth_controller` | POST | `/api/auth/register` | `api_register` | 注册端点。 |
 | `auth_controller` | POST | `/api/auth/logout` | `api_logout` | 登出：清 session，返回 /api/tasks。 |
 | `auth_controller` | GET | `/api/auth/me` | `api_me` | 返回当前用户 dict；未登录返回 401 JSON。 |
+| `failure_controller` | GET | `/api/failures` | `page_failure_overview` | 渲染 failure_overview.html；无 task_id 时列出任务供选择。 |
+| `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}` | `page_failure_attempt` | 渲染 failure_attempt.html：单 attempt 怎么失败的。 |
+| `failure_controller` | GET | `/api/failures/tasks/{task_id}/overview.json` | `api_failure_overview` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt 列表 + 原因聚类。 |
+| `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}/detail.json` | `api_failure_attempt_detail` | 单 attempt 失败详情（结论 / 评测证据 / 耗时 / patch / 回跳链接）。 |
+| `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}/trajectory.json` | `api_failure_attempt_trajectory` | 分页返回 OpenHands 轨迹事件（errors_only=true 只看报错步）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/page` | `page_nanhu_jobs` | 渲染 nanhu_jobs.html（页面 + 表 + 过滤）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs` | `api_list_nanhu_jobs` | JSON 列表；refresh=1 会先调 nanhu_client.list_train_jobs 同步落库。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/{job_id}/resolve-for-task` | `api_resolve_job_for_task` | 根据南湖 job 详情解析创建 Rollout 任务所需字段。 |
@@ -344,6 +392,7 @@
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
 | `task_controller` | POST | `/api/tasks` | `api_create_task` | 创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。 |
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
+| `task_controller` | GET | `/api/tasks/{task_id}/train-metrics/p0.json` | `api_task_train_metrics_p0` | P0 奖励设计指标：优先 tbs/，回退主日志 perf / filtered。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/annotations/meta.json` | `api_task_annotations_meta` | 返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |

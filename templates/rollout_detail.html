@@ -36,6 +36,11 @@
 
     .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
 
+    .fail-traj-link { margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px; text-decoration: none;
+        color: #c62828; border: 1px solid #ef9a9a; background: #fff5f5; white-space: nowrap; }
+    .fail-traj-link:hover { background: #ffebee; }
+    details.attempt-row.is-targeted > summary { outline: 2px solid #1f3550; outline-offset: -2px; }
+
     /* ------- v0.5.0 四层手风琴 ------- */
     details.tree {
         background: #fafbfc; border: 1px solid #e4e8ec; border-radius: var(--te-radius);
@@ -1161,6 +1166,22 @@
         seg.addEventListener('toggle', () => { loadSegmentTurns(seg); });
         if (seg.open) loadSegmentTurns(seg);
     });
+
+    // 从失败分析页跳来时带 #attempt-N：展开所在 group 与该 attempt 并滚动定位
+    function revealAttemptFromHash() {
+        const m = /^#attempt-(\d+)$/.exec(window.location.hash || '');
+        if (!m) return;
+        const row = document.getElementById('attempt-' + m[1]);
+        if (!row) return;
+        for (let p = row.parentElement; p; p = p.parentElement) {
+            if (p.tagName === 'DETAILS') p.open = true;
+        }
+        row.open = true;
+        row.classList.add('is-targeted');
+        row.scrollIntoView({ block: 'center' });
+    }
+    revealAttemptFromHash();
+    window.addEventListener('hashchange', revealAttemptFromHash);
 
     document.getElementById('expandAllBtn').addEventListener('click', () => {
         document.querySelectorAll('#treeRoot details.tree, #treeRoot details.turn-chunk').forEach((d) => { d.open = true; });

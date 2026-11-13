@@ -68,11 +68,17 @@
     }
 
     .layout-split .left-nav {
-        flex: 0 0 180px;
+        flex: 0 0 200px;
         background: var(--ri-surface);
         border: 1px solid var(--ri-border);
         border-radius: var(--te-radius);
         padding: 12px 8px;
+        position: sticky;
+        top: 56px; /* 顶栏 navbar ~44px + 间距 */
+        align-self: flex-start;
+        max-height: calc(100vh - 72px);
+        overflow-y: auto;
+        z-index: 20;
     }
 
     .layout-split .left-nav h3 {
@@ -101,6 +107,21 @@
         color: #fff;
     }
 
+    .layout-split .left-nav a.nav-sub {
+        padding-left: 18px;
+        font-size: 12.5px;
+        color: var(--ri-muted);
+    }
+
+    .layout-split .left-nav a.nav-sub.active {
+        background: #e8f0fa;
+        color: #1e5080;
+    }
+
+    .layout-split .left-nav .nav-group {
+        margin-bottom: 4px;
+    }
+
     .layout-split .right-main {
         flex: 1;
         min-width: 0;
@@ -112,6 +133,12 @@
         border-radius: var(--te-radius);
         padding: 16px 20px;
         margin-bottom: 18px;
+        scroll-margin-top: 64px;
+    }
+
+    .p0-anchor,
+    .stack-anchor {
+        scroll-margin-top: 64px;
     }
 
     .section h2 {
@@ -227,6 +254,165 @@
         background: #fff3cd;
         border-color: #ffc107;
         color: #856404;
+    }
+
+    /* P0 奖励设计（tbs / 日志） */
+    .p0-status {
+        font-size: 13px;
+        color: var(--ri-muted);
+        margin-bottom: 8px;
+    }
+    .p0-status.is-error { color: #9b2c2c; }
+    .p0-meta {
+        font-size: 12px;
+        color: var(--ri-muted);
+        margin-bottom: 10px;
+        word-break: break-all;
+    }
+    .p0-meta .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-right: 6px;
+        background: #e8f0fa;
+        color: #1e5080;
+    }
+    .p0-meta .pill.is-log { background: #fff3cd; color: #856404; }
+    .p0-meta .pill.is-none { background: #f3c8c8; color: #9b2c2c; }
+    .p0-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+    .p0-stat {
+        background: #f8fafb;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 8px 10px;
+    }
+    .p0-stat .v {
+        font-size: 18px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: var(--ri-ink);
+    }
+    .p0-stat .v.is-down { color: #9b2c2c; }
+    .p0-stat .v.is-up { color: var(--ri-success); }
+    .p0-stat .l {
+        font-size: 11px;
+        color: var(--ri-muted);
+        margin-top: 2px;
+    }
+    .p0-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+    @media (max-width: 900px) {
+        .p0-grid { grid-template-columns: 1fr; }
+    }
+    .p0-block-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ri-ink);
+        margin-bottom: 6px;
+    }
+    .p0-spark {
+        display: flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 48px;
+        margin-bottom: 8px;
+        padding: 4px 0;
+    }
+    .p0-spark .col {
+        flex: 1;
+        min-width: 2px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        height: 100%;
+        gap: 1px;
+    }
+    .p0-spark .bar {
+        width: 100%;
+        border-radius: 1px 1px 0 0;
+        min-height: 1px;
+    }
+    .p0-curve-card {
+        background: #f8fafb;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 10px 12px 8px;
+        margin-bottom: 10px;
+    }
+    .p0-curve-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        margin-bottom: 6px;
+        font-size: 11.5px;
+        color: var(--ri-ink);
+    }
+    .p0-curve-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .p0-curve-legend i {
+        width: 14px;
+        height: 3px;
+        border-radius: 1px;
+        display: inline-block;
+    }
+    .p0-curve-svg-wrap {
+        width: 100%;
+        height: 160px;
+        position: relative;
+    }
+    .p0-curve-svg-wrap svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+    .p0-curve-axis {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10.5px;
+        color: var(--ri-muted);
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+    }
+    .p0-curve-empty {
+        font-size: 12px;
+        color: var(--ri-muted);
+        padding: 18px 0;
+        text-align: center;
+    }
+    .p0-hist {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 56px;
+        margin-top: 4px;
+    }
+    .p0-hist .h {
+        flex: 1;
+        text-align: center;
+    }
+    .p0-hist .h .bar {
+        background: #5b8def;
+        border-radius: 2px 2px 0 0;
+        margin: 0 auto 2px;
+        width: 70%;
+        min-height: 2px;
+    }
+    .p0-hist .h .cap {
+        font-size: 10px;
+        color: var(--ri-muted);
     }
 
     /* 跨 rollout attempt 堆叠柱图（每步三柱：结局 / 奖励 / 类型） */
@@ -373,7 +559,15 @@
     .stack-reason-list em { color: var(--ri-muted); font-style: normal; margin-left: 4px; }
     @media (max-width: 900px) {
         .layout-split { flex-direction: column; }
-        .layout-split .left-nav { flex: 1 1 auto; width: 100%; }
+        .layout-split .left-nav {
+            flex: 1 1 auto;
+            width: 100%;
+            position: sticky;
+            top: 48px;
+            max-height: none;
+            overflow: visible;
+            z-index: 20;
+        }
         .stack-reason-grid { grid-template-columns: 1fr; }
         .stack-col { grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
         .stack-bar { height: 16px; }
@@ -394,6 +588,7 @@
     </div>
     <div class="action-bar">
         <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
+        <a href="/api/failures?task_id={{ task.id }}" class="btn btn-secondary">失败分析</a>
         <button type="button" class="btn" id="rescanBtn">重扫</button>
         <button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>
     </div>
@@ -407,12 +602,29 @@
 {% endif %}
 
 <div class="layout-split">
-        <aside class="left-nav">
+        <aside class="left-nav" id="taskSideNav">
             <h3>本任务导航</h3>
-            <a href="#overview" class="active">概览</a>
-            <a href="#rollout-stack">Attempt 分布</a>
-            <a href="#rollouts">Rollout 列表 ({{ rollouts | length }})</a>
-            <a href="#nanhu">关联南湖 job</a>
+            <div class="nav-group">
+                <a href="#overview" class="active" data-nav="overview">概览</a>
+            </div>
+            <div class="nav-group">
+                <a href="#train-p0" data-nav="train-p0">P0 奖励设计</a>
+                <a href="#p0-passrate" class="nav-sub" data-nav="p0-passrate">pass@k</a>
+                <a href="#p0-group" class="nav-sub" data-nav="p0-group">组内组成</a>
+                <a href="#p0-funnel" class="nav-sub" data-nav="p0-funnel">训练漏斗</a>
+                <a href="#p0-removed" class="nav-sub" data-nav="p0-removed">removed 原因</a>
+                <a href="#p0-reward" class="nav-sub" data-nav="p0-reward">reward 对比</a>
+            </div>
+            <div class="nav-group">
+                <a href="#rollout-stack" data-nav="rollout-stack">Attempt 分布</a>
+                <a href="#stack-reasons" class="nav-sub" data-nav="stack-reasons">失败原因 Top</a>
+            </div>
+            <div class="nav-group">
+                <a href="#rollouts" data-nav="rollouts">Rollout 列表 ({{ rollouts | length }})</a>
+            </div>
+            <div class="nav-group">
+                <a href="#nanhu" data-nav="nanhu">关联南湖 job</a>
+            </div>
         </aside>
 
     <div class="right-main">
@@ -482,6 +694,63 @@
                 </tr>
                 {% endif %}
             </table>
+        </div>
+
+        <div class="section" id="train-p0">
+            <h2>P0 奖励设计
+                <small>tbs/ 优先 · 无 TB 回退日志 perf / filtered · dumps 之外的可学性信号</small>
+            </h2>
+            <div id="p0Status" class="p0-status">解析 tbs / 日志中…</div>
+            <div id="p0Body" style="display:none">
+                <div class="p0-meta" id="p0Meta"></div>
+                <div class="p0-stats" id="p0Stats"></div>
+                <div class="p0-grid">
+                    <div id="p0-passrate" class="p0-anchor">
+                        <div class="p0-block-title">pass@k（按 rollout step）</div>
+                        <div class="p0-curve-card" id="p0PassCurve"></div>
+                        <table class="sub-table" id="p0PassTable">
+                            <thead><tr><th>指标</th><th class="col-num">首</th><th class="col-num">末</th><th class="col-num">Δ</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div id="p0-group" class="p0-anchor">
+                        <div class="p0-block-title">组内 reward 组成（GSPO 可学性）</div>
+                        <div class="p0-curve-card" id="p0GroupCurve"></div>
+                        <table class="sub-table" id="p0GroupTable">
+                            <thead><tr><th>组成</th><th class="col-num">末值</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                        <div class="p0-block-title" style="margin-top:10px">末步 pass_count k/8</div>
+                        <div class="p0-hist" id="p0PassHist"></div>
+                    </div>
+                </div>
+                <div class="p0-grid" style="margin-top:12px">
+                    <div id="p0-funnel" class="p0-anchor">
+                        <div class="p0-block-title">训练漏斗</div>
+                        <div class="p0-curve-card" id="p0FunnelCurve"></div>
+                        <table class="sub-table" id="p0FunnelTable">
+                            <thead><tr><th>指标</th><th class="col-num">首</th><th class="col-num">末</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div id="p0-removed" class="p0-anchor">
+                        <div class="p0-block-title">removed 原因（累计）</div>
+                        <div class="p0-curve-card" id="p0RemovedCurve"></div>
+                        <table class="sub-table" id="p0RemovedTable">
+                            <thead><tr><th>原因</th><th class="col-num">合计</th><th class="col-num">末步</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="p0-reward" class="p0-anchor" style="margin-top:12px">
+                    <div class="p0-block-title">reward 对比（raw / shaped · generated / filtered）</div>
+                    <div class="p0-curve-card" id="p0RewardCurve"></div>
+                    <table class="sub-table" id="p0RewardTable">
+                        <thead><tr><th>序列</th><th class="col-num">首</th><th class="col-num">末</th><th class="col-num">Δ</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <div class="section" id="rollout-stack">
@@ -593,7 +862,7 @@
                     {% endif %}
                     {% endif %}
                 </div>
-                <div class="stack-reason-grid">
+                <div class="stack-reason-grid stack-anchor" id="stack-reasons">
                     <div class="stack-reason-block">
                         <div class="stack-reason-title"><i class="lg lg-fail"></i> 正常失败 · 具体类型</div>
                         <div id="stackFailReasons">
@@ -665,6 +934,7 @@
                         <th class="col-num" title="无 metadata.train_drop_reason 的样本数（进入训练）">进入训练</th>
                         <th class="col-num" title="≈ 通过/n_attempts（abort 按 0 计入分母）">mean_reward</th>
                         <th>scanned_at</th>
+                        <th title="该 rollout 的非通过 attempt：按原因聚类 / 逐条看失败轨迹">失败分析</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -690,9 +960,13 @@
                                 {% if r.mean_reward is not none %}{{ "%.4f"|format(r.mean_reward) }}{% else %}-{% endif %}
                             </td>
                             <td>{{ r.scanned_at or "-" }}</td>
+                            <td>
+                                {% set n_bad = (r.n_failed or 0) + (r.n_timeout or 0) + (r.n_aborted or 0) + (r.n_other or 0) %}
+                                {% if n_bad %}<a href="/api/failures?task_id={{ task.id }}&rollout_id={{ r.rollout_id }}">{{ n_bad }} 个 →</a>{% else %}-{% endif %}
+                            </td>
                         </tr>
                         {% endfor %}                    {% else %}
-                        <tr><td colspan="12" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
+                        <tr><td colspan="13" class="empty-row">暂无 rollout，点上方「重扫」触发扫描</td></tr>
                     {% endif %}
                 </tbody>
             </table>
@@ -762,6 +1036,375 @@
 <script>
     const TASK_ID = {{ task.id | tojson }};
     const ANNOTATIONS_LAZY = {{ (annotations_lazy or false) | tojson }};
+
+    // -------------------------------------------------------------------------
+    // P0 奖励设计：tbs/ 优先，日志回退
+    // -------------------------------------------------------------------------
+    function fmtNum(v, digits) {
+        if (v == null || v === "" || Number.isNaN(Number(v))) return "—";
+        const n = Number(v);
+        if (Math.abs(n) >= 100) return String(Math.round(n));
+        return n.toFixed(digits == null ? 3 : digits);
+    }
+
+    function seriesEnds(arr) {
+        const vals = (arr || []).filter(function (x) { return x != null; });
+        if (!vals.length) return { first: null, last: null, delta: null };
+        const first = vals[0], last = vals[vals.length - 1];
+        return { first: first, last: last, delta: last - first };
+    }
+
+    function renderCurveCard(el, steps, seriesMap, colors) {
+        if (!el) return;
+        el.innerHTML = "";
+        const keys = Object.keys(seriesMap || {}).filter(function (k) {
+            return (seriesMap[k] || []).some(function (v) { return v != null; });
+        });
+        if (!keys.length) {
+            el.innerHTML = "<div class=\"p0-curve-empty\">无曲线数据</div>";
+            return;
+        }
+        const n = Math.max.apply(null, keys.map(function (k) {
+            return (seriesMap[k] || []).length;
+        }).concat([(steps || []).length, 1]));
+        const xs = [];
+        for (let i = 0; i < n; i++) {
+            xs.push((steps && steps[i] != null) ? Number(steps[i]) : i);
+        }
+
+        let ymin = Infinity, ymax = -Infinity;
+        keys.forEach(function (k) {
+            (seriesMap[k] || []).forEach(function (v) {
+                if (v == null) return;
+                const num = Number(v);
+                if (num < ymin) ymin = num;
+                if (num > ymax) ymax = num;
+            });
+        });
+        if (!isFinite(ymin) || !isFinite(ymax)) {
+            el.innerHTML = "<div class=\"p0-curve-empty\">无曲线数据</div>";
+            return;
+        }
+        if (ymax - ymin < 1e-9) {
+            ymin -= 0.05;
+            ymax += 0.05;
+        }
+        const pad = (ymax - ymin) * 0.08;
+        ymin -= pad;
+        ymax += pad;
+
+        const W = 640, H = 160;
+        const L = 36, R = 10, T = 8, B = 18;
+        const pw = W - L - R, ph = H - T - B;
+        const x0 = xs[0], x1 = xs[xs.length - 1];
+        const xspan = (x1 - x0) || 1;
+
+        function xPos(i) {
+            return L + (n <= 1 ? pw / 2 : (i / (n - 1)) * pw);
+        }
+        function yPos(v) {
+            return T + (1 - ((Number(v) - ymin) / (ymax - ymin))) * ph;
+        }
+
+        const legend = document.createElement("div");
+        legend.className = "p0-curve-legend";
+        keys.forEach(function (k, ki) {
+            const color = colors[ki % colors.length];
+            const span = document.createElement("span");
+            span.innerHTML = "<i style=\"background:" + color + "\"></i>" + escapeHtml(k);
+            legend.appendChild(span);
+        });
+        el.appendChild(legend);
+
+        const wrap = document.createElement("div");
+        wrap.className = "p0-curve-svg-wrap";
+        let svg = "<svg viewBox=\"0 0 " + W + " " + H + "\" preserveAspectRatio=\"none\" role=\"img\">";
+        // grid
+        for (let g = 0; g <= 4; g++) {
+            const gy = T + (g / 4) * ph;
+            svg += "<line x1=\"" + L + "\" y1=\"" + gy + "\" x2=\"" + (L + pw) + "\" y2=\"" + gy
+                + "\" stroke=\"#e4e8ec\" stroke-width=\"1\" vector-effect=\"non-scaling-stroke\"/>";
+        }
+        // y labels
+        svg += "<text x=\"" + (L - 4) + "\" y=\"" + (T + 4) + "\" text-anchor=\"end\" font-size=\"9\" fill=\"#78909c\">"
+            + fmtNum(ymax, 3) + "</text>";
+        svg += "<text x=\"" + (L - 4) + "\" y=\"" + (T + ph) + "\" text-anchor=\"end\" font-size=\"9\" fill=\"#78909c\">"
+            + fmtNum(ymin, 3) + "</text>";
+
+        keys.forEach(function (k, ki) {
+            const color = colors[ki % colors.length];
+            const vals = seriesMap[k] || [];
+            let d = "";
+            let started = false;
+            for (let i = 0; i < n; i++) {
+                const v = vals[i];
+                if (v == null) {
+                    started = false;
+                    continue;
+                }
+                const cmd = started ? " L " : "M ";
+                d += cmd + xPos(i).toFixed(2) + " " + yPos(v).toFixed(2);
+                started = true;
+            }
+            if (!d) return;
+            svg += "<path d=\"" + d + "\" fill=\"none\" stroke=\"" + color
+                + "\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\""
+                + " vector-effect=\"non-scaling-stroke\"/>";
+            // last point marker
+            for (let i = n - 1; i >= 0; i--) {
+                if (vals[i] == null) continue;
+                svg += "<circle cx=\"" + xPos(i).toFixed(2) + "\" cy=\"" + yPos(vals[i]).toFixed(2)
+                    + "\" r=\"2.5\" fill=\"" + color + "\"/>";
+                break;
+            }
+        });
+        svg += "</svg>";
+        wrap.innerHTML = svg;
+        el.appendChild(wrap);
+
+        const axis = document.createElement("div");
+        axis.className = "p0-curve-axis";
+        axis.innerHTML = "<span>step " + escapeHtml(String(xs[0])) + "</span>"
+            + "<span>" + escapeHtml(String(xs[Math.floor((xs.length - 1) / 2)])) + "</span>"
+            + "<span>step " + escapeHtml(String(xs[xs.length - 1])) + "</span>";
+        el.appendChild(axis);
+
+        // hover title via invisible hit areas is heavy; put series tip on legend
+        keys.forEach(function (k, ki) {
+            const e = seriesEnds(seriesMap[k]);
+            legend.children[ki].title = k + " · 首 " + fmtNum(e.first, 4)
+                + " → 末 " + fmtNum(e.last, 4)
+                + (e.delta == null ? "" : (" · Δ " + ((e.delta > 0 ? "+" : "") + fmtNum(e.delta, 4))));
+        });
+    }
+
+    function fillEndsTable(tbody, rows) {
+        if (!tbody) return;
+        tbody.innerHTML = rows.map(function (r) {
+            const d = r.delta;
+            const dCls = d == null ? "" : (d < -1e-6 ? "is-down" : (d > 1e-6 ? "is-up" : ""));
+            const dTxt = d == null ? "—" : ((d > 0 ? "+" : "") + fmtNum(d, 3));
+            return "<tr><td>" + escapeHtml(r.label) + "</td>"
+                + "<td class=\"col-num\">" + fmtNum(r.first, 3) + "</td>"
+                + "<td class=\"col-num\">" + fmtNum(r.last, 3) + "</td>"
+                + (r.showDelta === false ? "" : "<td class=\"col-num " + dCls + "\">" + dTxt + "</td>")
+                + "</tr>";
+        }).join("");
+    }
+
+    function renderP0(data) {
+        const status = document.getElementById("p0Status");
+        const body = document.getElementById("p0Body");
+        if (!status || !body) return;
+        if (!data || !data.n_steps) {
+            status.className = "p0-status is-error";
+            status.textContent = (data && data.warning) || "未找到 tbs/ 或日志中的 P0 指标";
+            body.style.display = "none";
+            return;
+        }
+        status.className = "p0-status";
+        status.textContent = "";
+        body.style.display = "";
+
+        const src = data.source || "none";
+        const pillCls = src === "tbs" ? "" : (src === "log" ? "is-log" : "is-none");
+        const meta = document.getElementById("p0Meta");
+        const cacheTag = data.cache ? (" cache=" + data.cache) : "";
+        const staleTag = data.stale
+            ? " · <span style=\"color:#856404\">缓存展示中，后台刷新</span>"
+            : "";
+        meta.innerHTML = "<span class=\"pill " + pillCls + "\">source=" + escapeHtml(src)
+            + escapeHtml(cacheTag) + "</span> steps=" + data.n_steps
+            + staleTag
+            + (data.run_dir ? " · run <code>" + escapeHtml(data.run_dir) + "</code>" : "")
+            + (data.warning ? " · <span style=\"color:#856404\">" + escapeHtml(data.warning) + "</span>" : "");
+
+        const s = data.summary || {};
+        const p1d = (s.pass_at_1_last != null && s.pass_at_1_first != null)
+            ? (s.pass_at_1_last - s.pass_at_1_first) : null;
+        const stats = [
+            { l: "pass@1 末", v: s.pass_at_1_last, d: p1d },
+            { l: "mixed 组占比", v: s.mixed_fraction_last },
+            { l: "all_one 占比", v: s.all_one_fraction_last },
+            { l: "removed_ratio", v: s.removed_ratio_last },
+            { l: "loss_eligible", v: s.loss_eligible_last, int: true },
+            { l: "generated raw", v: s.generated_raw_last },
+        ];
+        document.getElementById("p0Stats").innerHTML = stats.map(function (x) {
+            let cls = "";
+            if (x.d != null) cls = x.d < -1e-6 ? "is-down" : (x.d > 1e-6 ? "is-up" : "");
+            const txt = x.int ? fmtNum(x.v, 0) : fmtNum(x.v, 3);
+            return "<div class=\"p0-stat\"><div class=\"v " + cls + "\">" + txt
+                + "</div><div class=\"l\">" + escapeHtml(x.l) + "</div></div>";
+        }).join("");
+
+        const steps = data.steps || [];
+        const curveColors = {
+            pass: ["#2e7d32", "#5b8def", "#ef6c00", "#8e24aa"],
+            group: ["#5b8def", "#2e7d32", "#e53935"],
+            funnel: ["#546e7a", "#5b8def", "#2e7d32", "#e53935"],
+            removed: ["#ef6c00", "#8e24aa", "#00897b", "#5b8def", "#c62828", "#6d4c41"],
+            reward: ["#5b8def", "#2e7d32", "#ef6c00", "#8e24aa"],
+        };
+
+        const pass = data.passrate || {};
+        renderCurveCard(document.getElementById("p0PassCurve"), steps, pass, curveColors.pass);
+        fillEndsTable(document.querySelector("#p0PassTable tbody"), Object.keys(pass).map(function (k) {
+            const e = seriesEnds(pass[k]);
+            return { label: k, first: e.first, last: e.last, delta: e.delta };
+        }));
+
+        const gr = data.group_reward || {};
+        renderCurveCard(document.getElementById("p0GroupCurve"), steps, {
+            mixed_fraction: gr.mixed_fraction || [],
+            all_one_fraction: gr.all_one_fraction || [],
+            all_zero_fraction: gr.all_zero_fraction || [],
+        }, curveColors.group);
+        (function () {
+            const tb = document.querySelector("#p0GroupTable tbody");
+            const rows = [
+                ["mixed_fraction", seriesEnds(gr.mixed_fraction).last],
+                ["all_one_fraction", seriesEnds(gr.all_one_fraction).last],
+                ["all_zero_fraction", seriesEnds(gr.all_zero_fraction).last],
+            ];
+            tb.innerHTML = rows.map(function (r) {
+                return "<tr><td>" + r[0] + "</td><td class=\"col-num\">" + fmtNum(r[1], 3) + "</td></tr>";
+            }).join("");
+        })();
+
+        const hist = document.getElementById("p0PassHist");
+        const histRows = gr.pass_count_last || [];
+        if (!histRows.length) {
+            hist.textContent = "无末步直方图";
+        } else {
+            const hmax = Math.max.apply(null, histRows.map(function (x) { return Number(x.count) || 0; }).concat([1]));
+            hist.innerHTML = histRows.map(function (x) {
+                const h = Math.max(2, Math.round((Number(x.count) / hmax) * 48));
+                return "<div class=\"h\" title=\"" + escapeHtml(x.label) + "=" + fmtNum(x.count, 0) + "\">"
+                    + "<div class=\"bar\" style=\"height:" + h + "px\"></div>"
+                    + "<div class=\"cap\">" + escapeHtml(x.label) + "</div></div>";
+            }).join("");
+        }
+
+        const funnel = data.funnel || {};
+        // 漏斗曲线只画 attempt 计数（同量级）；removed_ratio 放 removed 卡片
+        renderCurveCard(document.getElementById("p0FunnelCurve"), steps, {
+            launched: funnel.launched_attempts || [],
+            loss_eligible: funnel.loss_eligible_attempts || [],
+            filter_kept: funnel.filter_kept_attempts || [],
+            trainable: funnel.trainable_attempt_count || [],
+        }, curveColors.funnel);
+        (function () {
+            const tb = document.querySelector("#p0FunnelTable tbody");
+            const specs = [
+                ["launched", funnel.launched_attempts],
+                ["loss_eligible", funnel.loss_eligible_attempts],
+                ["trainable", funnel.trainable_attempt_count],
+                ["removed_ratio", funnel.removed_ratio],
+            ];
+            tb.innerHTML = specs.map(function (x) {
+                const e = seriesEnds(x[1]);
+                return "<tr><td>" + x[0] + "</td><td class=\"col-num\">" + fmtNum(e.first, 3)
+                    + "</td><td class=\"col-num\">" + fmtNum(e.last, 3) + "</td></tr>";
+            }).join("");
+        })();
+
+        const removed = (data.removed && data.removed.by_reason) || [];
+        (function () {
+            const top = removed.slice(0, 5);
+            const seriesMap = {};
+            if ((data.removed && data.removed.ratio) || []).length) {
+                seriesMap["removed_ratio"] = data.removed.ratio;
+            }
+            top.forEach(function (r) {
+                if (r && r.series && r.series.length) {
+                    seriesMap[r.reason || r.tag || "reason"] = r.series;
+                }
+            });
+            renderCurveCard(
+                document.getElementById("p0RemovedCurve"),
+                steps,
+                seriesMap,
+                curveColors.removed
+            );
+        })();
+        document.querySelector("#p0RemovedTable tbody").innerHTML = removed.slice(0, 8).map(function (r) {
+            return "<tr><td><code>" + escapeHtml(r.reason) + "</code></td>"
+                + "<td class=\"col-num\">" + fmtNum(r.total, 0) + "</td>"
+                + "<td class=\"col-num\">" + fmtNum(r.last, 0) + "</td></tr>";
+        }).join("") || "<tr><td colspan=\"3\" class=\"empty-row\">无 removed 计数</td></tr>";
+
+        const reward = data.reward || {};
+        const rewardSeries = {
+            generated_raw: reward.generated_raw || [],
+            generated_shaped: reward.generated_shaped || [],
+            filtered_raw: reward.filtered_raw || [],
+            filtered_shaped: reward.filtered_shaped || [],
+        };
+        renderCurveCard(
+            document.getElementById("p0RewardCurve"),
+            steps,
+            rewardSeries,
+            curveColors.reward
+        );
+        fillEndsTable(document.querySelector("#p0RewardTable tbody"), Object.keys(rewardSeries).map(function (k) {
+            const e = seriesEnds(rewardSeries[k]);
+            return { label: k, first: e.first, last: e.last, delta: e.delta };
+        }));
+    }
+
+    async function loadP0Metrics() {
+        const status = document.getElementById("p0Status");
+        const started = Date.now();
+        let tick = null;
+        function setStatus(text, isError) {
+            if (!status) return;
+            status.className = isError ? "p0-status is-error" : "p0-status";
+            status.textContent = text;
+        }
+        setStatus("解析 tbs / 日志中…", false);
+        tick = setInterval(function () {
+            const sec = Math.floor((Date.now() - started) / 1000);
+            if (sec >= 1) setStatus("解析 tbs / 日志中…（已等待 " + sec + "s）", false);
+        }, 1000);
+
+        const ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
+        try {
+            const resp = await fetch("/api/tasks/" + TASK_ID + "/train-metrics/p0.json", {
+                headers: { "Accept": "application/json" },
+                credentials: "same-origin",
+                signal: ctrl ? ctrl.signal : undefined,
+            });
+            const ctype = (resp.headers.get("content-type") || "").toLowerCase();
+            if (ctype.indexOf("application/json") < 0) {
+                if (resp.status === 401 || resp.status === 302 || resp.redirected) {
+                    throw new Error("未登录或会话过期，请重新登录");
+                }
+                throw new Error("HTTP " + resp.status + "（非 JSON 响应）");
+            }
+            const body = await resp.json();
+            if (!body || body.code !== 0) {
+                const msg = (body && body.msg) || ("HTTP " + resp.status);
+                if (body && body.code === 401) {
+                    throw new Error("未登录：" + msg);
+                }
+                throw new Error(msg);
+            }
+            renderP0(body.data || {});
+        } catch (e) {
+            const aborted = e && (e.name === "AbortError" || /aborted/i.test(String(e.message || e)));
+            setStatus(
+                aborted
+                    ? "P0 加载超时（>15s）。有 sidecar 时应秒开；可刷新重试。"
+                    : ("P0 加载失败：" + (e && e.message ? e.message : e)),
+                true
+            );
+        } finally {
+            if (timer) clearTimeout(timer);
+            if (tick) clearInterval(tick);
+        }
+    }
 
     // -------------------------------------------------------------------------
     // 类型柱 / 进入训练 / Top 原因：并发 2 渐进加载（对齐 turns.json 懒加载）
@@ -1077,9 +1720,13 @@
         refreshAggregates(collected.filter(Boolean));
     }
 
-    if (ANNOTATIONS_LAZY) {
-        progressiveLoadAnnotations();
-    }
+    // P0 优先于 annotations，避免并发占满后端导致卡片一直「加载中」
+    (async function bootLazyPanels() {
+        await loadP0Metrics();
+        if (ANNOTATIONS_LAZY) {
+            progressiveLoadAnnotations();
+        }
+    })();
 
     async function postAction(url) {        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
         const data = await resp.json().catch(function () { return {}; });
@@ -1117,18 +1764,52 @@
         }
     });
 
-    // 平滑滚动到锚点
-    document.querySelectorAll(".left-nav a[href^='#']").forEach(function (a) {
-        a.addEventListener("click", function (e) {
-            const target = document.querySelector(a.getAttribute("href"));
-            if (target) {
+    // 平滑滚动 + 滚动时高亮当前区块
+    (function () {
+        const navRoot = document.getElementById("taskSideNav");
+        if (!navRoot) return;
+        const links = Array.prototype.slice.call(navRoot.querySelectorAll("a[href^='#']"));
+        const targets = links.map(function (a) {
+            const id = (a.getAttribute("href") || "").slice(1);
+            return { a: a, el: document.getElementById(id) };
+        }).filter(function (x) { return x.el; });
+
+        function setActive(anchor) {
+            links.forEach(function (n) { n.classList.remove("active"); });
+            if (anchor) anchor.classList.add("active");
+        }
+
+        links.forEach(function (a) {
+            a.addEventListener("click", function (e) {
+                const target = document.querySelector(a.getAttribute("href"));
+                if (!target) return;
                 e.preventDefault();
-                document.querySelectorAll(".left-nav a").forEach(function (n) { n.classList.remove("active"); });
-                a.classList.add("active");
+                setActive(a);
                 target.scrollIntoView({ behavior: "smooth", block: "start" });
-            }
+                if (history.replaceState) {
+                    history.replaceState(null, "", a.getAttribute("href"));
+                }
+            });
         });
-    });
+
+        let ticking = false;
+        function onScroll() {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(function () {
+                ticking = false;
+                const probe = 80; // 顶栏 + sticky 偏移
+                let current = targets[0];
+                for (let i = 0; i < targets.length; i++) {
+                    const top = targets[i].el.getBoundingClientRect().top;
+                    if (top <= probe) current = targets[i];
+                }
+                if (current) setActive(current.a);
+            });
+        }
+        window.addEventListener("scroll", onScroll, { passive: true });
+        onScroll();
+    })();
 
     // -------------------------------------------------------------------------
     // 关联南湖 job：绑定 / 解除绑定

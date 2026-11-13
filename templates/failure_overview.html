@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+
+{% block title %}失败分析{% if task_id %} - 任务 #{{ task_id }}{% endif %} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 22px; border-bottom: none; padding-bottom: 0; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .cat-pass { --c: #2e7d32; } .cat-fail { --c: #8e24aa; } .cat-timeout { --c: #fb8c00; }
+    .cat-abort { --c: #e53935; } .cat-other { --c: #78909c; }
+    .chip[class*="cat-"] { border-color: var(--c); color: var(--c); }
+    .badge-cat { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; color: #fff;
+        background: var(--c, #78909c); white-space: nowrap; }
+
+    /* 进度：每 rollout 一行堆叠条 */
+    .prog-row { display: grid; grid-template-columns: 70px 1fr 90px minmax(160px, 32%); gap: 10px;
+        align-items: center; padding: 3px 0; font-size: 12px; cursor: pointer; border-radius: 4px; }
+    .prog-row:hover { background: #f3f6fa; }
+    .prog-row.active { background: #e8f0fa; }
+    .prog-bar { display: flex; height: 14px; border-radius: 3px; overflow: hidden; background: #eceff1; }
+    .prog-bar span { display: block; height: 100%; background: var(--c); }
+    .prog-reason { color: var(--ri-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .legend { display: flex; gap: 12px; font-size: 12px; color: var(--ri-muted); margin-bottom: 8px; flex-wrap: wrap; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: middle; }
+
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ri-border); margin-bottom: 12px; }
+    .tab { padding: 6px 14px; cursor: pointer; font-size: 13px; border: 1px solid transparent; border-bottom: none;
+        border-radius: 4px 4px 0 0; color: var(--ri-muted); background: none; }
+    .tab.active { border-color: var(--ri-border); background: var(--ri-surface); color: var(--ri-ink); font-weight: 600; margin-bottom: -1px; }
+
+    /* 聚类卡片 */
+    .cluster-list { display: grid; gap: 8px; }
+    .cluster { border: 1px solid var(--ri-border); border-left: 4px solid var(--c); border-radius: 4px; padding: 8px 12px; }
+    .cluster-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .cluster-head .reason { font-weight: 600; font-family: ui-monospace, monospace; font-size: 13px; }
+    .cluster-head .cnt { margin-left: auto; font-size: 13px; }
+    .cluster-bar { height: 6px; background: #eceff1; border-radius: 3px; margin: 6px 0; overflow: hidden; }
+    .cluster-bar span { display: block; height: 100%; background: var(--c); }
+    .cluster-meta { font-size: 12px; color: var(--ri-muted); }
+    .spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 20px; vertical-align: middle; margin-left: 6px; }
+    .spark span { width: 4px; background: var(--c); opacity: .75; }
+    .sub-list { margin: 6px 0 0 0; padding-left: 18px; font-size: 12px; }
+    .sub-list code { font-size: 11px; }
+
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 13px; }
+    .filters select, .filters input { padding: 4px 8px; border: 1px solid var(--ri-border); border-radius: 4px; font-size: 13px; }
+    .filters input { min-width: 240px; }
+    table.att { font-size: 12px; }
+    table.att td { vertical-align: top; padding: 5px 8px; }
+    table.att td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.att .reason { font-family: ui-monospace, monospace; }
+    table.att td.ops { white-space: nowrap; }
+    table.att .err { color: #6a1b9a; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn-xs { padding: 2px 8px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+    .loading { color: var(--ri-muted); padding: 16px 0; }
+    .task-pick td { font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if not task_id %}
+<div class="page-header">
+    <div>
+        <h1>失败分析</h1>
+        <div class="page-subtitle">选择一个任务，查看每个 rollout 的失败分布、按原因聚类，并跳转到具体 attempt 的失败轨迹。</div>
+    </div>
+</div>
+<div class="section">
+    <h2>任务 <small>{{ tasks | length }} 个</small></h2>
+    {% if not tasks %}
+        <div class="muted">暂无任务。</div>
+    {% else %}
+    <div class="legend">
+        <span class="cat-pass"><i></i>通过</span><span class="cat-fail"><i></i>正常失败</span>
+        <span class="cat-timeout"><i></i>超时/截断</span><span class="cat-abort"><i></i>abort</span>
+    </div>
+    <table class="task-pick">
+        <thead><tr><th>ID</th><th>任务名</th><th>状态</th><th class="col-num">rollout</th><th class="col-num">attempt</th><th style="width:34%">结局分布</th><th class="col-num">非通过</th><th></th></tr></thead>
+        <tbody>
+        {% for t in tasks %}
+            {% set n = t.n_attempts or 1 %}
+            <tr>
+                <td>{{ t.id }}</td>
+                <td><a href="/api/failures?task_id={{ t.id }}">{{ t.task_name }}</a></td>
+                <td>{{ t.status }}</td>
+                <td class="col-num">{{ t.n_rollouts }}</td>
+                <td class="col-num">{{ t.n_attempts }}</td>
+                <td>
+                    <div class="prog-bar" title="通过 {{ t.n_pass }} · 失败 {{ t.n_fail }} · 超时 {{ t.n_timeout }} · abort {{ t.n_abort }}">
+                        <span class="cat-pass" style="width: {{ 100.0 * t.n_pass / n }}%"></span>
+                        <span class="cat-fail" style="width: {{ 100.0 * t.n_fail / n }}%"></span>
+                        <span class="cat-timeout" style="width: {{ 100.0 * t.n_timeout / n }}%"></span>
+                        <span class="cat-abort" style="width: {{ 100.0 * t.n_abort / n }}%"></span>
+                        <span class="cat-other" style="width: {{ 100.0 * t.n_other / n }}%"></span>
+                    </div>
+                </td>
+                <td class="col-num">{{ t.n_attempts - t.n_pass }}</td>
+                <td><a class="btn btn-xs" href="/api/failures?task_id={{ t.id }}">分析</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% else %}
+<div class="breadcrumb">
+    <a href="/api/failures">失败分析</a> / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a>
+</div>
+<div class="page-header">
+    <div>
+        <h1 id="pageTitle">任务 #{{ task_id }} · 失败分析</h1>
+        <div class="page-subtitle" id="pageSub">加载中…</div>
+    </div>
+    <div>
+        <a class="btn btn-secondary" href="/api/tasks/{{ task_id }}">返回任务详情</a>
+    </div>
+</div>
+
+<div id="loadingBox" class="section loading">正在关联 attempt 与 attempt_artifacts（首次需扫描 summaries，约数秒）…</div>
+<div id="errorBox" class="alert alert-warning" style="display:none"></div>
+
+<div id="mainBox" style="display:none">
+    <div id="sourceNote"></div>
+    <div class="section">
+        <h2>结局总计 <small id="totalsSub"></small></h2>
+        <div class="chip-row" id="totalChips"></div>
+    </div>
+
+    <div class="section" id="progress">
+        <h2>进度 · 每个 rollout 的结局 <small>点击某行只看该 rollout；再次点击取消</small></h2>
+        <div class="legend">
+            <span class="cat-pass"><i></i>通过</span><span class="cat-fail"><i></i>正常失败</span>
+            <span class="cat-timeout"><i></i>超时/截断</span><span class="cat-abort"><i></i>abort</span><span class="cat-other"><i></i>其它</span>
+            <span style="margin-left:auto">右列：该 rollout 最多的失败原因</span>
+        </div>
+        <div id="progressRows"></div>
+    </div>
+
+    <div class="section">
+        <div class="tabs">
+            <button type="button" class="tab active" data-tab="clusters">按聚类</button>
+            <button type="button" class="tab" data-tab="attempts">按 attempt</button>
+        </div>
+        <div class="filters">
+            <label>rollout <select id="fRollout"><option value="">全部</option></select></label>
+            <label>结局 <select id="fCat">
+                <option value="">全部非通过</option><option value="fail">正常失败</option>
+                <option value="timeout">超时/截断</option><option value="abort">abort</option><option value="other">其它</option>
+            </select></label>
+            <label>原因 <select id="fReason"><option value="">全部</option></select></label>
+            <input id="fText" type="search" placeholder="搜 instance_id / 失败用例 / 错误摘要" />
+            <span class="muted" id="filterCount"></span>
+        </div>
+        <div id="tab-clusters"><div class="cluster-list" id="clusterList"></div></div>
+        <div id="tab-attempts" style="display:none">
+            <table class="att">
+                <thead><tr>
+                    <th>rollout</th><th>group</th><th>attempt_id</th><th>instance_id</th><th>结局</th>
+                    <th>原因</th><th>失败用例 / 错误</th><th class="col-num">轮</th><th class="col-num">tool/err</th>
+                    <th class="col-num">峰值 ctx</th><th>操作</th>
+                </tr></thead>
+                <tbody id="attBody"></tbody>
+            </table>
+            <div class="pager">
+                <button type="button" class="btn btn-secondary btn-xs" id="prevPage">上一页</button>
+                <span id="pageInfo"></span>
+                <button type="button" class="btn btn-secondary btn-xs" id="nextPage">下一页</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if task_id %}
+<script>
+(function () {
+    const TASK_ID = {{ task_id | tojson }};
+    const INIT_ROLLOUT = {{ rollout_id | tojson }};
+    const PAGE_SIZE = 100;
+    const CAT_ZH = { pass: "通过", fail: "正常失败", timeout: "超时/截断", abort: "abort", other: "其它" };
+    let DATA = null;
+    let page = 0;
+    const state = { rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT), cat: "", reason: "", text: "" };
+
+    const $ = (id) => document.getElementById(id);
+    function esc(s) {
+        return s == null ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    function fmtK(n) {
+        if (n == null) return "-";
+        const v = Number(n);
+        return v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(v);
+    }
+    function catBadge(c) { return `<span class="badge-cat cat-${esc(c)}">${esc(CAT_ZH[c] || c)}</span>`; }
+    function accordionUrl(a) {
+        if (!a.rollout_pk) return null;
+        return `/api/tasks/${TASK_ID}/rollouts/${a.rollout_pk}?group=${a.group_index}#attempt-${a.attempt_pk}`;
+    }
+
+    function filtered() {
+        const t = state.text.trim().toLowerCase();
+        return DATA.attempts.filter((a) => {
+            if (state.rollout !== "" && String(a.rollout_id) !== state.rollout) return false;
+            if (state.cat && a.category !== state.cat) return false;
+            if (state.reason && a.reason !== state.reason) return false;
+            if (t) {
+                const hay = [a.instance_id, a.failed_test, a.error_summary, a.reason].join(" ").toLowerCase();
+                if (!hay.includes(t)) return false;
+            }
+            return true;
+        });
+    }
+
+    function renderTotals() {
+        const t = DATA.totals;
+        $("totalsSub").textContent = `${t.n_attempts} 个 attempt · 非通过 ${t.n_failure} · 已关联 artifacts ${t.n_linked}`;
+        const chips = [["pass", t.n_pass], ["fail", t.n_fail], ["timeout", t.n_timeout], ["abort", t.n_abort], ["other", t.n_other]];
+        $("totalChips").innerHTML = chips.filter(([c, n]) => c !== "other" || n)
+            .map(([c, n]) => `<span class="chip cat-${c}">${CAT_ZH[c]} <strong>${n}</strong> ${t.n_attempts ? (100 * n / t.n_attempts).toFixed(1) + "%" : ""}</span>`).join("");
+    }
+
+    function renderSource() {
+        const box = $("sourceNote");
+        if (DATA.source === "attempt_artifacts") {
+            const extra = DATA.n_unlinked_summaries ? ` · ${DATA.n_unlinked_summaries} 条 summary 属于未入库的 rollout` : "";
+            box.innerHTML = `<div class="alert alert-info">数据来源：<span class="mono">${esc(DATA.artifacts_dir)}</span>（${DATA.n_summaries} 条 summary${extra}）。失败原因取 <code>abort_reason</code> / <code>diagnosis</code>，失败用例取自 <code>evaluation.stdout_tail</code>。</div>`;
+        } else {
+            box.innerHTML = `<div class="alert alert-warning">未找到 <code>attempt_artifacts/</code>，失败原因回退为 .pt 注解（需先在任务详情页加载过类型柱），无失败轨迹。</div>`;
+        }
+    }
+
+    function renderProgress() {
+        const rows = DATA.progress.map((p) => {
+            const n = p.n_attempts || 1;
+            const seg = (c, v) => v ? `<span class="cat-${c}" style="width:${100 * v / n}%"></span>` : "";
+            const tr = p.top_reason ? `${catBadge(p.top_reason.category)} <span class="mono">${esc(p.top_reason.reason)}</span> ×${p.top_reason.count}` : '<span class="muted">无失败</span>';
+            const active = state.rollout !== "" && String(p.rollout_id) === state.rollout ? " active" : "";
+            return `<div class="prog-row${active}" data-rollout="${p.rollout_id}" title="通过 ${p.n_pass} · 失败 ${p.n_fail} · 超时 ${p.n_timeout} · abort ${p.n_abort}">
+                <span>rollout <strong>${p.rollout_id}</strong></span>
+                <div class="prog-bar">${seg("pass", p.n_pass)}${seg("fail", p.n_fail)}${seg("timeout", p.n_timeout)}${seg("abort", p.n_abort)}${seg("other", p.n_other)}</div>
+                <span class="muted">过 ${p.n_pass}/${p.n_attempts}</span>
+                <span class="prog-reason">${tr}</span>
+            </div>`;
+        }).join("");
+        $("progressRows").innerHTML = rows || '<div class="muted">暂无 attempt</div>';
+        $("progressRows").querySelectorAll(".prog-row").forEach((el) => {
+            el.addEventListener("click", () => {
+                const r = el.dataset.rollout;
+                state.rollout = state.rollout === r ? "" : r;
+                $("fRollout").value = state.rollout;
+                refresh();
+            });
+        });
+    }
+
+    function clustersOf(items) {
+        const map = new Map();
+        for (const a of items) {
+            const k = a.category + "|" + a.reason;
+            let b = map.get(k);
+            if (!b) { b = { category: a.category, reason: a.reason, count: 0, byRollout: new Map(), sub: new Map(), inst: new Set() }; map.set(k, b); }
+            b.count++;
+            b.byRollout.set(a.rollout_id, (b.byRollout.get(a.rollout_id) || 0) + 1);
+            const s = a.failed_test || a.error_summary;
+            if (s) b.sub.set(s, (b.sub.get(s) || 0) + 1);
+            if (a.instance_id) b.inst.add(a.instance_id);
+        }
+        return [...map.values()].sort((x, y) => y.count - x.count);
+    }
+
+    function renderClusters(items) {
+        const list = clustersOf(items);
+        const total = items.length || 1;
+        const rids = DATA.progress.map((p) => p.rollout_id);
+        $("clusterList").innerHTML = list.map((c) => {
+            const max = Math.max(1, ...c.byRollout.values());
+            const spark = rids.map((r) => `<span style="height:${Math.max(1, 20 * (c.byRollout.get(r) || 0) / max)}px" title="rollout ${r}: ${c.byRollout.get(r) || 0}"></span>`).join("");
+            const subs = [...c.sub.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+                .map(([k, v]) => `<li><code>${esc(k)}</code> ×${v}</li>`).join("");
+            return `<div class="cluster cat-${esc(c.category)}">
+                <div class="cluster-head">
+                    ${catBadge(c.category)}<span class="reason">${esc(c.reason)}</span>
+                    <span class="cnt"><strong>${c.count}</strong> 次 · ${(100 * c.count / total).toFixed(1)}%</span>
+                    <button type="button" class="btn btn-secondary btn-xs" data-cat="${esc(c.category)}" data-reason="${esc(c.reason)}">查看这些 attempt</button>
+                </div>
+                <div class="cluster-bar"><span style="width:${100 * c.count / total}%"></span></div>
+                <div class="cluster-meta">${c.inst.size} 个题目 · ${c.byRollout.size} 个 rollout 出现 <span class="spark">${spark}</span></div>
+                ${subs ? `<ul class="sub-list">${subs}</ul>` : ""}
+            </div>`;
+        }).join("") || '<div class="muted">当前筛选下没有失败。</div>';
+        $("clusterList").querySelectorAll("button[data-reason]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                state.cat = btn.dataset.cat;
+                state.reason = btn.dataset.reason;
+                $("fCat").value = state.cat;
+                fillReasonOptions();
+                $("fReason").value = state.reason;
+                switchTab("attempts");
+                refresh();
+            });
+        });
+    }
+
+    function renderAttempts(items) {
+        const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+        page = Math.min(page, pages - 1);
+        const slice = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+        $("attBody").innerHTML = slice.map((a) => {
+            const acc = accordionUrl(a);
+            const err = a.failed_test || a.error_summary || "";
+            return `<tr>
+                <td><a href="/api/tasks/${TASK_ID}/rollouts/${a.rollout_pk}">${a.rollout_id}</a></td>
+                <td>${a.group_index}</td>
+                <td class="mono">${a.attempt_id}</td>
+                <td class="mono">${esc(a.instance_id)}</td>
+                <td>${catBadge(a.category)}</td>
+                <td class="reason">${esc(a.reason)}</td>
+                <td class="err" title="${esc(err)}">${esc(err) || '<span class="muted">-</span>'}</td>
+                <td class="num">${a.agent_turns ?? "-"}</td>
+                <td class="num">${a.tool_calls ?? "-"}/${a.tool_errors ?? "-"}</td>
+                <td class="num">${fmtK(a.peak_context_tokens)}</td>
+                <td class="ops">
+                    <a class="btn btn-xs" href="/api/failures/attempts/${a.attempt_pk}" title="${a.has_trajectory ? "含 OpenHands 轨迹" : "无轨迹文件"}">失败轨迹${a.has_trajectory ? "" : "*"}</a>
+                    ${acc ? `<a class="btn btn-secondary btn-xs" href="${acc}">手风琴定位</a>` : ""}
+                </td>
+            </tr>`;
+        }).join("") || '<tr><td colspan="11" class="muted">当前筛选下没有 attempt。</td></tr>';
+        $("pageInfo").textContent = `第 ${page + 1}/${pages} 页`;
+        $("prevPage").disabled = page <= 0;
+        $("nextPage").disabled = page >= pages - 1;
+    }
+
+    function fillReasonOptions() {
+        const pool = DATA.attempts.filter((a) => (!state.cat || a.category === state.cat) && (state.rollout === "" || String(a.rollout_id) === state.rollout));
+        const counts = new Map();
+        pool.forEach((a) => counts.set(a.reason, (counts.get(a.reason) || 0) + 1));
+        const opts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+        $("fReason").innerHTML = '<option value="">全部</option>' + opts.map(([r, n]) => `<option value="${esc(r)}">${esc(r)} (${n})</option>`).join("");
+        if (state.reason && !counts.has(state.reason)) state.reason = "";
+        $("fReason").value = state.reason;
+    }
+
+    function refresh() {
+        const items = filtered();
+        $("filterCount").textContent = `${items.length} 条`;
+        renderProgress();
+        renderClusters(items);
+        renderAttempts(items);
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+        $("tab-clusters").style.display = name === "clusters" ? "" : "none";
+        $("tab-attempts").style.display = name === "attempts" ? "" : "none";
+    }
+
+    function bind() {
+        document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+        $("fRollout").innerHTML = '<option value="">全部</option>' + DATA.progress.map((p) => `<option value="${p.rollout_id}">rollout ${p.rollout_id}</option>`).join("");
+        $("fRollout").value = state.rollout;
+        $("fRollout").addEventListener("change", (e) => { state.rollout = e.target.value; page = 0; fillReasonOptions(); refresh(); });
+        $("fCat").addEventListener("change", (e) => { state.cat = e.target.value; page = 0; fillReasonOptions(); refresh(); });
+        $("fReason").addEventListener("change", (e) => { state.reason = e.target.value; page = 0; refresh(); });
+        $("fText").addEventListener("input", (e) => { state.text = e.target.value; page = 0; refresh(); });
+        $("prevPage").addEventListener("click", () => { page--; refresh(); });
+        $("nextPage").addEventListener("click", () => { page++; refresh(); });
+    }
+
+    async function load() {
+        try {
+            const resp = await fetch(`/api/failures/tasks/${TASK_ID}/overview.json`, { headers: { Accept: "application/json" } });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok || body.code !== 0) throw new Error((body && body.msg) || ("HTTP " + resp.status));
+            DATA = body.data;
+            $("pageTitle").textContent = `${DATA.task.task_name} · 失败分析`;
+            $("pageSub").textContent = `任务 #${DATA.task.id} · ${DATA.progress.length} 个 rollout · 状态 ${DATA.task.status}`;
+            renderSource();
+            renderTotals();
+            bind();
+            fillReasonOptions();
+            refresh();
+            $("loadingBox").style.display = "none";
+            $("mainBox").style.display = "";
+        } catch (e) {
+            $("loadingBox").style.display = "none";
+            $("errorBox").style.display = "";
+            $("errorBox").textContent = "加载失败分析失败：" + (e && e.message ? e.message : e);
+        }
+    }
+    load();
+})();
+</script>
+{% endif %}
+{% endblock %}

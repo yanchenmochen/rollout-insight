@@ -205,6 +205,55 @@ class DBAttemptService:
         return "other"
 
     @classmethod
+    def list_outcome_rows_by_task(
+        cls, task_id: int, rollout_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """列出任务（可选单个 rollout）下全部 attempt 的结局行，含 ``category``。
+
+        ``category`` ∈ pass / fail / timeout / abort / other，与结局柱同一判定。
+        """
+        if task_id is None:
+            raise RolloutInsightException(
+                RolloutInsightException.INVALID_ARGUMENT, "task_id 不能为空"
+            )
+        with Session() as session:
+            query = session.query(
+                DBAttempt.primary_id,
+                DBAttempt.rollout_id,
+                DBAttempt.group_index,
+                DBAttempt.attempt_id,
+                DBAttempt.instance_id,
+                DBAttempt.sandbox_id,
+                DBAttempt.status,
+                DBAttempt.reward,
+                DBAttempt.agent_turns,
+                DBAttempt.tool_calls,
+            ).filter(DBAttempt.task_id == int(task_id))
+            if rollout_id is not None:
+                query = query.filter(DBAttempt.rollout_id == int(rollout_id))
+            rows = query.order_by(
+                DBAttempt.rollout_id.asc(),
+                DBAttempt.group_index.asc(),
+                DBAttempt.attempt_id.asc(),
+            ).all()
+        return [
+            {
+                "attempt_pk": int(r.primary_id),
+                "rollout_id": r.rollout_id,
+                "group_index": r.group_index,
+                "attempt_id": r.attempt_id,
+                "instance_id": r.instance_id or "",
+                "sandbox_id": r.sandbox_id or "",
+                "status": r.status or "",
+                "reward": r.reward,
+                "agent_turns": r.agent_turns,
+                "tool_calls": r.tool_calls,
+                "category": cls._classify_attempt_row(r.status, r.reward),
+            }
+            for r in rows
+        ]
+
+    @classmethod
     def summarize_reward_metrics_by_rollout(
         cls, task_id: int
     ) -> Dict[int, Dict[str, int]]:

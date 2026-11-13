@@ -559,7 +559,11 @@ async def api_create_task(
 
 
 @router.get("/api/tasks/{task_id}", include_in_schema=False)
-async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
+async def page_task_detail(
+    task_id: int,
+    request: Request,
+    background: BackgroundTasks,
+) -> HTMLResponse:
     """渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。"""
     Task = _task_model()
     Rollout = _rollout_model()
@@ -675,6 +679,13 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
             "by_drop_reason": [],
         }
 
+        # 打开详情页时后台预热 P0 sidecar，缩短卡片首屏等待
+        rollout_root = getattr(obj, "rollout_root", None) or ""
+        if background is not None and rollout_root:
+            from utils.run_train_metrics import warm_p0_metrics
+
+            background.add_task(warm_p0_metrics, rollout_root)
+
         return templates.TemplateResponse(
             request,
             "task_detail.html",
@@ -695,6 +706,20 @@ async def page_task_detail(task_id: int, request: Request) -> HTMLResponse:
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"加载任务失败: {exc}"
         ) from exc
+
+
+@router.get("/api/tasks/{task_id}/train-metrics/p0.json")
+async def api_task_train_metrics_p0(task_id: int) -> Response:
+    """P0 奖励设计指标：优先 tbs/，回退主日志 perf / filtered。
+
+    同步读 EventAccumulator / 大日志会阻塞事件循环，放到线程池执行。
+    """
+    import asyncio
+
+    from service.run_train_metrics_service import get_task_p0_train_metrics
+
+    data = await asyncio.to_thread(get_task_p0_train_metrics, task_id)
+    return Response.success(msg="ok", data=data)
 
 
 @router.get("/api/tasks/{task_id}/annotations/meta.json")

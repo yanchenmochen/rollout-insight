@@ -101,6 +101,23 @@ rollout-insight/
 | GET  | `/api/tasks/create` | 渲染 task_create.html || GET  | `/api/segments/search` | Segment 检索（task_id 必填） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
 | GET  | `/api/segments/{id}/transcript.json` | Segment transcript（JSON） |
+| GET  | `/api/failures` | 失败分析（无 `task_id` 时选任务；`?task_id=&rollout_id=` 进入任务视图） |
+| GET  | `/api/failures/attempts/{attempt_pk}` | 单 attempt 失败详情页（结论 / 评测证据 / 耗时 / 轨迹 / patch） |
+| GET  | `/api/failures/tasks/{task_id}/overview.json` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt + 原因聚类 |
+| GET  | `/api/failures/attempts/{attempt_pk}/detail.json` | 单 attempt 失败详情（JSON） |
+| GET  | `/api/failures/attempts/{attempt_pk}/trajectory.json` | OpenHands 轨迹分页（`offset`/`limit`/`errors_only`） |
+
+### 5.1 失败分析（任务级）
+
+顶部菜单「失败分析」位于「任务列表」右侧，回答"每个 attempt 是怎么失败的"：
+
+- **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
+- **按聚类**：按失败原因（`abort_reason` → `diagnosis` → agent 结束态）聚类，可下钻到对应 attempt 列表。
+- **按 attempt**：逐条列出非通过 attempt，可跳「失败轨迹」或「手风琴定位」。
+- **单 attempt 详情**：结论、首个失败用例、评测 stdout/stderr、耗时分解、同组 8 次尝试、OpenHands 轨迹（默认看结尾，可只看报错步）、patch。
+- **与 Rollout 详情页四层手风琴联动**：失败 attempt 行右侧出现「失败轨迹 →」；详情页「在手风琴中定位」跳回 `/api/tasks/{id}/rollouts/{pk}?group=..#attempt-{pk}` 并自动展开高亮。任务详情页的 Rollout 列表新增「失败分析」列。
+
+数据来源为运行目录下的 `attempt_artifacts/`（`summaries/`、`patches/`、`failed_trajectories/`），从 `task.rollout_root` 向上最多 4 层查找；首次读取会在该目录写入索引缓存 `.ri_artifacts_index.json`（按 summaries 目录 mtime/文件数自动失效）。没有 `attempt_artifacts` 的任务回退为 `.pt` 标注的失败原因。
 
 ---
 

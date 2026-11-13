@@ -6,13 +6,15 @@
 
     "rollout_insight_title": "Rollout Insight",
     "log_dir": "/mnt/zj-data/data/songquanheng/rollout-insight/log",
+    "templates_dir": "/mnt/seed-program-nas/001688/songquanheng/rollout-insight/templates",
+    "static_dir": "/mnt/seed-program-nas/001688/songquanheng/rollout-insight/static",
 
     "rollout_dump_root": "/mnt/zj-data/data/songquanheng/output/slime",
     "rollout_dump_pattern": "**/rollout_dumps/rollout_*.pt",
     "rollout_insight_version": "0.5.1",
 
-    "nanhu_cluster": "wuxi",
-    "nanhu_user_id": "",
+    "nanhu_cluster": "x10000",
+    "nanhu_user_id": "001688",
 
     "session_secret": "bQ5Xi7OEeMd8ql4ycGPqmIOqzVpCiZGAFH00jYTtJsArtAo2pL8wMpAe9KOLoZyT"
 }

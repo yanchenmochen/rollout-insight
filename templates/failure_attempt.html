@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% set a = d.attempt %}
+{% set cat_zh = {"pass": "通过", "fail": "正常失败", "timeout": "超时/截断", "abort": "abort", "other": "其它"} %}
+
+{% block title %}失败轨迹 · attempt #{{ a.attempt_pk }} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+        padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 20px; border-bottom: none; padding-bottom: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn-sm { padding: 3px 10px; font-size: 12px; font-weight: 500; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    .cat-pass { --c: #2e7d32; } .cat-fail { --c: #8e24aa; } .cat-timeout { --c: #fb8c00; }
+    .cat-abort { --c: #e53935; } .cat-other { --c: #78909c; }
+    .badge-cat { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; color: #fff; background: var(--c, #78909c); }
+    .reason-big { font-family: ui-monospace, monospace; font-size: 16px; }
+
+    .verdict { border-left: 5px solid var(--c); background: #fafbfc; padding: 10px 14px; border-radius: 4px; margin-bottom: 12px; }
+    .verdict .line { font-size: 14px; margin: 2px 0; }
+    .verdict code { font-size: 12px; }
+    .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 14px; font-size: 12px; }
+    .kv div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed #e4e8ec; padding: 2px 0; min-width: 0; }
+    .kv span:first-child { color: var(--ri-muted); }
+    .kv span:last-child { font-family: ui-monospace, monospace; text-align: right; word-break: break-all; }
+
+    .sib { display: flex; flex-wrap: wrap; gap: 4px; }
+    .sib a { display: inline-block; min-width: 54px; text-align: center; padding: 2px 6px; font-size: 12px; border-radius: 3px;
+        background: var(--c); color: #fff; text-decoration: none; opacity: .8; }
+    .sib a.me { outline: 2px solid #1f3550; opacity: 1; font-weight: 700; }
+
+    pre.log { background: #1e2530; color: #e6edf3; padding: 10px 12px; border-radius: 4px; font-size: 12px;
+        max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+    .phase-row { display: grid; grid-template-columns: 220px 1fr 80px; gap: 8px; align-items: center; font-size: 12px; padding: 1px 0; }
+    .phase-bar { height: 10px; background: #eceff1; border-radius: 2px; overflow: hidden; }
+    .phase-bar span { display: block; height: 100%; background: var(--ri-accent); }
+    .phase-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .traj-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+    .traj-stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; }
+    .traj-stats span { background: #f3f5f8; border: 1px solid var(--ri-border); border-radius: 10px; padding: 1px 8px; }
+    .ev { border: 1px solid #e4e8ec; border-left: 4px solid #b0bec5; border-radius: 3px; margin-bottom: 4px; }
+    .ev > summary { cursor: pointer; padding: 4px 8px; font-size: 12px; display: flex; gap: 8px; align-items: baseline; list-style: none; }
+    .ev > summary::-webkit-details-marker { display: none; }
+    .ev .idx { color: var(--ri-muted); font-family: ui-monospace, monospace; min-width: 36px; }
+    .ev .kind { font-weight: 600; min-width: 110px; }
+    .ev .ttl { font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .ev .ts { color: var(--ri-muted); font-size: 11px; white-space: nowrap; }
+    .ev pre { margin: 0 8px 8px 8px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: #f8fafb;
+        padding: 6px 8px; border-radius: 3px; max-height: 360px; overflow: auto; }
+    .ev.k-ActionEvent { border-left-color: #2d6a9f; }
+    .ev.k-ObservationEvent { border-left-color: #90a4ae; }
+    .ev.k-MessageEvent { border-left-color: #6d4c41; }
+    .ev.is-error { border-left-color: #e53935; background: #fff5f5; }
+    .ev.is-error .kind { color: #c62828; }
+    .last-error { border: 1px solid #ef9a9a; background: #fff5f5; border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
+    .last-error pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0 0 0; max-height: 200px; overflow: auto; }
+
+    pre.diff { background: #fbfcfd; border: 1px solid var(--ri-border); padding: 8px 0; font-size: 12px; max-height: 520px; overflow: auto; }
+    pre.diff span { display: block; padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
+    pre.diff .add { background: #e6ffec; } pre.diff .del { background: #ffebe9; }
+    pre.diff .hunk { color: #6a737d; background: #f1f8ff; } pre.diff .file { font-weight: 700; background: #eef2f6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/failures?task_id={{ d.task.id }}">失败分析 · {{ d.task.task_name }}</a>
+    / <a href="/api/tasks/{{ d.task.id }}/rollouts/{{ d.rollout.rollout_pk }}">rollout {{ d.rollout.rollout_id }}</a>
+    / <a href="/api/tasks/{{ d.task.id }}/rollouts/{{ d.rollout.rollout_pk }}?group={{ a.group_index }}">group {{ a.group_index }}</a>
+    / attempt_id {{ a.attempt_id }}
+</div>
+
+<div class="page-header">
+    <div>
+        <h1>
+            <span class="badge-cat cat-{{ a.category }}">{{ cat_zh.get(a.category, a.category) }}</span>
+            <span class="reason-big">{{ a.reason }}</span>
+        </h1>
+        <div class="page-subtitle">
+            attempt #{{ a.attempt_pk }} · <span class="mono">{{ a.instance_id }}</span> · status <code>{{ a.status }}</code>
+            {% if d.match %} · 关联方式 <code>{{ d.match }}</code>{% endif %}
+        </div>
+    </div>
+    <div class="action-bar">
+        {% if d.accordion_url %}<a class="btn" href="{{ d.accordion_url }}">在手风琴中定位</a>{% endif %}
+        <a class="btn btn-secondary" href="/api/failures?task_id={{ d.task.id }}&rollout_id={{ d.rollout.rollout_id }}">本 rollout 的失败</a>
+    </div>
+</div>
+
+{% if d.source != 'attempt_artifacts' %}
+<div class="alert alert-warning">
+    该 attempt 未关联到 <code>attempt_artifacts/</code> summary，
+    {% if d.source == 'pt' %}以下为从 .pt metadata 回退抽取的失败细节，无轨迹与 patch。{% else %}仅有数据库中的结局信息。{% endif %}
+</div>
+{% endif %}
+
+<div class="section">
+    <h2>结论 · 怎么失败的</h2>
+    {% set c = d.conclusion %}
+    {% set ev = d.evaluation or {} %}
+    <div class="verdict cat-{{ a.category }}">
+        {% if a.category == 'abort' %}
+            <div class="line">基础设施中止：<code>{{ c.abort_reason or a.reason }}</code>，未产生可测 reward（不计入成功也不算真失败）。</div>
+        {% elif a.category == 'timeout' %}
+            <div class="line">超时 / 截断（status <code>{{ a.status }}</code>）{% if c.agent_outcome %}，agent 结束态 <code>{{ c.agent_outcome }}</code>{% endif %}{% if c.diagnosis %}，评测结论 <code>{{ c.diagnosis }}</code>{% endif %}。</div>
+        {% else %}
+            <div class="line">评测结论 <code>{{ c.diagnosis or a.reason }}</code>{% if c.agent_outcome %}，agent 结束态 <code>{{ c.agent_outcome }}</code>{% endif %}{% if c.applied is not none %}，patch {{ '已应用' if c.applied else '未应用' }}{% endif %}。</div>
+        {% endif %}
+        {% if ev.failed_test %}<div class="line">首个失败用例：<code>{{ ev.failed_test }}</code></div>{% endif %}
+        {% if ev.error_summary %}<div class="line">错误摘要：<code>{{ ev.error_summary }}</code></div>{% endif %}
+        {% if d.pt_fallback %}
+            {% if d.pt_fallback.failed_test %}<div class="line">首个失败用例：<code>{{ d.pt_fallback.failed_test }}</code></div>{% endif %}
+            {% if d.pt_fallback.error_summary %}<div class="line">错误摘要：<code>{{ d.pt_fallback.error_summary }}</code></div>{% endif %}
+        {% endif %}
+    </div>
+    {% if c %}
+    <div class="kv">
+        {% for k, v in c.items() %}
+        <div><span>{{ k }}</span><span>{{ v if v is not none else '-' }}</span></div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="section">
+    <h2>同组 attempt <small>group {{ a.group_index }} · 同一题目的 {{ d.siblings | length }} 次尝试；点失败的看它的轨迹</small></h2>
+    <div class="sib">
+        {% for s in d.siblings %}
+            {% set href = ('/api/failures/attempts/' ~ s.attempt_pk) if s.category != 'pass' else ('/api/tasks/' ~ d.task.id ~ '/rollouts/' ~ d.rollout.rollout_pk ~ '?group=' ~ a.group_index ~ '#attempt-' ~ s.attempt_pk) %}
+            <a class="cat-{{ s.category }} {% if s.attempt_pk == a.attempt_pk %}me{% endif %}" href="{{ href }}"
+               title="attempt_id {{ s.attempt_id }} · {{ cat_zh.get(s.category, s.category) }}">{{ s.attempt_id }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+{% if d.evaluation %}
+<div class="section">
+    <h2>评测证据 <small>grader {{ ev.grader or '-' }} · exit_code {{ ev.exit_code if ev.exit_code is not none else '-' }} · timed_out {{ ev.timed_out }}</small></h2>
+    {% if ev.stdout_tail %}<div class="muted">stdout_tail</div><pre class="log">{{ ev.stdout_tail }}</pre>{% endif %}
+    {% if ev.stderr_tail %}<div class="muted">stderr_tail</div><pre class="log">{{ ev.stderr_tail }}</pre>{% endif %}
+    {% if not ev.stdout_tail and not ev.stderr_tail %}<div class="muted">无评测输出</div>{% endif %}
+</div>
+{% elif d.pt_fallback and d.pt_fallback.snippet %}
+<div class="section">
+    <h2>评测证据 <small>来自 .pt metadata</small></h2>
+    <pre class="log">{{ d.pt_fallback.snippet }}</pre>
+</div>
+{% endif %}
+
+{% if d.phase_times %}
+{% set total = (d.phase_times | selectattr('name', 'equalto', 'attempt_total') | map(attribute='seconds') | first) or (d.phase_times | map(attribute='seconds') | max) %}
+<div class="section">
+    <h2>耗时分解 <small>相对 attempt_total {{ total }}s</small></h2>
+    {% for p in d.phase_times %}
+    <div class="phase-row">
+        <span class="mono">{{ p.name }}</span>
+        <div class="phase-bar"><span style="width: {{ (100.0 * p.seconds / total) if total else 0 }}%"></span></div>
+        <span class="num">{{ p.seconds }}s</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="section" id="trajectory">
+    <h2>失败轨迹 <small>OpenHands history.jsonl · 每一步工具调用与环境返回</small></h2>
+    {% if d.trajectory.exists %}
+        <div class="traj-toolbar">
+            <button type="button" class="btn btn-secondary btn-sm" id="trajTail">看结尾</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="trajHead">从头看</button>
+            <label><input type="checkbox" id="trajErrors" /> 只看报错步</label>
+            <button type="button" class="btn btn-secondary btn-sm" id="trajExpand">展开本页</button>
+            <span class="muted" id="trajInfo"></span>
+            <span style="margin-left:auto">
+                <button type="button" class="btn btn-secondary btn-sm" id="trajPrev">上一页</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="trajNext">下一页</button>
+            </span>
+        </div>
+        <div class="traj-stats" id="trajStats"></div>
+        <div id="trajLastError"></div>
+        <div id="trajEvents"><div class="muted">加载中…</div></div>
+    {% else %}
+        <div class="muted">无轨迹文件{% if a.category == 'pass' %}（通过样本通常不落盘）{% endif %}。</div>
+    {% endif %}
+</div>
+
+<div class="section">
+    <h2>Patch <small>{% if d.patch.exists %}{{ d.patch.n_chars }} 字符{% if d.patch.truncated %}（已截断）{% endif %}{% endif %}</small></h2>
+    {% if d.patch.exists and d.patch.text %}
+        <pre class="diff">{% for line in d.patch.text.split('\n') %}{% if line.startswith('diff --git') %}<span class="file">{{ line }}</span>{% elif line.startswith('@@') %}<span class="hunk">{{ line }}</span>{% elif line.startswith('+') and not line.startswith('+++') %}<span class="add">{{ line }}</span>{% elif line.startswith('-') and not line.startswith('---') %}<span class="del">{{ line }}</span>{% else %}<span>{{ line }}</span>{% endif %}{% endfor %}</pre>
+    {% elif d.patch.exists %}
+        <div class="muted">空 patch（agent 未改动代码）。</div>
+    {% else %}
+        <div class="muted">无 patch 文件。</div>
+    {% endif %}
+</div>
+
+{% if d.segments %}
+<div class="section">
+    <h2>Segment transcript <small>训练样本侧的多轮对话</small></h2>
+    {% for s in d.segments %}
+        <a class="btn btn-secondary btn-sm" href="/api/segments/{{ s.primary_id }}">segment {{ s.segment_index }} · reward {{ s.reward if s.reward is not none else '-' }}</a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if d.trajectory.exists %}
+<script>
+(function () {
+    const PK = {{ a.attempt_pk | tojson }};
+    const LIMIT = 100;
+    let offset = 0, total = 0, matched = 0, errorsOnly = false;
+    const $ = (id) => document.getElementById(id);
+    function esc(s) {
+        return s == null ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function renderEvent(ev, open) {
+        const body = [ev.detail && ev.detail !== ev.title ? ev.detail : "", ev.text].filter(Boolean).join("\n\n");
+        const ts = ev.timestamp ? String(ev.timestamp).replace("T", " ").slice(0, 19) : "";
+        return `<details class="ev k-${esc(ev.kind)}${ev.is_error ? " is-error" : ""}"${open ? " open" : ""}>
+            <summary><span class="idx">#${ev.index}</span><span class="kind">${esc(ev.kind.replace("Event", ""))}${ev.tool_name ? " · " + esc(ev.tool_name) : ""}</span>
+            <span class="ttl">${esc(ev.title || (ev.text || "").slice(0, 160))}</span><span class="ts">${esc(ts)}</span></summary>
+            ${body ? `<pre>${esc(body)}</pre>` : ""}
+        </details>`;
+    }
+    async function fetchPage(off) {
+        const url = `/api/failures/attempts/${PK}/trajectory.json?offset=${off}&limit=${LIMIT}&errors_only=${errorsOnly}`;
+        const resp = await fetch(url, { headers: { Accept: "application/json" } });
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok || body.code !== 0) throw new Error((body && body.msg) || ("HTTP " + resp.status));
+        return body.data;
+    }
+    async function show(off) {
+        $("trajEvents").innerHTML = '<div class="muted">加载中…</div>';
+        try {
+            const d = await fetchPage(Math.max(0, off));
+            offset = d.offset; total = d.total; matched = d.n_matched;
+            const tools = Object.entries(d.tool_counts || {}).map(([k, v]) => `<span>${esc(k)} ×${v}</span>`).join("");
+            $("trajStats").innerHTML = `<span>事件 ${d.total}</span><span style="color:#c62828">报错步 ${d.n_errors}</span>${tools}`;
+            if (d.last_error) {
+                $("trajLastError").innerHTML = `<div class="last-error"><strong>最后一次报错 · #${d.last_error.index} ${esc(d.last_error.kind)}${d.last_error.tool_name ? " · " + esc(d.last_error.tool_name) : ""}</strong> ${esc(d.last_error.title)}<pre>${esc((d.last_error.text || "").slice(-1500))}</pre></div>`;
+            } else {
+                $("trajLastError").innerHTML = "";
+            }
+            const tailOpen = (i) => offset + i >= matched - 3;
+            $("trajEvents").innerHTML = d.events.map((ev, i) => renderEvent(ev, ev.is_error || tailOpen(i))).join("") || '<div class="muted">无事件</div>';
+            $("trajInfo").textContent = `${matched ? offset + 1 : 0}–${Math.min(offset + LIMIT, matched)} / ${matched}${errorsOnly ? "（仅报错）" : ""}`;
+            $("trajPrev").disabled = offset <= 0;
+            $("trajNext").disabled = offset + LIMIT >= matched;
+        } catch (e) {
+            $("trajEvents").innerHTML = `<div class="alert alert-warning">加载轨迹失败：${esc(e.message || e)}</div>`;
+        }
+    }
+    async function showTail() {
+        try {
+            const probe = await fetchPage(0);
+            await show(Math.max(0, probe.n_matched - LIMIT));
+        } catch (e) {
+            $("trajEvents").innerHTML = `<div class="alert alert-warning">加载轨迹失败：${esc(e.message || e)}</div>`;
+        }
+    }
+    $("trajTail").addEventListener("click", showTail);
+    $("trajHead").addEventListener("click", () => show(0));
+    $("trajPrev").addEventListener("click", () => show(offset - LIMIT));
+    $("trajNext").addEventListener("click", () => show(offset + LIMIT));
+    $("trajErrors").addEventListener("change", (e) => { errorsOnly = e.target.checked; show(0); });
+    $("trajExpand").addEventListener("click", () => document.querySelectorAll("#trajEvents details").forEach((x) => { x.open = true; }));
+    showTail();
+})();
+</script>
+{% endif %}
+{% endblock %}

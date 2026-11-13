@@ -17,6 +17,7 @@ __all__ = [
     "empty_failure_insights",
     "extract_sample_failure_detail",
     "cluster_failure_insights",
+    "parse_pytest_failure",
 ]
 
 _SNIPPET_MAX = 1200
@@ -82,6 +83,11 @@ def _parse_pytest_failure(stdout_tail: str) -> Tuple[Optional[str], Optional[str
         if asserts:
             error_summary = asserts[0].strip()
     return failed_test, error_summary
+
+
+def parse_pytest_failure(stdout_tail: str) -> Tuple[Optional[str], Optional[str]]:
+    """从 pytest stdout_tail 抽 ``(首个失败用例, 错误摘要)``；无法识别时为 None。"""
+    return _parse_pytest_failure(stdout_tail)
 
 
 def _normalize_driver_error(driver_error: str) -> str:

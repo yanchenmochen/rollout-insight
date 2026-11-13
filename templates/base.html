@@ -244,6 +244,10 @@
                        class="nav-link {% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务列表</a>
                 </li>
                 <li class="nav-item">
+                    <a href="/api/failures"
+                       class="nav-link {% if request.url.path.startswith('/api/failures') %}active{% endif %}">失败分析</a>
+                </li>
+                <li class="nav-item">
                     <a href="/api/dumps"
                        class="nav-link {% if request.url.path.startswith('/api/dumps') %}active{% endif %}">Rollout 落盘</a>
                 </li>
@@ -297,6 +301,8 @@
                 <ul>
                     <li><a href="/api/tasks"
                            class="{% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务</a></li>
+                    <li><a href="/api/failures"
+                           class="{% if request.url.path.startswith('/api/failures') %}active{% endif %}">失败分析</a></li>
                     <li><a href="/api/dumps"
                            class="{% if request.url.path.startswith('/api/dumps') %}active{% endif %}">Rollout dump</a></li>
                     <li><a href="/api/insights"

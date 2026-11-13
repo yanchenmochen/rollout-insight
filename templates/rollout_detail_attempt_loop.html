@@ -19,8 +19,9 @@
     {%- endmacro %}
 
     {% for a in attempts %}
+    {% set is_failure = (a.outcome_category and a.outcome_category != 'pass') or (not a.outcome_category and a.reward_bucket != 'all_one') %}
     <details class="tree attempt-row {% if a.outcome_category %}is-{{ a.outcome_category }}{% elif a.reward_bucket == 'aborted' %}is-abort{% endif %}"
-             data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
+             id="attempt-{{ a.primary_id }}" data-attempt-id="{{ a.primary_id }}" data-rollout-pk="{{ rollout.id }}">
         <summary>
             <span class="sum-id">attempt #{{ a.primary_id }}</span>
             <span class="sum-title">
@@ -34,6 +35,10 @@
                     <span class="abort-reason-chip" style="background:#fff3e0;color:#e65100;border-color:#ffe0b2;" title="timeout: {{ a.outcome_reason }}">{{ a.outcome_reason }}</span>
                 {% elif a.outcome_category == 'fail' and a.outcome_reason %}
                     <span class="abort-reason-chip" style="background:#f3e5f5;color:#6a1b9a;border-color:#e1bee7;" title="fail: {{ a.outcome_reason }}">{{ a.outcome_reason }}</span>
+                {% endif %}
+                {% if is_failure %}
+                    <a class="fail-traj-link" href="/api/failures/attempts/{{ a.primary_id }}"
+                       title="查看该 attempt 怎么失败的：评测证据 / OpenHands 轨迹 / patch">失败轨迹 →</a>
                 {% endif %}
             </span>
         </summary>
