@@ -143,6 +143,36 @@
     .status-tag.status-succeeded { background: #cde7d6; color: var(--ri-success); }
     .status-tag.status-failed { background: #f3c8c8; color: #9b2c2c; }
 
+    .algo-tag {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #e8ecf0;
+        color: #445;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+    .algo-tag.algo-slime { background: #d6ebe3; color: #1a6b4a; }
+    .algo-tag.algo-eval { background: #e8e0f5; color: #5a3d8a; }
+    .algo-tag.algo-convert { background: #f5e6d0; color: #8a5a12; }
+    .algo-tag.algo-other { background: #e0e6ec; color: #556; }
+
+    .linked-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #cde7d6;
+        color: #1a6b4a;
+        text-decoration: none;
+    }
+    .linked-badge:hover { filter: brightness(0.96); }
+
     .alert {
         padding: 10px 12px;
         border-radius: var(--te-radius);
@@ -204,6 +234,12 @@
         gap: 8px;
         justify-content: flex-end;
     }
+
+    button.btn:disabled,
+    button.btn[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
 </style>
 {% endblock %}
 
@@ -212,7 +248,7 @@
     <div>
         <h1>南湖作业</h1>
         <div class="page-subtitle">
-            列出南湖调度平台上的训练 / 推理 job；可关联到本系统的 Rollout 任务，便于溯源
+            仅 <strong>slime</strong> 作业可链接 / 快速创建 Rollout 任务；评测与转换作业仅展示
         </div>
     </div>
     <div>
@@ -240,6 +276,16 @@
         <input id="statusFilter" placeholder="如 PENDING / RUNNING" value="{{ filter_status or '' }}" />
     </div>
     <div class="form-group">
+        <label for="algoKindFilter">算法库</label>
+        <select id="algoKindFilter">
+            <option value="slime" {% if filter_algo_kind == 'slime' or not filter_algo_kind %}selected{% endif %}>slime</option>
+            <option value="eval" {% if filter_algo_kind == 'eval' %}selected{% endif %}>评测</option>
+            <option value="convert" {% if filter_algo_kind == 'convert' %}selected{% endif %}>转换</option>
+            <option value="other" {% if filter_algo_kind == 'other' %}selected{% endif %}>其它</option>
+            <option value="all" {% if filter_algo_kind == 'all' %}selected{% endif %}>全部</option>
+        </select>
+    </div>
+    <div class="form-group">
         <label>&nbsp;</label>
         <button type="button" class="btn" id="reloadBtn">应用过滤</button>
     </div>
@@ -250,6 +296,7 @@
         <tr>
             <th>job_id</th>
             <th>名称</th>
+            <th>算法库</th>
             <th>状态</th>
             <th>集群</th>
             <th>output_dir</th>
@@ -260,24 +307,40 @@
     <tbody id="jobTableBody">
         {% if jobs %}
             {% for j in jobs %}
-            <tr data-job-id="{{ j.job_id }}">
+            <tr data-job-id="{{ j.job_id }}" data-algo-kind="{{ j.algo_kind or 'other' }}">
                 <td class="col-id">{{ j.job_id }}</td>
-                <td>{{ j.name or '-' }}</td>
+                <td>
+                    <span class="algo-tag algo-{{ j.algo_kind or 'other' }}">{{ j.algo_label or '其它' }}</span>
+                    {{ j.name or '-' }}
+                </td>
+                <td>{{ j.algo_label or '-' }}</td>
                 <td><span class="status-tag {{ ('status-' + (j.status|lower)) if j.status else '' }}">{{ j.status or '-' }}</span></td>
                 <td>{{ j.cluster or '-' }}</td>
                 <td class="path-cell" title="{{ j.output_dir or '' }}">{{ j.output_dir or '-' }}</td>
                 <td class="col-id">
-                    {% if j.related_task_id %}<a href="/api/tasks/{{ j.related_task_id }}">#{{ j.related_task_id }}</a>
+                    {% if j.related_task_id %}
+                    <a class="linked-badge" href="/api/tasks/{{ j.related_task_id }}" title="{{ j.related_task_name or '' }}">已关联 #{{ j.related_task_id }}</a>
                     {% else %}-{% endif %}
                 </td>
                 <td class="col-actions">
-                    <button type="button" class="btn btn-secondary btn-sm js-link" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">链接任务</button>
+                    {% if j.algo_kind == 'slime' %}
+                        {% if j.related_task_id %}
+                        <a class="btn btn-secondary btn-sm" href="/api/tasks/{{ j.related_task_id }}">打开任务</a>
+                        <button type="button" class="btn btn-secondary btn-sm js-link" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">改绑</button>
+                        {% else %}
+                        <button type="button" class="btn btn-secondary btn-sm js-link" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">链接任务</button>
+                        <button type="button" class="btn btn-sm js-quick-create" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">快速创建任务</button>
+                        {% endif %}
+                    {% else %}
+                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">链接任务</button>
+                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">快速创建</button>
+                    {% endif %}
                     <button type="button" class="btn btn-secondary btn-sm js-restart" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">重启</button>
                 </td>
             </tr>
             {% endfor %}
         {% else %}
-            <tr><td colspan="7" class="empty-row">暂无 nanhu job；点击「从南湖同步」拉取最新数据</td></tr>
+            <tr><td colspan="8" class="empty-row">暂无匹配的 nanhu job；可切换算法库或点击「从南湖同步」</td></tr>
         {% endif %}
     </tbody>
 </table>
@@ -353,6 +416,51 @@ function showNotice(msg, level) {
     el.style.display = msg ? "" : "none";
 }
 
+function relatedCell(j) {
+    if (j.related_task_id) {
+        const tip = escapeHtml(j.related_task_name || "");
+        return '<a class="linked-badge" href="/api/tasks/' + j.related_task_id + '" title="' + tip + '">已关联 #' + j.related_task_id + '</a>';
+    }
+    return "-";
+}
+
+function actionsCell(j) {
+    const job = escapeHtml(j.job_id);
+    const cluster = escapeHtml(j.cluster || "");
+    const kind = j.algo_kind || "other";
+    let html = "";
+    if (kind === "slime") {
+        if (j.related_task_id) {
+            html += '<a class="btn btn-secondary btn-sm" href="/api/tasks/' + j.related_task_id + '">打开任务</a> ';
+            html += '<button type="button" class="btn btn-secondary btn-sm js-link" data-job="' + job + '" data-cluster="' + cluster + '">改绑</button> ';
+        } else {
+            html += '<button type="button" class="btn btn-secondary btn-sm js-link" data-job="' + job + '" data-cluster="' + cluster + '">链接任务</button> ';
+            html += '<button type="button" class="btn btn-sm js-quick-create" data-job="' + job + '" data-cluster="' + cluster + '">快速创建任务</button> ';
+        }
+    } else {
+        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">链接任务</button> ';
+        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">快速创建</button> ';
+    }
+    html += '<button type="button" class="btn btn-secondary btn-sm js-restart" data-job="' + job + '" data-cluster="' + cluster + '">重启</button>';
+    return html;
+}
+
+function renderJobRow(j) {
+    const kind = j.algo_kind || "other";
+    const label = j.algo_label || "其它";
+    return '<tr data-job-id="' + escapeHtml(j.job_id) + '" data-algo-kind="' + escapeHtml(kind) + '">'
+        + '<td class="col-id">' + escapeHtml(j.job_id) + '</td>'
+        + '<td><span class="algo-tag algo-' + escapeHtml(kind) + '">' + escapeHtml(label) + '</span> '
+        + escapeHtml(j.name || '-') + '</td>'
+        + '<td>' + escapeHtml(label) + '</td>'
+        + '<td><span class="status-tag status-' + statusClass(j.status) + '">' + escapeHtml(j.status || '-') + '</span></td>'
+        + '<td>' + escapeHtml(j.cluster || '-') + '</td>'
+        + '<td class="path-cell" title="' + escapeHtml(j.output_dir) + '">' + escapeHtml(j.output_dir || '-') + '</td>'
+        + '<td class="col-id">' + relatedCell(j) + '</td>'
+        + '<td class="col-actions">' + actionsCell(j) + '</td>'
+        + '</tr>';
+}
+
 async function postJson(url, payload) {
     const resp = await fetch(url, {
         method: "POST",
@@ -366,14 +474,22 @@ async function postJson(url, payload) {
     return data;
 }
 
-async function reloadJobs() {
-    const tbody = document.getElementById("jobTableBody");
-    tbody.innerHTML = '<tr><td colspan="4" class="loading-row">加载中…</td></tr>';
+function filterParams(includeRefresh) {
     const params = new URLSearchParams();
     const cluster = document.getElementById("clusterFilter").value.trim();
     const status = document.getElementById("statusFilter").value.trim();
+    const algoKind = document.getElementById("algoKindFilter").value.trim() || "slime";
     if (cluster) params.set("cluster", cluster);
     if (status) params.set("status", status);
+    if (algoKind) params.set("algo_kind", algoKind);
+    if (includeRefresh) params.set("refresh", "1");
+    return params;
+}
+
+async function reloadJobs() {
+    const tbody = document.getElementById("jobTableBody");
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-row">加载中…</td></tr>';
+    const params = filterParams(false);
     try {
         const resp = await fetch("/api/nanhu/jobs?" + params.toString(), {
             headers: { "Accept": "application/json" },
@@ -384,25 +500,12 @@ async function reloadJobs() {
         }
         const list = (data.data && data.data.jobs) || [];
         if (!list.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-row">暂无 nanhu job；点击「从南湖同步」拉取最新数据</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-row">暂无匹配的 nanhu job；可切换算法库或点击「从南湖同步」</td></tr>';
             return;
         }
-        tbody.innerHTML = list.map(function (j) {
-            return '<tr data-job-id="' + escapeHtml(j.job_id) + '">'
-                + '<td class="col-id">' + escapeHtml(j.job_id) + '</td>'
-                + '<td>' + escapeHtml(j.name) + '</td>'
-                + '<td><span class="status-tag status-' + statusClass(j.status) + '">' + escapeHtml(j.status || '-') + '</span></td>'
-                + '<td>' + escapeHtml(j.cluster) + '</td>'
-                + '<td class="path-cell" title="' + escapeHtml(j.output_dir) + '">' + escapeHtml(j.output_dir) + '</td>'
-                + '<td class="col-id">' + (j.related_task_id ? ('<a href="/api/tasks/' + j.related_task_id + '">#' + j.related_task_id + '</a>') : '-') + '</td>'
-                + '<td class="col-actions">'
-                + '<button type="button" class="btn btn-secondary btn-sm js-link" data-job="' + escapeHtml(j.job_id) + '" data-cluster="' + escapeHtml(j.cluster) + '">链接任务</button> '
-                + '<button type="button" class="btn btn-secondary btn-sm js-restart" data-job="' + escapeHtml(j.job_id) + '" data-cluster="' + escapeHtml(j.cluster) + '">重启</button>'
-                + '</td>'
-                + '</tr>';
-        }).join("");
+        tbody.innerHTML = list.map(renderJobRow).join("");
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
     }
 }
 
@@ -414,12 +517,7 @@ document.getElementById("syncBtn").addEventListener("click", async function () {
     const original = btn.textContent;
     btn.textContent = "同步中…";
     try {
-        const params = new URLSearchParams();
-        const cluster = document.getElementById("clusterFilter").value.trim();
-        const status = document.getElementById("statusFilter").value.trim();
-        if (cluster) params.set("cluster", cluster);
-        if (status) params.set("status", status);
-        params.set("refresh", "1");
+        const params = filterParams(true);
         const resp = await fetch("/api/nanhu/jobs?" + params.toString(), {
             headers: { "Accept": "application/json" },
         });
@@ -452,6 +550,36 @@ function closeModal(modalId) {
     if (m) m.classList.remove("show");
 }
 
+async function quickCreateTask(jobId, cluster) {
+    if (!jobId) {
+        showNotice("job_id 不能为空", "warn");
+        return;
+    }
+    if (!confirm("确认为南湖 job\n" + jobId + "\n快速创建 Rollout 任务？\n将自动解析路径并写入 nanhu_job_id。")) {
+        return;
+    }
+    const fd = new FormData();
+    fd.set("nanhu_job_id", jobId);
+    fd.set("source_type", "nanhu_job");
+    if (cluster) fd.set("cluster", cluster);
+    try {
+        const resp = await fetch("/api/tasks", {
+            method: "POST",
+            headers: { "Accept": "application/json" },
+            body: fd,
+        });
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        const tid = data.data && data.data.id;
+        showNotice("已创建任务" + (tid ? (" #" + tid) : "") + "，列表将刷新", "success");
+        reloadJobs();
+    } catch (err) {
+        showNotice("快速创建失败：" + err.message, "warn");
+    }
+}
+
 document.addEventListener("click", function (event) {
     const t = event.target;
     if (!(t instanceof HTMLElement)) return;
@@ -471,6 +599,10 @@ document.addEventListener("click", function (event) {
         document.getElementById("restartTaskId").value = "";
         document.getElementById("restartSubmit").checked = false;
         openModal("restartModal");
+    } else if (t.classList.contains("js-quick-create")) {
+        const job = t.getAttribute("data-job") || "";
+        const cluster = t.getAttribute("data-cluster") || "";
+        quickCreateTask(job, cluster);
     }
 });
 
@@ -489,7 +621,7 @@ document.getElementById("linkForm").addEventListener("submit", async function (e
     const btn = document.getElementById("linkSubmitBtn");
     btn.disabled = true;
     try {
-        const data = await postJson(url, { task_id: taskId, cluster: cluster });
+        await postJson(url, { task_id: taskId, cluster: cluster });
         const msg = submit ? "已写入数据库" : "dry-run 完成（未真正写库）";
         showNotice(msg + "：job=" + job + " task=" + taskId, "success");
         closeModal("linkModal");
@@ -513,7 +645,7 @@ document.getElementById("restartForm").addEventListener("submit", async function
     const btn = document.getElementById("restartSubmitBtn");
     btn.disabled = true;
     try {
-        const data = await postJson("/api/nanhu/jobs/restart" + (submit ? "?submit=1" : "?submit=0"), payload);
+        await postJson("/api/nanhu/jobs/restart" + (submit ? "?submit=1" : "?submit=0"), payload);
         const msg = submit ? "已发起重启" : "dry-run 完成（未真正调用 restart_job）";
         showNotice(msg + "：job=" + job, "success");
         closeModal("restartModal");

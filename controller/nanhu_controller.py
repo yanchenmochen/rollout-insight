@@ -104,7 +104,70 @@ def _job_to_dict(job: Any) -> Dict[str, Any]:
         "mounted_storages_json": getattr(job, "mounted_storages_json", "") or "",
         "create_time": getattr(job, "create_time", None),
         "update_time": getattr(job, "update_time", None),
+        "related_task_id": None,
+        "related_task_name": "",
     }
+
+
+def _task_service():
+    return _safe_import_attr("db.db_task_service", "DBTaskService")
+
+
+def enrich_jobs_with_task_links(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """批量回填 ``related_task_id`` / ``related_task_name``（按 ri_task.nanhu_job_id）。"""
+    if not jobs:
+        return jobs
+    TaskSvc = _task_service()
+    if TaskSvc is None:
+        return jobs
+    job_ids = [str(j.get("job_id") or "").strip() for j in jobs]
+    try:
+        mapping = TaskSvc.list_by_nanhu_job_ids(job_ids)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("enrich related_task 失败: {}", exc)
+        return jobs
+    for j in jobs:
+        key = str(j.get("job_id") or "").strip()
+        info = mapping.get(key) if key else None
+        if info:
+            j["related_task_id"] = info.get("primary_id")
+            j["related_task_name"] = info.get("task_name") or ""
+        else:
+            j["related_task_id"] = None
+            j["related_task_name"] = ""
+    return jobs
+
+
+def attach_algo_kinds(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """为每条 job 写入 ``algo_kind`` / ``algo_label``。"""
+    from utils.nanhu_job_kind import attach_nanhu_job_kind
+
+    for j in jobs:
+        attach_nanhu_job_kind(j)
+    return jobs
+
+
+def filter_jobs_by_algo_kind(
+    jobs: List[Dict[str, Any]],
+    algo_kind: Optional[str],
+) -> List[Dict[str, Any]]:
+    """按 ``algo_kind`` 过滤；空 / ``all`` 表示不过滤。"""
+    kind = (algo_kind or "").strip().lower()
+    if not kind or kind == "all":
+        return jobs
+    return [j for j in jobs if (j.get("algo_kind") or "") == kind]
+
+
+def prepare_nanhu_job_list(
+    rows: List[Any],
+    *,
+    algo_kind: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """ORM 行 → dict → 关联任务 enrichment → 算法库分类 → 可选过滤。"""
+    jobs = [_job_to_dict(r) for r in rows]
+    enrich_jobs_with_task_links(jobs)
+    attach_algo_kinds(jobs)
+    return filter_jobs_by_algo_kind(jobs, algo_kind)
 
 
 def _task_to_dict(task: Any) -> Dict[str, Any]:
@@ -274,10 +337,15 @@ async def page_nanhu_jobs(
     request: Request,
     cluster: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    algo_kind: Optional[str] = Query(
+        default="slime",
+        description="算法库过滤：slime/eval/convert/other/all；默认 slime",
+    ),
 ) -> HTMLResponse:
     """渲染 nanhu_jobs.html（页面 + 表 + 过滤）。"""
     jobs: List[Dict[str, Any]] = []
     warning: Optional[str] = None
+    filter_algo = (algo_kind if algo_kind is not None else "slime") or "slime"
     Session = _session_factory()
     Svc = _nanhu_job_service()
     if Session is None or Svc is None:
@@ -300,7 +368,7 @@ async def page_nanhu_jobs(
                         rows = svc.list_jobs(cluster=cluster, status=status, limit=200)
                     except RolloutInsightException as exc:
                         warning = f"南湖 list 失败：{exc.message}"
-                jobs = [_job_to_dict(r) for r in rows]
+                jobs = prepare_nanhu_job_list(rows, algo_kind=filter_algo)
         except Exception as exc:  # noqa: BLE001
             logger.exception("加载南湖作业列表失败: {}", exc)
             warning = f"加载失败：{exc}"
@@ -313,6 +381,7 @@ async def page_nanhu_jobs(
             "jobs": jobs,
             "filter_cluster": cluster or "",
             "filter_status": status or "",
+            "filter_algo_kind": filter_algo,
             "warning": warning,
         },
     )
@@ -327,6 +396,10 @@ async def api_list_nanhu_jobs(
     request: Request,
     cluster: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    algo_kind: Optional[str] = Query(
+        default=None,
+        description="算法库过滤：slime/eval/convert/other/all；缺省不过滤",
+    ),
     refresh: bool = Query(default=False, description="是否先从南湖侧拉新再返回"),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -343,6 +416,7 @@ async def api_list_nanhu_jobs(
     synced = 0
     sync_error: Optional[str] = None
     client_module = _nanhu_client_module()
+    filter_algo = (algo_kind or "").strip() or None
 
     try:
         with Session() as session:
@@ -364,7 +438,7 @@ async def api_list_nanhu_jobs(
             rows = svc.list_jobs(
                 cluster=cluster, status=status, limit=limit, offset=offset
             )
-            jobs = [_job_to_dict(r) for r in rows]
+            jobs = prepare_nanhu_job_list(rows, algo_kind=filter_algo)
         return Response.success(
             msg="ok",
             data={
@@ -374,6 +448,7 @@ async def api_list_nanhu_jobs(
                 "sync_error": sync_error,
                 "cluster": cluster or "",
                 "status": status or "",
+                "algo_kind": filter_algo or "all",
             },
         )
     except RolloutInsightException:

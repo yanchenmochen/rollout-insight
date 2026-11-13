@@ -112,6 +112,11 @@
 - `def setup_rollout_insight_logging(log_base: str='') -> None` — 配置 rollout-insight 的 loguru 输出。
 - `def ensure_logging_configured() -> None` — 幂等地初始化 logging，避免被反复执行。
 
+### `utils/nanhu_job_kind.py`
+
+- `def classify_nanhu_job_kind(job: Optional[Mapping[str, Any]]) -> dict` — 按 algorithm_uuid / 路径 / 名称判定算法库。
+- `def attach_nanhu_job_kind(job: MutableMapping[str, Any]) -> MutableMapping[str, Any]` — 就地写入 ``algo_kind`` / ``algo_label``，并返回同一 dict。
+
 ### `utils/nanhu_job_path_resolve.py`
 
 - `def env_map_from_job(job: Mapping[str, Any]) -> Dict[str, str]` — 把 ``envVars`` / ``env_vars`` 列表转成 ``{KEY: value}``。
@@ -236,6 +241,7 @@
 - `staticmethod` `def get_by_id() -> Optional[DBTask]`
 - `staticmethod` `def get_by_name() -> Optional[DBTask]`
 - `staticmethod` `def list_tasks(keyword: Optional[str]=None, limit: int=100, offset: int=0) -> List[DBTask]`
+- `staticmethod` `def list_by_nanhu_job_ids() -> Dict[str, Dict[str, Any]]`
 - `staticmethod` `def update_status(status: str) -> bool`
 - `staticmethod` `def update_fields(**fields: Any) -> bool`
 - `staticmethod` `def delete_task() -> bool`

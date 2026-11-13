@@ -102,6 +102,38 @@ class DBTaskService:
             )
 
     @staticmethod
+    def list_by_nanhu_job_ids(
+        job_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """按 ``nanhu_job_id`` 批量查关联任务。
+
+        同一 job_id 多条任务时取 ``primary_id`` 最大的一条。
+        返回 ``{nanhu_job_id: {"primary_id", "task_name", "status"}}``。
+        """
+        cleaned = [str(j).strip() for j in (job_ids or []) if str(j or "").strip()]
+        if not cleaned:
+            return {}
+        unique_ids = list(dict.fromkeys(cleaned))
+        with Session() as session:
+            rows = (
+                session.query(DBTask)
+                .filter(DBTask.nanhu_job_id.in_(unique_ids))
+                .order_by(desc(DBTask.primary_id))
+                .all()
+            )
+            out: Dict[str, Dict[str, Any]] = {}
+            for task in rows:
+                key = (task.nanhu_job_id or "").strip()
+                if not key or key in out:
+                    continue
+                out[key] = {
+                    "primary_id": task.primary_id,
+                    "task_name": task.task_name or "",
+                    "status": task.status or "",
+                }
+            return out
+
+    @staticmethod
     def update_status(primary_id: int, status: str) -> bool:
         """更新任务状态；找不到任务返回 False。"""
         if not status:

@@ -58,6 +58,7 @@ from db.db_nanhu_job_service import DBNanhuJobService  # noqa: E402
 from db.db_task import DBTask  # noqa: E402
 from db.db_task_service import DBTaskService  # noqa: E402
 from controller import nanhu_controller as _ctrl  # noqa: E402
+from utils.auth_session import require_login  # noqa: E402
 
 # 重新构造一个最小的 FastAPI app，把 nanhu_controller router 挂上去（不依赖 main）
 from fastapi import FastAPI  # noqa: E402
@@ -65,6 +66,18 @@ from data.response import Response  # noqa: E402
 from data.rollout_insight_exception import RolloutInsightException  # noqa: E402
 
 app = FastAPI()
+
+
+class _FakeUser:
+    primary_id = 1
+    username = "test"
+
+
+def _fake_require_login():
+    return _FakeUser()
+
+
+app.dependency_overrides[require_login] = _fake_require_login
 app.include_router(_ctrl.router)
 
 
@@ -136,10 +149,15 @@ class TestNanhuController(unittest.TestCase):
         self._make_job(suf)
         resp = client.get(
             "/api/nanhu/jobs/page",
-            params={"cluster": "wuxi", "status": "RUNNING"},
+            params={
+                "cluster": "wuxi",
+                "status": "RUNNING",
+                "algo_kind": "all",
+            },
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn(f"j-ctrl-{suf}", resp.text)
+        self.assertIn("algoKindFilter", resp.text)
 
     # ------------------------------------------------------------------
     # GET /api/nanhu/jobs
@@ -152,6 +170,40 @@ class TestNanhuController(unittest.TestCase):
         self.assertEqual(data["code"], 0)
         self.assertIn("jobs", data["data"])
         self.assertIn("synced", data["data"])
+        self.assertIn("algo_kind", data["data"])
+
+    def test_list_enriches_related_task_and_algo_kind(self):
+        """列表应回填 related_task_* 与 algo_kind。"""
+        from utils.nanhu_job_kind import SLIME_ALGORITHM_UUIDS
+
+        suf = f"enrich_{int(__import__('time').time() * 1000)}"
+        job_id = f"j-ctrl-{suf}"
+        DBNanhuJobService.upsert(
+            job_id=job_id,
+            cluster="wuxi",
+            name="slime-enrich",
+            status="RUNNING",
+            algorithm_uuid=next(iter(SLIME_ALGORITHM_UUIDS)),
+            output_dir="/mnt/x/output/slime/runs/demo",
+        )
+        task = DBTaskService.create_task(
+            task_name=f"ctrl_task_{suf}",
+            status="PENDING",
+            nanhu_job_id=job_id,
+        )
+        resp = client.get(
+            "/api/nanhu/jobs",
+            params={"algo_kind": "slime", "cluster": "wuxi"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["code"], 0)
+        jobs = data["data"]["jobs"]
+        hit = next((j for j in jobs if j["job_id"] == job_id), None)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["algo_kind"], "slime")
+        self.assertEqual(hit["related_task_id"], task.primary_id)
+        self.assertEqual(hit["related_task_name"], f"ctrl_task_{suf}")
 
     def test_list_nanhu_jobs_refresh_without_client(self):
         """refresh=1 时若 nanhu_client 未就绪，应返回 sync_error 提示，但仍能列已有数据。
