@@ -434,6 +434,49 @@
         .stack-bar { height: 16px; }
         .stack-bar.is-outcome { height: 18px; }
     }
+
+    .job-type-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-align: middle;
+        border: 1px solid transparent;
+    }
+    .job-type-train { background: #e8f5e9; color: #1b5e20; border-color: #a5d6a7; }
+    .job-type-rollout_only { background: #fff8e1; color: #e65100; border-color: #ffe082; }
+    .job-type-eval { background: #e3f2fd; color: #0d47a1; border-color: #90caf9; }
+    .job-type-unknown { background: #f5f5f5; color: #616161; border-color: #e0e0e0; }
+
+    .eval-score-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        margin-top: 8px;
+    }
+    .eval-score-table th,
+    .eval-score-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--ri-border);
+        text-align: left;
+    }
+    .eval-score-table th {
+        color: var(--ri-muted);
+        font-weight: 600;
+        background: #f8fafb;
+    }
+    .eval-score-table td.score-val {
+        font-family: ui-monospace, monospace;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0d47a1;
+    }
+    .eval-score-empty {
+        color: var(--ri-muted);
+        font-size: 13px;
+        margin-top: 8px;
+    }
 </style>
 {% endblock %}
 
@@ -443,6 +486,9 @@
         <h1>任务 #{{ task.id }} — {{ task.task_name }}</h1>
         <div class="page-subtitle">
             <span class="status-tag status-{{ task.status | lower }}">{{ task.status }}</span>
+            {% set jt = (job_context.job_type if job_context else task.job_type) or 'unknown' %}
+            {% set jtl = (job_context.job_type_label if job_context else task.job_type_label) or '未知' %}
+            &nbsp;·&nbsp; <span class="job-type-tag job-type-{{ jt }}" title="按作业环境变量判定">{{ jtl }}</span>
             &nbsp;·&nbsp; 来源 <strong>{{ task.source_type or "-" }}</strong>
             {% if task.nanhu_job_id %}&nbsp;·&nbsp; 南湖 job <code>{{ task.nanhu_job_id }}</code>{% endif %}
         </div>
@@ -468,8 +514,13 @@
             <div class="nav-group">
                 <a href="#overview" class="active" data-nav="overview">概览</a>
             </div>
+            {% if job_context and job_context.is_eval_job %}
             <div class="nav-group">
-                <a href="#train-curves" data-nav="train-curves">训练曲线</a>
+                <a href="#eval-scores" data-nav="eval-scores">评测评分</a>
+            </div>
+            {% endif %}
+            <div class="nav-group">
+                <a href="#train-curves" data-nav="train-curves">{% if job_context and job_context.is_eval_job %}评测曲线{% else %}训练曲线{% endif %}</a>
             </div>
             <div class="nav-group">
                 <a href="#rollout-stack" data-nav="rollout-stack">Attempt 分布</a>
@@ -502,6 +553,19 @@
                 <tr>
                     <th>来源</th>
                     <td>{{ task.source_type or "-" }}</td>
+                </tr>
+                <tr>
+                    <th>作业类型</th>
+                    <td>
+                        {% set jt = (job_context.job_type if job_context else task.job_type) or 'unknown' %}
+                        {% set jtl = (job_context.job_type_label if job_context else task.job_type_label) or '未知' %}
+                        <span class="job-type-tag job-type-{{ jt }}">{{ jtl }}</span>
+                        {% if job_context and job_context.job_type_signals %}
+                        <span class="meta" style="margin-left:8px;color:var(--ri-muted);font-size:12px;">
+                            {{ job_context.job_type_signals | join('；') }}
+                        </span>
+                        {% endif %}
+                    </td>
                 </tr>
                 <tr>
                     <th>南湖 job</th>
@@ -552,8 +616,46 @@
             </table>
         </div>
 
+        {% if job_context and job_context.is_eval_job %}
+        <div class="section" id="eval-scores">
+            <h2>评测评分 <small>TensorBoard 主 tag · attempt 平均 reward</small></h2>
+            {% if job_context.eval_scores %}
+            <table class="eval-score-table">
+                <thead>
+                    <tr>
+                        <th>数据集</th>
+                        <th>分数</th>
+                        <th>step</th>
+                        <th>tag</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in job_context.eval_scores %}
+                    <tr>
+                        <td>{{ s.name }}</td>
+                        <td class="score-val">{{ "%.4f"|format(s.value) }}</td>
+                        <td>{{ s.step }}</td>
+                        <td class="mono" style="font-size:12px;">{{ s.tag }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if job_context.eval_event_dir %}
+            <p class="meta" style="margin-top:8px;font-size:12px;color:var(--ri-muted);">
+                来源目录 <code>{{ job_context.eval_event_dir }}</code>
+            </p>
+            {% endif %}
+            {% else %}
+            <p class="eval-score-empty">
+                未读到 <code>eval/&lt;dataset&gt;</code> 主分数。请确认 run 下已有
+                <code>tbs/</code> 或 <code>tf_logs/</code> 事件文件，或稍后重扫后再看。
+            </p>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <div class="section" id="train-curves">
-            <h2>训练曲线 <small>委托 TensorBoard · 新标签打开 · 不嵌入</small></h2>
+            <h2>{% if job_context and job_context.is_eval_job %}评测曲线{% else %}训练曲线{% endif %} <small>委托 TensorBoard · 新标签打开 · 不嵌入</small></h2>
             <div class="tb-cta">
                 <p class="meta">
                     从本任务 <code>rollout_root</code> 解析 run 下的

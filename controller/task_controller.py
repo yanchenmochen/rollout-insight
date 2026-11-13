@@ -678,12 +678,43 @@ async def page_task_detail(
             "by_drop_reason": [],
         }
 
+        task_dict = _task_to_dict(obj)
+        job_context: Dict[str, Any] = {
+            "job_type": "unknown",
+            "job_type_label": "未知",
+            "job_type_signals": [],
+            "training_script": "",
+            "env_source": "",
+            "eval_scores": [],
+            "eval_event_dir": None,
+            "eval_run_dir": None,
+            "is_eval_job": False,
+        }
+        try:
+            from service.task_job_context_service import build_task_job_context
+
+            user = current_user(request)
+            local_user_id = (
+                getattr(user, "primary_id", None) if user is not None else None
+            )
+            job_context = build_task_job_context(
+                rollout_root=task_dict.get("rollout_root"),
+                nanhu_job_id=task_dict.get("nanhu_job_id"),
+                local_user_id=local_user_id,
+            )
+            task_dict["job_type"] = job_context.get("job_type")
+            task_dict["job_type_label"] = job_context.get("job_type_label")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "组装任务作业类型/评测分数失败 task_id={}: {}", task_id, exc
+            )
+
         return templates.TemplateResponse(
             request,
             "task_detail.html",
             {
                 "page_title": f"任务 #{task_id} - {obj.task_name}",
-                "task": _task_to_dict(obj),
+                "task": task_dict,
                 "rollouts": rollouts,
                 "stack_abort_reasons": [],
                 "stack_timeout_reasons": [],
@@ -691,6 +722,7 @@ async def page_task_detail(
                 "stack_type_legend": [],
                 "stack_train_stats": stack_train_stats,
                 "annotations_lazy": True,
+                "job_context": job_context,
             },
         )
     except Exception as exc:  # noqa: BLE001
