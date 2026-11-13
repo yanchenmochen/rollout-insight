@@ -142,17 +142,11 @@
 - `def token_estimate(text: str, chars_per_token: float=3.5) -> int` — 粗估 token 数：默认按字符数 / 3.5。
 - `def split_response_to_turns_with_tokenizer(response_text: str='', *, tokens: Optional[Sequence[…` — v0.5.0 T1：优先用 tokens + tokenizer 切分；否则 fallback 到 response 文本。
 
-### `utils/run_train_metrics.py`
+### `utils/tb_run_paths.py`
 
-- `def empty_p0_payload(*, source: str='none', run_dir: str='') -> Dict[str, Any]` — （无 docstring）
-- `def clear_p0_cache_for_tests() -> None` — 仅供单测清空进程内缓存与后台刷新标记。
 - `def resolve_run_dir(rollout_root: Optional[str]) -> Optional[Path]` — 从 ``task.rollout_root``（通常指向 ``.../generated/rollout_dumps``）推 run 根目录。
-- `def discover_tbs_dir(run_dir: Path) -> Optional[Path]` — （无 docstring）
-- `def discover_main_log(run_dir: Path) -> Optional[Path]` — （无 docstring）
-- `def load_p0_metrics(rollout_root: Optional[str], *, use_cache: bool=True, allow_stale: bool=Tru…` — 对外入口：按 rollout_root 解析 P0 指标。
-- `def warm_p0_metrics(rollout_root: Optional[str]) -> bool` — 后台预热：优先走缓存；无缓存时才冷读 tbs。
-- `def load_p0_from_tbs(tbs_dir: Path) -> Dict[str, Any]` — 用 TensorBoard EventAccumulator 读 scalars。
-- `def load_p0_from_log(log_path: Path) -> Dict[str, Any]` — 流式扫描主日志，抽取 perf / filtered 字典中的 P0 字段。
+- `def discover_tb_event_dir(run_dir: Path) -> Optional[Path]` — 在 run 根下按 ``TB_EVENT_DIR_NAMES`` 找可用的 TensorBoard 事件目录。
+- `def discover_tbs_dir(run_dir: Path) -> Optional[Path]` — 兼容旧名：等同 ``discover_tb_event_dir``。
 
 ## db/ — ORM 模型
 
@@ -327,12 +321,6 @@
 - `method` `def rescan_task(task_id: int) -> Dict[str, Any]`
 - `method` `def get_progress(task_id: int) -> Dict[str, Any]`
 
-### `run_train_metrics_service_module` (`service/run_train_metrics_service.py`)
-
-模块级公开函数（不在 class 内）：
-
-- `staticmethod` `def get_task_p0_train_metrics(task_id: int) -> Dict[str, Any]`
-
 ### `segment_search_service_module` (`service/segment_search_service.py`)
 
 模块级公开函数（不在 class 内）：
@@ -361,6 +349,19 @@
 - `staticmethod` `def list_task_annotation_meta(task_id: int) -> Dict[str, Any]`
 - `staticmethod` `def get_rollout_annotation_payload(task_id: int, rollout_pk: int) -> Dict[str, Any]`
 - `staticmethod` `def clear_annotation_cache_for_tests() -> None`
+
+### `tensorboard_service_module` (`service/tensorboard_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def get_tensorboard_port() -> int`
+- `staticmethod` `def build_runs_for_tasks(tasks: Sequence[Any]) -> Tuple[List[TensorBoardRun], List[Dict[str, An…`
+- `staticmethod` `def build_logdir_spec(runs: Sequence[TensorBoardRun]) -> str`
+- `staticmethod` `def public_tensorboard_url(request_host: Optional[str], port: int) -> str`
+- `staticmethod` `def stop_tensorboard() -> Dict[str, Any]`
+- `staticmethod` `def tensorboard_status() -> Dict[str, Any]`
+- `staticmethod` `def start_tensorboard(runs: Sequence[TensorBoardRun], *, request_host: Optional[str]=None, port…`
+- `staticmethod` `def collect_tasks_for_scope(scope: str, task_id: Optional[int]=None) -> Tuple[List[Any], List[D…`
 
 ## controller/ — REST 路由（新增接口前对照）
 
@@ -398,11 +399,14 @@
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
 | `task_controller` | POST | `/api/tasks` | `api_create_task` | 创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。 |
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
-| `task_controller` | GET | `/api/tasks/{task_id}/train-metrics/p0.json` | `api_task_train_metrics_p0` | P0 奖励设计指标：优先 tbs/，回退主日志 perf / filtered。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/annotations/meta.json` | `api_task_annotations_meta` | 返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
+| `tensorboard_controller` | GET | `/api/tensorboard` | `page_tensorboard_compare` | 渲染多任务曲线对比页。 |
+| `tensorboard_controller` | POST | `/api/tensorboard/start` | `api_tensorboard_start` | 启动或复用 TensorBoard，返回可新标签打开的 URL。 |
+| `tensorboard_controller` | GET | `/api/tensorboard/status` | `api_tensorboard_status` | — |
+| `tensorboard_controller` | POST | `/api/tensorboard/stop` | `api_tensorboard_stop` | — |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/new` | `page_cluster_config_new` | 渲染新建表单（cluster_key 为空 → 新建模式）。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/{cluster_key}/edit` | `page_cluster_config_edit` | 渲染编辑表单（带预填数据）。 |

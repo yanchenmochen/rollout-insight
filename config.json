@@ -16,5 +16,7 @@
     "nanhu_cluster": "x10000",
     "nanhu_user_id": "001688",
 
-    "session_secret": "bQ5Xi7OEeMd8ql4ycGPqmIOqzVpCiZGAFH00jYTtJsArtAo2pL8wMpAe9KOLoZyT"
+    "session_secret": "bQ5Xi7OEeMd8ql4ycGPqmIOqzVpCiZGAFH00jYTtJsArtAo2pL8wMpAe9KOLoZyT",
+
+    "tensorboard_port": 6006
 }

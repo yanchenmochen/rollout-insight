@@ -66,6 +66,9 @@ def load_config(config_path: Optional[str] = None) -> Dict:
     config.setdefault("nanhu_cluster", "wuxi")
     config.setdefault("nanhu_user_id", "")
 
+    # 训练曲线委托 TensorBoard（新标签打开，不嵌入）
+    config.setdefault("tensorboard_port", 6006)
+
     return config
 
 
@@ -159,6 +162,10 @@ class Config:
     @property
     def nanhu_user_id(self) -> str:
         return self._data.get("nanhu_user_id", "")
+
+    @property
+    def tensorboard_port(self) -> int:
+        return self.get_int("tensorboard_port", 6006)
 
 
 config = Config.instance()

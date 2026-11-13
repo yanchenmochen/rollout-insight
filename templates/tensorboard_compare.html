@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} · Rollout Insight{% endblock %}
+
+{% block content %}
+<h1>训练曲线对比</h1>
+<p class="meta" style="margin-bottom:16px;">
+    由 rollout-insight 拉起本机 TensorBoard（不嵌入）。将库内所有含
+    <code>tbs/</code> 或 <code>tf_logs/</code> 的任务拼进同一实例，便于叠曲线对比。
+    需本机已安装 <code>tensorboard</code>；无事件目录的任务会被跳过。
+    默认端口 <code>{{ tensorboard_port }}</code>（可用
+    <code>tensorboard_port</code> / <code>ROLLOUT_INSIGHT_TENSORBOARD_PORT</code> 覆盖）。
+</p>
+
+<div class="tb-actions" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;">
+    <button type="button" class="btn" id="btnCompareAll">对比全部任务曲线</button>
+    <button type="button" class="btn btn-secondary" id="btnOpenExisting" style="display:none;">打开当前 TensorBoard</button>
+    <button type="button" class="btn btn-secondary" id="btnStop">停止 TensorBoard</button>
+</div>
+<div id="tbStatus" class="meta" style="margin-bottom:12px;">检查状态…</div>
+<div id="tbResult" style="display:none;">
+    <h2 style="margin-top:8px;">本次纳入的 run</h2>
+    <table>
+        <thead>
+            <tr><th>run 名</th><th>task_id</th><th>tbs 路径</th></tr>
+        </thead>
+        <tbody id="tbRunsBody"></tbody>
+    </table>
+    <h2>跳过的任务</h2>
+    <table>
+        <thead>
+            <tr><th>task_id</th><th>任务名</th><th>原因</th></tr>
+        </thead>
+        <tbody id="tbSkippedBody"></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const statusEl = document.getElementById("tbStatus");
+    const resultEl = document.getElementById("tbResult");
+    const runsBody = document.getElementById("tbRunsBody");
+    const skippedBody = document.getElementById("tbSkippedBody");
+    const btnOpen = document.getElementById("btnOpenExisting");
+    let lastUrl = null;
+
+    function setStatus(text, isError) {
+        statusEl.style.color = isError ? "#9b2c2c" : "";
+        statusEl.textContent = text;
+    }
+
+    function renderPayload(data) {
+        lastUrl = data && data.url ? data.url : null;
+        btnOpen.style.display = lastUrl ? "" : "none";
+        const runs = (data && data.runs) || [];
+        const skipped = (data && data.skipped) || [];
+        runsBody.innerHTML = runs.map(function (r) {
+            return "<tr><td>" + escapeHtml(r.name) + "</td><td class=\"mono\">"
+                + r.task_id + "</td><td class=\"mono\">" + escapeHtml(r.tbs_dir) + "</td></tr>";
+        }).join("") || "<tr><td colspan=\"3\">无</td></tr>";
+        skippedBody.innerHTML = skipped.map(function (s) {
+            return "<tr><td class=\"mono\">" + s.task_id + "</td><td>"
+                + escapeHtml(s.task_name || "") + "</td><td>"
+                + escapeHtml(s.reason || "") + "</td></tr>";
+        }).join("") || "<tr><td colspan=\"3\">无</td></tr>";
+        resultEl.style.display = "";
+    }
+
+    function escapeHtml(s) {
+        if (s == null) return "";
+        return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    async function api(method, url, body) {
+        const opts = {
+            method: method,
+            headers: { "Accept": "application/json" },
+            credentials: "same-origin",
+        };
+        if (body) {
+            opts.headers["Content-Type"] = "application/json";
+            opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch(url, opts);
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data.data || {};
+    }
+
+    async function refreshStatus() {
+        try {
+            const st = await api("GET", "/api/tensorboard/status");
+            if (st.running && st.url) {
+                lastUrl = st.url;
+                btnOpen.style.display = "";
+                setStatus(
+                    "TensorBoard 运行中 · port=" + st.port
+                    + " · " + ((st.runs || []).length) + " 个 run · pid=" + (st.pid || "?"),
+                    false
+                );
+                renderPayload({ url: st.url, runs: st.runs || [], skipped: [] });
+            } else {
+                lastUrl = null;
+                btnOpen.style.display = "none";
+                setStatus("TensorBoard 未运行。点击上方按钮启动全任务对比。", false);
+            }
+        } catch (e) {
+            setStatus("状态查询失败：" + (e && e.message ? e.message : e), true);
+        }
+    }
+
+    document.getElementById("btnCompareAll").addEventListener("click", async function () {
+        const btn = this;
+        btn.disabled = true;
+        setStatus("正在解析各任务 tbs/ 并启动 TensorBoard…", false);
+        try {
+            const data = await api("POST", "/api/tensorboard/start", { scope: "all" });
+            renderPayload(data);
+            const n = (data.runs || []).length;
+            const sk = (data.skipped || []).length;
+            setStatus(
+                (data.reused ? "已复用" : "已启动")
+                + " TensorBoard · " + n + " 个 run"
+                + (sk ? (" · 跳过 " + sk) : "")
+                + " · " + (data.url || ""),
+                false
+            );
+            if (data.url) {
+                window.open(data.url, "_blank", "noopener");
+            }
+        } catch (e) {
+            setStatus("启动失败：" + (e && e.message ? e.message : e), true);
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    btnOpen.addEventListener("click", function () {
+        if (lastUrl) window.open(lastUrl, "_blank", "noopener");
+    });
+
+    document.getElementById("btnStop").addEventListener("click", async function () {
+        try {
+            await api("POST", "/api/tensorboard/stop");
+            lastUrl = null;
+            btnOpen.style.display = "none";
+            resultEl.style.display = "none";
+            setStatus("已停止 TensorBoard。", false);
+        } catch (e) {
+            setStatus("停止失败：" + (e && e.message ? e.message : e), true);
+        }
+    });
+
+    refreshStatus();
+})();
+</script>
+{% endblock %}

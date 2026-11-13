@@ -14,3 +14,6 @@ tokenizers>=0.15
 # v0.5.0 起会用到（passlib[bcrypt] 用于 ensure_admin_seed / itsdangerous 备用）
 passlib[bcrypt]>=1.7
 itsdangerous>=2.0
+
+# 训练曲线委托 TensorBoard（RI 启进程 + 新标签打开，不嵌入）
+tensorboard>=2.14
