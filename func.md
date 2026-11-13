@@ -100,6 +100,12 @@
 
 - `def load_config(config_path: Optional[str]=None) -> Dict` — 加载配置文件，并基于 program_root 计算其他路径。
 
+### `utils/eval_tb_scores.py`
+
+- `def is_primary_eval_tag(tag: str) -> bool` — 是否为评测主分数 tag（排除子指标与 truncated_ratio 等）。
+- `def read_eval_scores_from_event_dir(event_dir: Optional[Path | str]) -> List[Dict[str, Any]]` — 读取事件目录下全部评测主分数（取每个 tag 最新一步）。
+- `def read_eval_scores_for_rollout_root(rollout_root: Optional[str]) -> Dict[str, Any]` — 从 ``task.rollout_root`` 解析 run → tbs/tf_logs → 评测分数。
+
 ### `utils/failure_insight.py`
 
 - `def empty_failure_insights() -> Dict[str, Any]` — 空的失败深挖结构（fail / timeout / abort clusters + by_group）。
@@ -141,6 +147,13 @@
 - `def split_markdown_headed_turns(text: str) -> List[Dict[str, Any]]` — 把 ``### turn N · role`` 标题切成多轮。
 - `def token_estimate(text: str, chars_per_token: float=3.5) -> int` — 粗估 token 数：默认按字符数 / 3.5。
 - `def split_response_to_turns_with_tokenizer(response_text: str='', *, tokens: Optional[Sequence[…` — v0.5.0 T1：优先用 tokens + tokenizer 切分；否则 fallback 到 response 文本。
+
+### `utils/slime_job_type.py`
+
+- `def normalize_env_map(raw: Optional[Mapping[str, Any]]) -> Dict[str, str]` — 把任意 mapping 规整为 ``{KEY: str}``（跳过空键）。
+- `def classify_slime_job_type(env: Optional[Mapping[str, Any]]=None, *, launcher: str='', trainin…` — 按 env / launcher 判定作业类型。
+- `def attach_slime_job_type(target: MutableMapping[str, Any], env: Optional[Mapping[str, Any]]=No…` — 就地写入 ``job_type`` / ``job_type_label`` 等字段。
+- `def load_env_from_run_dir(run_dir: Optional[Path | str]) -> Tuple[Dict[str, str], str, str]` — 从 run 目录读取 env 与 launcher。
 
 ### `utils/tb_run_paths.py`
 
@@ -349,6 +362,12 @@
 - `staticmethod` `def list_task_annotation_meta(task_id: int) -> Dict[str, Any]`
 - `staticmethod` `def get_rollout_annotation_payload(task_id: int, rollout_pk: int) -> Dict[str, Any]`
 - `staticmethod` `def clear_annotation_cache_for_tests() -> None`
+
+### `task_job_context_service_module` (`service/task_job_context_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def build_task_job_context(*, rollout_root: Optional[str]=None, nanhu_job_id: Optional[str]=Non…`
 
 ### `tensorboard_service_module` (`service/tensorboard_service.py`)
 
