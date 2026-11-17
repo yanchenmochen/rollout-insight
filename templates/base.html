@@ -43,15 +43,14 @@
         }
 
         .navbar-container {
-            max-width: 1400px;
-            margin: 0 auto;
+            width: 100%;
             display: flex;
             flex-direction: row;
             flex-wrap: nowrap;
             justify-content: flex-start;
             align-items: center;
             gap: 4px;
-            padding: 0 12px;
+            padding: 0 16px;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
         }
@@ -127,52 +126,28 @@
         }
         .nav-logout-btn:hover { background-color: #294766; }
 
-        .main-content { flex: 1; padding: 16px; }
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            min-width: 0;
+            background: var(--ri-surface);
+        }
 
         .layout {
-            max-width: 1400px;
-            margin: 0 auto;
+            flex: 1;
+            width: 100%;
             display: flex;
-            gap: 20px;
-            align-items: flex-start;
-        }
-
-        .sidebar {
-            flex: 0 0 220px;
-            background: var(--ri-surface);
-            border-radius: 8px;
-            padding: 16px 12px;
-            box-shadow: var(--ri-shadow);
-        }
-
-        .sidebar h3 {
-            font-size: 14px;
-            color: var(--ri-muted);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-        }
-
-        .sidebar ul { list-style: none; }
-        .sidebar li { margin: 4px 0; }
-        .sidebar a {
-            display: block;
-            padding: 8px 10px;
-            color: var(--ri-ink);
-            text-decoration: none;
-            border-radius: var(--te-radius);
-        }
-        .sidebar a:hover, .sidebar a.active {
-            background: #eef3f8;
-            color: var(--ri-accent);
+            align-items: stretch;
         }
 
         .container {
             flex: 1;
+            width: 100%;
+            min-width: 0;
             background: var(--ri-surface);
-            padding: 24px;
-            border-radius: 8px;
-            box-shadow: var(--ri-shadow);
+            padding: 16px 20px 24px;
         }
 
         h1 {
@@ -223,11 +198,9 @@
         .meta { color: var(--ri-muted); font-size: 13px; }
 
         @media (max-width: 900px) {
-            /* 窄屏：内容区改竖排，但顶栏保持横排矮条；侧栏隐藏避免重复占高 */
+            /* 窄屏：内容区改竖排，顶栏保持横排矮条 */
             .layout { flex-direction: column; }
-            .sidebar { display: none; }
-            .main-content { padding: 12px; }
-            .container { padding: 16px; }
+            .container { padding: 12px 14px 16px; }
         }
     </style>
     {% block extra_css %}{% endblock %}
@@ -297,29 +270,8 @@
         </div>
     </nav>
 
-    <!-- 左右布局 -->
     <main class="main-content">
         <div class="layout">
-            <aside class="sidebar">
-                <h3>快速导航</h3>
-                <ul>
-                    <li><a href="/api/tasks"
-                           class="{% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务</a></li>
-                    <li><a href="/api/failures"
-                           class="{% if request.url.path.startswith('/api/failures') %}active{% endif %}">失败分析</a></li>
-                    <li><a href="/api/tensorboard"
-                           class="{% if request.url.path.startswith('/api/tensorboard') %}active{% endif %}">曲线对比</a></li>
-                    <li><a href="/api/dumps"
-                           class="{% if request.url.path.startswith('/api/dumps') %}active{% endif %}">Rollout dump</a></li>
-                    <li><a href="/api/insights"
-                           class="{% if request.url.path.startswith('/api/insights') %}active{% endif %}">洞察报告</a></li>
-                    <li><a href="/api/nanhu/jobs/page"
-                           class="{% if request.url.path.startswith('/api/nanhu') %}active{% endif %}">南湖作业</a></li>
-                </ul>
-                <p class="meta" style="margin-top:16px;">
-                    v0.1.0 骨架阶段，更多功能将在后续迭代上线。
-                </p>
-            </aside>
             <section class="container">
                 {% block content %}{% endblock %}
             </section>
