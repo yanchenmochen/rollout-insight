@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} · Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .lead { color: var(--ri-muted); font-size: 14px; margin: 0 0 16px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px; font-size: 1.15em; border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-weight: 500; font-size: 12px; margin-left: 8px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .picker { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    .picker select { min-width: 280px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--ri-border); border-radius: 4px; }
+    ol.steps { margin: 0; padding-left: 1.2em; }
+    ol.steps li { margin: 8px 0; }
+    ol.steps a { color: var(--ri-accent); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ops { white-space: nowrap; }
+    .btn-xs { padding: 2px 8px; font-size: 12px; font-weight: 500; }
+    .tag-copy { margin-right: 6px; }
+    .empty-inline { color: var(--ri-muted); font-size: 13px; }
+    #tbInsightStatus { min-height: 1.2em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>洞察</h1>
+<p class="lead">
+    先选定一个任务，再看它事件目录里的 scalar、已知评测指标的含义，以及建议的排查顺序。
+    训练类 tag 只列出名字和最近值，作用标为「未收录」。
+</p>
+
+<div class="section">
+    <h2>选择任务</h2>
+    {% if tasks %}
+    <form class="picker" method="get" action="/api/insights">
+        <label for="insightTask">任务</label>
+        <select id="insightTask" name="task_id" required>
+            {% for item in tasks %}
+            <option value="{{ item.primary_id }}"
+                {% if task and task.primary_id == item.primary_id %}selected{% endif %}>
+                #{{ item.primary_id }} {{ item.task_name }}（{{ item.status or "—" }}）
+            </option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn">查看</button>
+    </form>
+    <p class="meta">列表为最近 {{ tasks | length }} 个任务。</p>
+    {% else %}
+    <p class="empty-inline">库里还没有任务。请先到 <a href="/api/tasks">任务列表</a> 创建。</p>
+    {% endif %}
+</div>
+
+{% if task_missing %}
+<div class="alert alert-warning">{{ notice }}</div>
+{% elif not task %}
+<div class="alert alert-info">还没有选定任务。选定之后才会读取事件目录。</div>
+{% else %}
+<p class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    /
+    <a href="/api/tasks/{{ task.primary_id }}">{{ task.task_name }}</a>
+    /
+    洞察
+</p>
+
+{% if notice %}
+<div class="alert alert-warning">{{ notice }}</div>
+{% endif %}
+
+<div class="section" id="analysis-order">
+    <h2>问题分析顺序 <small>固定顺序，不随 tag 多少变化</small></h2>
+    <ol class="steps">
+        <li>
+            看<a href="#eval-primary">评测主分数</a>（<code>eval/&lt;dataset&gt;</code>，attempt 平均 reward）。
+            任务详情里的对应段落：
+            <a href="/api/tasks/{{ task.primary_id }}#eval-scores">评测评分</a>。
+        </li>
+        <li>
+            打开
+            <a href="/api/tasks/{{ task.primary_id }}#rollout-stack">任务详情 · Attempt 分布</a>，
+            看通过 / 失败 / 超时 / abort 随 step 怎么变。
+        </li>
+        <li>
+            进入该任务失败分析，用 group / attempt 定位具体样本：
+            <a href="/api/tasks/{{ task.primary_id }}/failures">/api/tasks/{{ task.primary_id }}/failures</a>。
+            若这条地址尚未就绪，用备份
+            <a href="/api/failures?task_id={{ task.primary_id }}">/api/failures?task_id={{ task.primary_id }}</a>。
+        </li>
+        <li>
+            在失败轨迹里对照 sglang 序列和沙盒命令。从
+            <a href="/api/tasks/{{ task.primary_id }}/failures">失败分析列表</a>
+            （备份：<a href="/api/failures?task_id={{ task.primary_id }}">/api/failures?task_id={{ task.primary_id }}</a>）
+            打开一条轨迹，单条页是 <span class="mono">/api/failures/attempts/{主键}</span>。
+            正文是 sglang 序列；若有 history.jsonl，同页可以看到沙盒真实命令。
+        </li>
+        <li>
+            前面仍解释不了时，再按需打开<a href="#other-tags">训练类 tag</a>。
+            这些 tag 的作用未收录，只提供名字、最近值和 TensorBoard 入口。
+        </li>
+    </ol>
+</div>
+
+<div class="section">
+    <h2>事件目录</h2>
+    {% if event_dir %}
+    <p class="mono">{{ event_dir }}</p>
+    <p class="meta">run 目录：<span class="mono">{{ run_dir or "—" }}</span></p>
+    <p>
+        <button type="button" class="btn" id="btnOpenTaskTb" data-tag="">在 TensorBoard 中查看该任务</button>
+    </p>
+    <p class="meta" id="tbInsightStatus"></p>
+    {% if tb_locates_tag %}
+    <p class="meta">
+        本机 TensorBoard 2.20 不使用 <span class="mono">#timeseries</span> 定位曲线。
+        带 tag 的按钮会打开该任务 TensorBoard，并加上
+        <span class="mono">?tagFilter=</span> 精确匹配这个 tag。按钮旁的 tag 名可以复制，便于在过滤框核对。
+    </p>
+    {% else %}
+    <p class="meta">
+        当前 TensorBoard 版本没有核对过单 tag 深链（包括 <span class="mono">#timeseries</span>）。
+        按钮只打开该任务的 TensorBoard，请复制旁边的 tag 名，到页面过滤框里粘贴。
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="empty-inline">没有可打开的事件目录，因此不提供 TensorBoard 按钮。</p>
+    {% endif %}
+</div>
+
+{% if event_dir %}
+<div class="section" id="eval-primary">
+    <h2>评测主分数 <small>eval/&lt;dataset&gt;</small></h2>
+    {% if scalar_groups.primary %}
+    {% set rows = scalar_groups.primary %}
+    {% include "insights_scalar_table.html" %}
+    {% else %}
+    <p class="empty-inline">没有评测主分数 tag。</p>
+    {% endif %}
+</div>
+
+<div class="section" id="eval-truncated">
+    <h2>截断比例 <small>不是主分数</small></h2>
+    {% if scalar_groups.truncated_ratio %}
+    {% set rows = scalar_groups.truncated_ratio %}
+    {% include "insights_scalar_table.html" %}
+    {% else %}
+    <p class="empty-inline">没有带 -truncated_ratio 的 eval tag。</p>
+    {% endif %}
+</div>
+
+<div class="section" id="eval-attempt-count">
+    <h2>尝试次数 <small>路径含 attempt_count</small></h2>
+    {% if scalar_groups.attempt_count %}
+    {% set rows = scalar_groups.attempt_count %}
+    {% include "insights_scalar_table.html" %}
+    {% else %}
+    <p class="empty-inline">没有含 attempt_count 的 eval tag。</p>
+    {% endif %}
+</div>
+
+<div class="section" id="other-tags">
+    <h2>其他 tag <small>作用未收录</small></h2>
+    {% if scalar_groups.unknown %}
+    {% set rows = scalar_groups.unknown %}
+    {% include "insights_scalar_table.html" %}
+    {% else %}
+    <p class="empty-inline">没有其他 scalar tag。</p>
+    {% endif %}
+</div>
+{% else %}
+<p class="meta" id="eval-primary">没有事件目录，评测主分数和其余 scalar 都列不出来。分析顺序里的任务详情和失败分析链接仍然可用。<span id="other-tags"></span></p>
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if task and event_dir %}
+<script>
+(function () {
+    var taskId = {{ task.primary_id }};
+    var locateTag = {{ "true" if tb_locates_tag else "false" }};
+    var statusEl = document.getElementById("tbInsightStatus");
+
+    function setStatus(text, isError) {
+        if (!statusEl) return;
+        statusEl.style.color = isError ? "#9b2c2c" : "";
+        statusEl.textContent = text;
+    }
+
+    async function startTaskTensorboard() {
+        var resp = await fetch("/api/tensorboard/start", {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ scope: "task", task_id: taskId }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data.data || {};
+    }
+
+    function withTagFilter(base, filter) {
+        var url = new URL(base, window.location.href);
+        url.hash = "";
+        url.searchParams.set("tagFilter", filter);
+        return url.toString();
+    }
+
+    async function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+        var area = document.createElement("textarea");
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+    }
+
+    document.querySelectorAll(".btn-copy-tag").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+            var tag = btn.getAttribute("data-tag") || "";
+            try {
+                await copyText(tag);
+                setStatus("已复制 tag：" + tag, false);
+            } catch (err) {
+                setStatus("复制失败，请手动选择 tag 名。", true);
+            }
+        });
+    });
+
+    async function openTensorboard(tag, filter) {
+        setStatus("正在启动该任务的 TensorBoard…", false);
+        var data = await startTaskTensorboard();
+        var url = data.url || "";
+        if (!url) {
+            throw new Error("TensorBoard 没有返回地址");
+        }
+        if (locateTag && tag && filter) {
+            url = withTagFilter(url, filter);
+            setStatus("已打开 TensorBoard，并按 tag 过滤：" + tag, false);
+        } else if (tag) {
+            setStatus("已打开该任务 TensorBoard。请在过滤框粘贴 tag：" + tag, false);
+        } else {
+            setStatus("已打开该任务 TensorBoard。", false);
+        }
+        window.open(url, "_blank", "noopener");
+    }
+
+    var openTaskBtn = document.getElementById("btnOpenTaskTb");
+    if (openTaskBtn) {
+        openTaskBtn.addEventListener("click", async function () {
+            openTaskBtn.disabled = true;
+            try {
+                await openTensorboard("", "");
+            } catch (err) {
+                setStatus("启动失败：" + (err && err.message ? err.message : err), true);
+            } finally {
+                openTaskBtn.disabled = false;
+            }
+        });
+    }
+
+    document.querySelectorAll(".btn-open-tag").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+            var tag = btn.getAttribute("data-tag") || "";
+            var filter = btn.getAttribute("data-filter") || "";
+            btn.disabled = true;
+            try {
+                await openTensorboard(tag, filter);
+            } catch (err) {
+                setStatus("启动失败：" + (err && err.message ? err.message : err), true);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

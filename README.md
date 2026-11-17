@@ -52,6 +52,7 @@ python main.py
 - 顶栏「曲线对比」→ `/api/tensorboard`：一键对比库内全部含 `tbs/` 或 `tf_logs/` 的任务。TensorBoard 左侧 Run 名即任务名（符号链接目录），可按任务名筛选对照。若默认端口上已有其他 TensorBoard，启动时会先停掉再绑定。启动参数含 `--load_fast=false` 与 `--purge_orphaned_data=false`：同一目录里后写入的短事件文件不会把更长的历史 step 截掉。
 - TB 端口默认 `6006`，配置项 `tensorboard_port` 或环境变量 `ROLLOUT_INSIGHT_TENSORBOARD_PORT`。
 - 需本机已安装 `tensorboard`（见 `requirements.txt`）；无事件目录的任务会被跳过。
+- 顶栏「洞察」→ `/api/insights`：先选一个任务，列出该任务当前 TensorBoard scalar、已知评测指标说明、尚未收录的 tag，以及建议的分析流程，并可跳转到 TensorBoard（本机 2.20.0 用查询参数 `?tagFilter=`）。
 
 ---
 
@@ -105,18 +106,24 @@ rollout-insight/
 | GET  | `/api/tasks/{id}/rollouts/{rollout_pk}/annotations.json` | 单 rollout 类型柱 / 进入训练 / 失败摘要 |
 | POST | `/api/tasks/{id}/rescan` | 触发 RolloutScanService.rescan_task |
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
-| GET  | `/api/tasks/create` | 渲染 task_create.html || GET  | `/api/segments/search` | Segment 检索（task_id 必填） |
+| GET  | `/api/tasks/create` | 渲染 task_create.html |
+| GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析 |
+| GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
+| GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
 | GET  | `/api/segments/{id}/transcript.json` | Segment transcript（JSON） |
-| GET  | `/api/failures` | 失败分析（无 `task_id` 时选任务；`?task_id=&rollout_id=` 进入任务视图） |
+| GET  | `/api/insights` | 洞察页：当前任务的 TensorBoard scalar、指标说明与分析流程 |
+| GET  | `/api/failures` | 失败分析旧入口（`?task_id=` 仍进入该任务；不带 `task_id` 时只提示回任务列表） |
 | GET  | `/api/failures/attempts/{attempt_pk}` | 单 attempt 失败详情页（结论 / 评测证据 / 耗时 / 轨迹 / patch） |
 | GET  | `/api/failures/tasks/{task_id}/overview.json` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt + 原因聚类 |
 | GET  | `/api/failures/attempts/{attempt_pk}/detail.json` | 单 attempt 失败详情（JSON） |
 | GET  | `/api/failures/attempts/{attempt_pk}/trajectory.json` | OpenHands 轨迹分页（`offset`/`limit`/`errors_only`） |
 
+`GET /api/segments/search` 在原有任务、reward 下限和关键字之外，可以再按 `group_index` 与业务 `attempt_id` 精确过滤。响应里的 `attempt_id` 仍是 attempt 表主键，另外返回 `group_index` 和 `attempt_biz_id`。页面检索走 `GET /api/segments/search/page`。
+
 ### 5.1 失败分析（任务级）
 
-顶部菜单「失败分析」位于「任务列表」右侧，回答"每个 attempt 是怎么失败的"：
+失败分析从任务进入：任务列表打开任务详情后，用左侧「失败分析」或页顶按钮进入 `/api/tasks/{task_id}/failures`。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
 
 - **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
 - **按聚类**：按失败原因（`abort_reason` → `diagnosis` → agent 结束态）聚类，可下钻到对应 attempt 列表。

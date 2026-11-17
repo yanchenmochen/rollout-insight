@@ -256,19 +256,49 @@ def _empty_segment_dict(segment_id: Optional[int] = None) -> Dict[str, Any]:
 # 路由
 # ---------------------------------------------------------------------------
 
+def _blank_to_none(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def _parse_optional_int(raw: Optional[str], label: str) -> tuple:
+    """空串视为未填；非整数返回 (None, 错误说明)。"""
+    text = _blank_to_none(raw)
+    if text is None:
+        return None, None
+    try:
+        return int(text), None
+    except ValueError:
+        return None, f"{label} 需要整数"
+
+
+def _parse_optional_float(raw: Optional[str], label: str) -> tuple:
+    text = _blank_to_none(raw)
+    if text is None:
+        return None, None
+    try:
+        return float(text), None
+    except ValueError:
+        return None, f"{label} 需要数字"
+
+
 @router.get("/api/segments/search", response_model=None)
 async def api_segments_search(
     request: Request,
     task_id: Optional[int] = Query(default=None, description="按任务过滤"),
     min_reward: Optional[float] = Query(default=None, description="reward 下限"),
     keyword: Optional[str] = Query(default=None, description="关键字（命中 segment_transcript.response_text）"),
+    group_index: Optional[int] = Query(default=None, description="group_index，精确匹配"),
+    attempt_id: Optional[int] = Query(default=None, description="业务 attempt_id，精确匹配"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
 ):
-    """Segment 检索：调 SegmentSearchService.search_segments。
+    """Segment 检索 JSON：调 SegmentSearchService.search_segments。
 
-    支持 (task_id, min_reward, keyword) 三维过滤，keyword 命中后会回写
-    ri_segment_transcript_table 的 full_text_fetched=1，下次秒回。
+    支持 task_id、min_reward、keyword，以及可选的 group_index、业务 attempt_id。
+    响应里的 attempt_id 仍是 attempt 表主键；另加 group_index 与 attempt_biz_id。
     """
     try:
         from service.segment_search_service import search_segments
@@ -281,10 +311,12 @@ async def api_segments_search(
         offset = (page - 1) * page_size
         result = search_segments(
             task_id=task_id,
-            min_reward=float(min_reward or 0.0),
+            min_reward=None if min_reward is None else float(min_reward),
             keyword=keyword or "",
             limit=page_size,
             offset=offset,
+            group_index=group_index,
+            attempt_id=attempt_id,
         )
         return Response.success(
             data={
@@ -299,6 +331,109 @@ async def api_segments_search(
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"segment 检索失败: {exc}"
         ) from exc
+
+
+@router.get("/api/segments/search/page", include_in_schema=False)
+async def page_segments_search(
+    request: Request,
+    task_id: Optional[str] = Query(default=None),
+    group_index: Optional[str] = Query(default=None),
+    attempt_id: Optional[str] = Query(default=None),
+    min_reward: Optional[str] = Query(default=None),
+    keyword: Optional[str] = Query(default=None),
+    submitted: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+) -> HTMLResponse:
+    """Segment 检索页。JSON 接口仍是 GET /api/segments/search，留给 CLI。
+
+    本路由必须写在 /api/segments/{segment_id} 之前，避免被整型路径参数截走。
+    """
+    from urllib.parse import urlencode
+
+    from db.db_task_service import DBTaskService
+
+    page_size = 50
+    form_error: Optional[str] = None
+    task_id_val, err = _parse_optional_int(task_id, "任务")
+    form_error = form_error or err
+    group_val, err = _parse_optional_int(group_index, "group")
+    form_error = form_error or err
+    attempt_val, err = _parse_optional_int(attempt_id, "attempt id")
+    form_error = form_error or err
+    reward_val, err = _parse_optional_float(min_reward, "reward 下限")
+    form_error = form_error or err
+    keyword_val = _blank_to_none(keyword) or ""
+
+    tasks = DBTaskService.list_tasks(limit=500, offset=0)
+    has_filter = any(
+        value is not None and value != ""
+        for value in (task_id_val, group_val, attempt_val, reward_val, keyword_val)
+    )
+    do_search = form_error is None and (submitted is not None or has_filter)
+
+    items: List[Dict[str, Any]] = []
+    total = 0
+    if do_search:
+        try:
+            from service.segment_search_service import search_segments
+        except Exception as exc:  # noqa: BLE001
+            raise RolloutInsightException(
+                RolloutInsightException.NOT_IMPLEMENTED,
+                f"segment_search_service 不可用: {exc}",
+            ) from exc
+        try:
+            result = search_segments(
+                task_id=task_id_val,
+                min_reward=reward_val,
+                keyword=keyword_val,
+                limit=page_size,
+                offset=(page - 1) * page_size,
+                group_index=group_val,
+                attempt_id=attempt_val,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("segment 检索页失败: {}", exc)
+            raise RolloutInsightException(
+                RolloutInsightException.DB_ERROR, f"segment 检索失败: {exc}"
+            ) from exc
+        items = list(result.get("items") or [])
+        total = int(result.get("total") or 0)
+
+    page_count = max(1, (total + page_size - 1) // page_size) if do_search else 1
+
+    def _page_href(page_no: int) -> str:
+        query = {
+            "submitted": "1",
+            "page": page_no,
+            "task_id": "" if task_id_val is None else task_id_val,
+            "group_index": "" if group_val is None else group_val,
+            "attempt_id": "" if attempt_val is None else attempt_val,
+            "min_reward": "" if reward_val is None else reward_val,
+            "keyword": keyword_val,
+        }
+        return "/api/segments/search/page?" + urlencode(query)
+
+    return templates.TemplateResponse(
+        request,
+        "segment_search.html",
+        {
+            "page_title": "Segment 检索",
+            "tasks": tasks,
+            "task_id": task_id_val,
+            "group_index": group_val,
+            "attempt_id": attempt_val,
+            "min_reward": reward_val,
+            "keyword": keyword_val,
+            "form_error": form_error,
+            "searched": do_search,
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_count": page_count,
+            "prev_url": _page_href(page - 1) if page > 1 else None,
+            "next_url": _page_href(page + 1) if do_search and page < page_count else None,
+        },
+    )
 
 
 @router.get("/api/segments/{segment_id}", include_in_schema=False)

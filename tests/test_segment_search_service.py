@@ -104,13 +104,18 @@ class _FakeFixture:
         ).primary_id
 
     @staticmethod
-    def make_attempt(task_id: int, attempt_id: int, reward: float = 0.0) -> int:
+    def make_attempt(
+        task_id: int,
+        attempt_id: int,
+        reward: float = 0.0,
+        group_index: int = 0,
+    ) -> int:
         from db.db_attempt_service import DBAttemptService
 
         return DBAttemptService.upsert(
             task_id=task_id,
             rollout_id=0,
-            group_index=0,
+            group_index=group_index,
             attempt_id=attempt_id,
             sandbox_id=f"sandbox-{attempt_id}",
             instance_id=f"inst-{attempt_id}",
@@ -317,6 +322,130 @@ class TestSearchPagination(unittest.TestCase):
         ids1 = {int(it["segment_id"]) for it in page1["items"]}
         ids2 = {int(it["segment_id"]) for it in page2["items"]}
         self.assertFalse(ids1 & ids2)
+
+
+class TestSearchByGroupAndAttempt(unittest.TestCase):
+    """group_index 与业务 attempt_id 精确过滤；响应 attempt_id 仍是主键。"""
+
+    def setUp(self) -> None:
+        _reload_db_modules()
+
+    def _seed(self, name: str) -> Dict[str, int]:
+        task_id = _FakeFixture.make_task(name)
+        pk_g1_a7 = _FakeFixture.make_attempt(task_id, 7, reward=0.2, group_index=1)
+        pk_g1_a8 = _FakeFixture.make_attempt(task_id, 8, reward=0.3, group_index=1)
+        pk_g2_a7 = _FakeFixture.make_attempt(task_id, 7, reward=0.4, group_index=2)
+        return {
+            "task_id": task_id,
+            "pk_g1_a7": pk_g1_a7,
+            "pk_g1_a8": pk_g1_a8,
+            "pk_g2_a7": pk_g2_a7,
+            "seg_g1_a7": _FakeFixture.make_segment(pk_g1_a7, reward=0.2, sandbox_id="sb-g1a7"),
+            "seg_g1_a8": _FakeFixture.make_segment(pk_g1_a8, reward=0.3, sandbox_id="sb-g1a8"),
+            "seg_g2_a7": _FakeFixture.make_segment(pk_g2_a7, reward=0.4, sandbox_id="sb-g2a7"),
+        }
+
+    def test_filter_group_index_and_attempt_biz_id(self) -> None:
+        seeded = self._seed("search_group_attempt")
+        from service.segment_search_service import search_segments
+
+        both = search_segments(
+            task_id=seeded["task_id"], group_index=1, attempt_id=7, keyword="",
+        )
+        self.assertEqual(both["total"], 1)
+        item = both["items"][0]
+        self.assertEqual(item["segment_id"], seeded["seg_g1_a7"])
+        self.assertEqual(item["attempt_id"], seeded["pk_g1_a7"])
+        self.assertEqual(item["group_index"], 1)
+        self.assertEqual(item["attempt_biz_id"], 7)
+
+        only_group = search_segments(task_id=seeded["task_id"], group_index=1, keyword="")
+        self.assertEqual(only_group["total"], 2)
+        self.assertEqual(
+            sorted(int(it["attempt_biz_id"]) for it in only_group["items"]),
+            [7, 8],
+        )
+
+        only_attempt = search_segments(task_id=seeded["task_id"], attempt_id=7, keyword="")
+        self.assertEqual(
+            sorted(int(it["segment_id"]) for it in only_attempt["items"]),
+            sorted([seeded["seg_g1_a7"], seeded["seg_g2_a7"]]),
+        )
+        for it in only_attempt["items"]:
+            self.assertEqual(it["attempt_biz_id"], 7)
+            self.assertIn(it["attempt_id"], (seeded["pk_g1_a7"], seeded["pk_g2_a7"]))
+
+    def test_keyword_filter_group_index_and_attempt_biz_id(self) -> None:
+        seeded = self._seed("search_group_attempt_kw")
+        for key in ("seg_g1_a7", "seg_g1_a8", "seg_g2_a7"):
+            _FakeFixture.make_transcript(
+                seeded[key],
+                prompt="Q:",
+                response="shared hello marker in the transcript",
+                turns=[{"role": "assistant", "content": "hello", "mask": None}],
+                tool_calls=[],
+            )
+        from service.segment_search_service import search_segments
+
+        result = search_segments(
+            task_id=seeded["task_id"],
+            min_reward=0.0,
+            keyword="hello",
+            group_index=2,
+            attempt_id=7,
+        )
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["segment_id"], seeded["seg_g2_a7"])
+        self.assertEqual(item["attempt_id"], seeded["pk_g2_a7"])
+        self.assertEqual(item["group_index"], 2)
+        self.assertEqual(item["attempt_biz_id"], 7)
+        self.assertIn("hello", item["snippet"])
+
+
+class TestKeywordKeepsNullReward(unittest.TestCase):
+    """未传 min_reward 时，关键字命中不能把 reward 为空的 segment 剔掉。"""
+
+    def setUp(self) -> None:
+        _reload_db_modules()
+
+    def test_omitted_min_reward_keeps_null_reward(self) -> None:
+        task_id = _FakeFixture.make_task("search_kw_null_reward")
+        attempt_null = _FakeFixture.make_attempt(task_id, 1, reward=0.0)
+        seg_null = _FakeFixture.make_segment(attempt_null, reward=None, sandbox_id="sb-null")
+        _FakeFixture.make_transcript(
+            seg_null,
+            prompt="Q:",
+            response="hello from an empty reward segment",
+            turns=[{"role": "assistant", "content": "hello", "mask": None}],
+            tool_calls=[],
+        )
+        attempt_pos = _FakeFixture.make_attempt(task_id, 2, reward=0.5)
+        seg_pos = _FakeFixture.make_segment(attempt_pos, reward=0.5, sandbox_id="sb-pos")
+        _FakeFixture.make_transcript(
+            seg_pos,
+            prompt="Q:",
+            response="hello from a scored segment",
+            turns=[{"role": "assistant", "content": "hello", "mask": None}],
+            tool_calls=[],
+        )
+
+        from service.segment_search_service import search_segments
+
+        kept = search_segments(task_id=task_id, keyword="hello")
+        self.assertEqual(
+            sorted(int(item["segment_id"]) for item in kept["items"]),
+            sorted([seg_null, seg_pos]),
+        )
+        null_item = next(item for item in kept["items"] if int(item["segment_id"]) == seg_null)
+        self.assertIsNone(null_item["reward"])
+
+        floored = search_segments(task_id=task_id, min_reward=0.0, keyword="hello")
+        self.assertEqual(
+            [int(item["segment_id"]) for item in floored["items"]],
+            [seg_pos],
+        )
 
 
 if __name__ == "__main__":

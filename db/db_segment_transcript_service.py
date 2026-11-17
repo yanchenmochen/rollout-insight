@@ -146,10 +146,14 @@ class DBSegmentTranscriptService:
         task_id: Optional[int] = None,
         limit: int = 100,
         offset: int = 0,
+        group_index: Optional[int] = None,
+        attempt_id: Optional[int] = None,
+        min_reward: Optional[float] = None,
     ) -> List[DBSegmentTranscript]:
         """按 response_text 关键词查询（已 fetched 的 transcript 命中）。
 
-        关键词通过 LIKE '%kw%'；命中即写回 full_text_fetched=1（不在此处写，仅返回）。
+        关键词通过 LIKE '%kw%'。``attempt_id`` 是业务 attempt id，不是表主键。
+        ``group_index`` / ``min_reward`` 可选，精确或下限过滤。
         """
         kw = (keyword or "").strip()
         if not kw:
@@ -161,17 +165,26 @@ class DBSegmentTranscriptService:
                     DBSegmentTranscript.response_text.like(f"%{kw}%"),
                 )
             )
-            if task_id is not None:
-                # JOIN ri_segment_table → ri_attempt_table 过滤 task_id
+            need_join = any(
+                value is not None
+                for value in (task_id, group_index, attempt_id, min_reward)
+            )
+            if need_join:
                 from db.db_attempt import DBAttempt
 
                 query = query.join(
                     DBSegment, DBSegment.primary_id == DBSegmentTranscript.segment_id
                 ).join(
                     DBAttempt, DBAttempt.primary_id == DBSegment.attempt_id
-                ).filter(
-                    DBAttempt.task_id == task_id
                 )
+                if task_id is not None:
+                    query = query.filter(DBAttempt.task_id == int(task_id))
+                if group_index is not None:
+                    query = query.filter(DBAttempt.group_index == int(group_index))
+                if attempt_id is not None:
+                    query = query.filter(DBAttempt.attempt_id == int(attempt_id))
+                if min_reward is not None:
+                    query = query.filter(DBSegment.reward >= float(min_reward))
             return (
                 query.order_by(DBSegmentTranscript.update_time.desc())
                 .offset(offset)

@@ -1,0 +1,135 @@
+<style>
+    details.sandbox-exec {
+        margin-top: 12px;
+        border: 1px solid var(--ri-border);
+        border-radius: 4px;
+        background: #f8fafb;
+    }
+    details.sandbox-exec > summary {
+        cursor: pointer;
+        padding: 8px 12px;
+        font-weight: 600;
+        font-size: 13px;
+    }
+    details.sandbox-exec > summary small {
+        font-weight: 500;
+        color: var(--ri-muted);
+        margin-left: 6px;
+    }
+    .sandbox-exec-body { padding: 0 12px 12px; font-size: 12px; }
+    .sandbox-step {
+        border-left: 3px solid #2d6a9f;
+        margin: 8px 0;
+        padding: 4px 8px;
+        background: #fff;
+    }
+    .sandbox-step.is-error { border-left-color: #e53935; }
+    .sandbox-step-head { font-family: ui-monospace, monospace; margin-bottom: 4px; }
+    .sandbox-k { color: var(--ri-muted); margin-top: 4px; }
+    .sandbox-exec-body pre {
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 240px;
+        overflow: auto;
+        background: #f4f6f8;
+        padding: 6px 8px;
+        margin: 4px 0;
+        font-size: 12px;
+    }
+    .sandbox-missing { color: var(--ri-muted); }
+</style>
+<script>
+(function () {
+    const NO_TRAJ = "未落盘 OpenHands 轨迹（通过样本通常不写 history.jsonl）；上面的 tool_response 不是沙盒日志原件。";
+
+    function esc(s) {
+        return s == null ? "" : String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    function renderSteps(data, attemptPk) {
+        const events = data.events || [];
+        const steps = [];
+        for (let i = 0; i < events.length; i++) {
+            const ev = events[i];
+            if (ev.kind === "ActionEvent") {
+                const next = events[i + 1];
+                const obs = next && next.kind === "ObservationEvent" ? next : null;
+                if (obs) i += 1;
+                steps.push({ action: ev, obs: obs });
+            } else if (ev.kind === "ObservationEvent") {
+                steps.push({ action: null, obs: ev });
+            }
+        }
+        const link = '<p><a href="/api/failures/attempts/' + encodeURIComponent(attemptPk) +
+            '">打开失败轨迹页（patch 与评测 stdout）</a></p>';
+        if (!steps.length) {
+            return '<p class="sandbox-missing">轨迹文件已落盘，但没有可展示的命令与环境返回。</p>' + link;
+        }
+        const html = steps.map(function (step, idx) {
+            const action = step.action || {};
+            const obs = step.obs;
+            const tool = action.tool_name || "action";
+            const command = action.detail || action.title || "";
+            const exitTitle = obs && obs.title ? obs.title : "";
+            const err = obs && obs.is_error;
+            const obsText = obs ? (obs.text || "") : "";
+            return '<div class="sandbox-step' + (err ? " is-error" : "") + '">' +
+                '<div class="sandbox-step-head">步骤 ' + (idx + 1) + " · " + esc(tool) +
+                (exitTitle ? " · " + esc(exitTitle) : "") + "</div>" +
+                (command ? '<div class="sandbox-k">命令</div><pre class="sandbox-command">' + esc(command) + "</pre>" : "") +
+                (obs ? '<div class="sandbox-k">环境返回</div><pre class="sandbox-obs">' + (esc(obsText) || "（空）") + "</pre>" : "") +
+                "</div>";
+        }).join("");
+        let more = "";
+        if ((data.n_matched || 0) > events.length) {
+            more = '<p class="sandbox-missing">仅展示前 ' + events.length + " 步，其余见失败轨迹页。</p>";
+        }
+        return link + html + more;
+    }
+
+    const sandboxHtmlCache = new Map();
+
+    async function loadPanel(panel) {
+        const body = panel.querySelector(".sandbox-exec-body");
+        if (!body) return;
+        const pk = (panel.dataset.attemptPk || "").trim();
+        if (!pk) {
+            body.textContent = NO_TRAJ;
+            return;
+        }
+        if (sandboxHtmlCache.has(pk)) {
+            body.innerHTML = sandboxHtmlCache.get(pk);
+            return;
+        }
+        body.textContent = "正在读取 OpenHands history.jsonl…";
+        try {
+            const resp = await fetch(
+                "/api/failures/attempts/" + encodeURIComponent(pk) + "/trajectory.json?limit=1000",
+                { headers: { Accept: "application/json" } }
+            );
+            const json = await resp.json().catch(function () { return {}; });
+            if (!resp.ok || !json || json.code !== 0 || !json.data) {
+                body.textContent = NO_TRAJ;
+                return;
+            }
+            const html = renderSteps(json.data, pk);
+            sandboxHtmlCache.set(pk, html);
+            body.innerHTML = html;
+        } catch (e) {
+            body.textContent = "读取沙盒轨迹失败。";
+        }
+    }
+
+    document.addEventListener("toggle", function (e) {
+        const panel = e.target;
+        if (!panel || !panel.classList || !panel.classList.contains("sandbox-exec")) return;
+        if (!panel.open || panel.dataset.loaded === "1") return;
+        panel.dataset.loaded = "1";
+        loadPanel(panel);
+    }, true);
+})();
+</script>

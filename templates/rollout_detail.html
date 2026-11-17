@@ -337,6 +337,7 @@
     }
     .tool-chip-row { padding: 4px 14px; font-size: 12px; background: #f4f8fc; border-top: 1px dashed #c7def5; }
     .loading-hint { color: var(--ri-muted); font-size: 12px; padding: 8px 12px; }
+    .sglang-seq-label { font-size: 12px; color: var(--ri-muted); padding: 8px 12px 0; font-weight: 600; }
 
     /* v0.5.0 turn 内 4 个子 details */
     details.turn-chunk { background: #f8fafb; margin: 4px 0; border-left: 3px solid #c7def5; }
@@ -1139,7 +1140,7 @@
             : `${nAsst} assistant · ${nUser} user`;
         const act = (v) => (activeView === v ? ' is-active' : '');
         return `<div class="toolbar" style="margin-bottom:8px;">
-            <span class="sum-title">Turns <small style="color:var(--ri-muted);">${turns.length} 条消息（${roleHint}；本段 response 按 &lt;|im_start|&gt; 切开。各段 assistant 之和 = attempt 的 agent轮）</small></span>
+            <span class="sum-title">Turns <small style="color:var(--ri-muted);">当前正文是 sglang 序列 · ${turns.length} 条消息（${roleHint}；本段 response 按 &lt;|im_start|&gt; 切开。各段 assistant 之和 = attempt 的 agent轮）</small></span>
             ${sourceTag}
             <span class="view-btns">
                 <button type="button" class="btn btn-secondary btn-sm turns-view-btn${act('expand')}" data-view="expand">展开所有 turn</button>
@@ -1276,8 +1277,14 @@
         }
     }
 
+    function sglangRoot(segmentId) {
+        const body = document.querySelector(`[data-segment-body="${segmentId}"]`);
+        if (!body) return null;
+        return body.querySelector(".sglang-turns") || body;
+    }
+
     function renderTurns(segmentId, data) {
-        const root = document.querySelector(`[data-segment-body="${segmentId}"]`);
+        const root = sglangRoot(segmentId);
         if (!root) return;
         const turns = (data && data.turns) || [];
         if (!turns.length) {
@@ -1289,7 +1296,7 @@
     }
 
     function showLoadError(segmentId, msg) {
-        const root = document.querySelector(`[data-segment-body="${segmentId}"]`);
+        const root = sglangRoot(segmentId);
         if (!root) return;
         root.innerHTML = `<div class="alert alert-warning" style="margin:0;">加载 turn 失败：${escapeHtml(msg)}</div>`;
     }
@@ -1300,8 +1307,8 @@
         const sid = seg.dataset.segmentId;
         if (!sid || segmentLoaded.has(sid)) return;
         segmentLoaded.add(sid);
-        const body = seg.querySelector(`[data-segment-body="${sid}"]`);
-        if (body) body.innerHTML = '<div class="loading-hint">正在加载 turns…</div>';
+        const turnsBox = seg.querySelector(".sglang-turns");
+        if (turnsBox) turnsBox.innerHTML = '<div class="loading-hint">正在加载 turns…</div>';
         try {
             const resp = await fetch(SEG_TURNS_URL(sid), { headers: { Accept: 'application/json' } });
             const data = await resp.json().catch(() => ({}));
@@ -1370,4 +1377,5 @@
         }
     });
 </script>
+{% include "_sandbox_exec.html" %}
 {% endblock %}

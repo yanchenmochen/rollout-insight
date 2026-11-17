@@ -63,7 +63,8 @@
 
     .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 13px; }
     .filters select, .filters input { padding: 4px 8px; border: 1px solid var(--ri-border); border-radius: 4px; font-size: 13px; }
-    .filters input { min-width: 240px; }
+    .filters input#fText { min-width: 240px; }
+    .filters input.num { width: 108px; min-width: 0; }
     table.att { font-size: 12px; }
     table.att td { vertical-align: top; padding: 5px 8px; }
     table.att td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -73,7 +74,6 @@
     .btn-xs { padding: 2px 8px; font-size: 12px; font-weight: 500; white-space: nowrap; }
     .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
     .loading { color: var(--ri-muted); padding: 16px 0; }
-    .task-pick td { font-size: 13px; }
 </style>
 {% endblock %}
 
@@ -82,49 +82,18 @@
 <div class="page-header">
     <div>
         <h1>失败分析</h1>
-        <div class="page-subtitle">选择一个任务，查看每个 rollout 的失败分布、按原因聚类，并跳转到具体 attempt 的失败轨迹。</div>
+        <div class="page-subtitle">失败分析已收到每个任务下面，请从任务列表进入。</div>
     </div>
 </div>
 <div class="section">
-    <h2>任务 <small>{{ tasks | length }} 个</small></h2>
-    {% if not tasks %}
-        <div class="muted">暂无任务。</div>
-    {% else %}
-    <div class="legend">
-        <span class="cat-pass"><i></i>通过</span><span class="cat-fail"><i></i>正常失败</span>
-        <span class="cat-timeout"><i></i>超时/截断</span><span class="cat-abort"><i></i>abort</span>
-    </div>
-    <table class="task-pick">
-        <thead><tr><th>ID</th><th>任务名</th><th>状态</th><th class="col-num">rollout</th><th class="col-num">attempt</th><th style="width:34%">结局分布</th><th class="col-num">非通过</th><th></th></tr></thead>
-        <tbody>
-        {% for t in tasks %}
-            {% set n = t.n_attempts or 1 %}
-            <tr>
-                <td>{{ t.id }}</td>
-                <td><a href="/api/failures?task_id={{ t.id }}">{{ t.task_name }}</a></td>
-                <td>{{ t.status }}</td>
-                <td class="col-num">{{ t.n_rollouts }}</td>
-                <td class="col-num">{{ t.n_attempts }}</td>
-                <td>
-                    <div class="prog-bar" title="通过 {{ t.n_pass }} · 失败 {{ t.n_fail }} · 超时 {{ t.n_timeout }} · abort {{ t.n_abort }}">
-                        <span class="cat-pass" style="width: {{ 100.0 * t.n_pass / n }}%"></span>
-                        <span class="cat-fail" style="width: {{ 100.0 * t.n_fail / n }}%"></span>
-                        <span class="cat-timeout" style="width: {{ 100.0 * t.n_timeout / n }}%"></span>
-                        <span class="cat-abort" style="width: {{ 100.0 * t.n_abort / n }}%"></span>
-                        <span class="cat-other" style="width: {{ 100.0 * t.n_other / n }}%"></span>
-                    </div>
-                </td>
-                <td class="col-num">{{ t.n_attempts - t.n_pass }}</td>
-                <td><a class="btn btn-xs" href="/api/failures?task_id={{ t.id }}">分析</a></td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
+    <p>打开 <a href="/api/tasks">任务列表</a>，进入任务详情后，从左侧「失败分析」或页顶按钮查看该任务的失败分布与轨迹。</p>
+    <p class="muted">带 <code>task_id</code> 的旧地址，以及单条失败轨迹地址，仍然可以直接打开。</p>
 </div>
 {% else %}
 <div class="breadcrumb">
-    <a href="/api/failures">失败分析</a> / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a>
+    <a href="/api/tasks">任务列表</a>
+    / <a href="/api/tasks/{{ task_id }}" id="crumbTask">{% if task_name %}{{ task_name }}{% else %}任务 #{{ task_id }}{% endif %}</a>
+    / 失败分析
 </div>
 <div class="page-header">
     <div>
@@ -163,6 +132,8 @@
         </div>
         <div class="filters">
             <label>rollout <select id="fRollout"><option value="">全部</option></select></label>
+            <label>group <input id="fGroup" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
+            <label>attempt id <input id="fAttempt" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
             <label>结局 <select id="fCat">
                 <option value="">全部非通过</option><option value="fail">正常失败</option>
                 <option value="timeout">超时/截断</option><option value="abort">abort</option><option value="other">其它</option>
@@ -202,7 +173,7 @@
     const CAT_ZH = { pass: "通过", fail: "正常失败", timeout: "超时/截断", abort: "abort", other: "其它" };
     let DATA = null;
     let page = 0;
-    const state = { rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT), cat: "", reason: "", text: "" };
+    const state = { rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT), cat: "", reason: "", text: "", group: "", attempt: "" };
 
     const $ = (id) => document.getElementById(id);
     function esc(s) {
@@ -223,6 +194,8 @@
         const t = state.text.trim().toLowerCase();
         return DATA.attempts.filter((a) => {
             if (state.rollout !== "" && String(a.rollout_id) !== state.rollout) return false;
+            if (state.group !== "" && String(a.group_index) !== state.group) return false;
+            if (state.attempt !== "" && String(a.attempt_id) !== state.attempt) return false;
             if (state.cat && a.category !== state.cat) return false;
             if (state.reason && a.reason !== state.reason) return false;
             if (t) {
@@ -353,7 +326,13 @@
     }
 
     function fillReasonOptions() {
-        const pool = DATA.attempts.filter((a) => (!state.cat || a.category === state.cat) && (state.rollout === "" || String(a.rollout_id) === state.rollout));
+        const pool = DATA.attempts.filter((a) => {
+            if (state.cat && a.category !== state.cat) return false;
+            if (state.rollout !== "" && String(a.rollout_id) !== state.rollout) return false;
+            if (state.group !== "" && String(a.group_index) !== state.group) return false;
+            if (state.attempt !== "" && String(a.attempt_id) !== state.attempt) return false;
+            return true;
+        });
         const counts = new Map();
         pool.forEach((a) => counts.set(a.reason, (counts.get(a.reason) || 0) + 1));
         const opts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
@@ -384,6 +363,8 @@
         $("fCat").addEventListener("change", (e) => { state.cat = e.target.value; page = 0; fillReasonOptions(); refresh(); });
         $("fReason").addEventListener("change", (e) => { state.reason = e.target.value; page = 0; refresh(); });
         $("fText").addEventListener("input", (e) => { state.text = e.target.value; page = 0; refresh(); });
+        $("fGroup").addEventListener("input", (e) => { state.group = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
+        $("fAttempt").addEventListener("input", (e) => { state.attempt = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
         $("prevPage").addEventListener("click", () => { page--; refresh(); });
         $("nextPage").addEventListener("click", () => { page++; refresh(); });
     }
@@ -394,6 +375,8 @@
             const body = await resp.json().catch(() => ({}));
             if (!resp.ok || body.code !== 0) throw new Error((body && body.msg) || ("HTTP " + resp.status));
             DATA = body.data;
+            const crumb = $("crumbTask");
+            if (crumb && DATA.task && DATA.task.task_name) crumb.textContent = DATA.task.task_name;
             $("pageTitle").textContent = `${DATA.task.task_name} · 失败分析`;
             $("pageSub").textContent = `任务 #${DATA.task.id} · ${DATA.progress.length} 个 rollout · 状态 ${DATA.task.status}`;
             renderSource();

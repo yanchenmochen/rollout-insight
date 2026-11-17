@@ -495,7 +495,7 @@
     </div>
     <div class="action-bar">
         <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
-        <a href="/api/failures?task_id={{ task.id }}" class="btn btn-secondary">失败分析</a>
+        <a href="/api/tasks/{{ task.id }}/failures" class="btn btn-secondary">失败分析</a>
         <button type="button" class="btn" id="rescanBtn">重扫</button>
         <button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>
     </div>
@@ -525,6 +525,7 @@
             <div class="nav-group">
                 <a href="#rollout-stack" data-nav="rollout-stack">Attempt 分布</a>
                 <a href="#stack-reasons" class="nav-sub" data-nav="stack-reasons">失败原因 Top</a>
+                <a href="/api/tasks/{{ task.id }}/failures">失败分析</a>
             </div>
             <div class="nav-group">
                 <a href="#rollouts" data-nav="rollouts">Rollout 列表 ({{ rollouts | length }})</a>
@@ -880,7 +881,7 @@
                             <td>{{ r.scanned_at or "-" }}</td>
                             <td>
                                 {% set n_bad = (r.n_failed or 0) + (r.n_timeout or 0) + (r.n_aborted or 0) + (r.n_other or 0) %}
-                                {% if n_bad %}<a href="/api/failures?task_id={{ task.id }}&rollout_id={{ r.rollout_id }}">{{ n_bad }} 个 →</a>{% else %}-{% endif %}
+                                {% if n_bad %}<a href="/api/tasks/{{ task.id }}/failures?rollout_id={{ r.rollout_id }}">{{ n_bad }} 个 →</a>{% else %}-{% endif %}
                             </td>
                         </tr>
                         {% endfor %}                    {% else %}

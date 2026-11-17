@@ -1,0 +1,30 @@
+<table>
+    <thead>
+        <tr>
+            <th>tag</th>
+            <th>作用</th>
+            <th class="num">最新 step</th>
+            <th class="num">最新 value</th>
+            <th>TensorBoard</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td class="mono">{{ row.tag }}</td>
+            <td>{{ row.description }}</td>
+            <td class="num">{{ row.step }}</td>
+            <td class="num">{{ row.value_text }}</td>
+            <td class="ops">
+                <code class="mono tag-copy">{{ row.tag }}</code>
+                <button type="button" class="btn btn-secondary btn-xs btn-copy-tag" data-tag="{{ row.tag }}">复制 tag</button>
+                {% if event_dir %}
+                <button type="button" class="btn btn-xs btn-open-tag"
+                    data-tag="{{ row.tag }}"
+                    data-filter="{{ row.tag_filter }}">在 TensorBoard 中查看</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

@@ -1,6 +1,7 @@
 """失败样本分析路由（任务级）。
 
-- GET /api/failures                                    失败总览页（无 task_id 时为任务选择）
+- GET /api/tasks/{task_id}/failures                    任务下的失败总览页
+- GET /api/failures                                    旧入口：有 task_id 时同总览，否则短说明
 - GET /api/failures/attempts/{attempt_pk}              单 attempt 失败轨迹页
 - GET /api/failures/tasks/{task_id}/overview.json      进度 + 非通过 attempt 列表 + 聚类
 - GET /api/failures/attempts/{attempt_pk}/detail.json  单 attempt 结论 / 证据 / patch
@@ -26,26 +27,46 @@ router = APIRouter(dependencies=[Depends(require_login)])
 templates = Jinja2Templates(directory=str(config.templates_dir))
 
 
+async def _failure_page_context(
+    task_id: Optional[int],
+    rollout_id: Optional[int],
+) -> dict:
+    """总览页上下文。有 task_id 时补任务名，供面包屑使用。"""
+    task_name = None
+    if task_id is not None:
+        from db.db_task_service import DBTaskService
+
+        task = await asyncio.to_thread(DBTaskService.get_by_id, int(task_id))
+        if task is not None:
+            task_name = task.task_name
+    return {
+        "page_title": "失败分析",
+        "task_id": task_id,
+        "task_name": task_name,
+        "rollout_id": rollout_id,
+    }
+
+
+@router.get("/api/tasks/{task_id}/failures", include_in_schema=False)
+async def page_task_failures(
+    request: Request,
+    task_id: int,
+    rollout_id: Optional[int] = None,
+) -> HTMLResponse:
+    """任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。"""
+    ctx = await _failure_page_context(task_id, rollout_id)
+    return templates.TemplateResponse(request, "failure_overview.html", ctx)
+
+
 @router.get("/api/failures", include_in_schema=False)
 async def page_failure_overview(
     request: Request,
     task_id: Optional[int] = None,
     rollout_id: Optional[int] = None,
 ) -> HTMLResponse:
-    """渲染 failure_overview.html；无 task_id 时列出任务供选择。"""
-    from service.failure_analysis_service import list_tasks_with_failure_counts
-
-    tasks = [] if task_id else await asyncio.to_thread(list_tasks_with_failure_counts)
-    return templates.TemplateResponse(
-        request,
-        "failure_overview.html",
-        {
-            "page_title": "失败分析",
-            "task_id": task_id,
-            "rollout_id": rollout_id,
-            "tasks": tasks,
-        },
-    )
+    """旧地址。有 task_id 时与任务失败分析相同；没有 task_id 时只给回任务列表的说明。"""
+    ctx = await _failure_page_context(task_id, rollout_id)
+    return templates.TemplateResponse(request, "failure_overview.html", ctx)
 
 
 @router.get("/api/failures/attempts/{attempt_pk}", include_in_schema=False)

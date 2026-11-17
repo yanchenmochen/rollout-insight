@@ -214,11 +214,7 @@
             <ul class="navbar-nav">
                 <li class="nav-item">
                     <a href="/api/tasks"
-                       class="nav-link {% if request.url.path.startswith('/api/tasks') %}active{% endif %}">任务列表</a>
-                </li>
-                <li class="nav-item">
-                    <a href="/api/failures"
-                       class="nav-link {% if request.url.path.startswith('/api/failures') %}active{% endif %}">失败分析</a>
+                       class="nav-link {% if request.url.path.startswith('/api/tasks') or request.url.path.startswith('/api/failures') %}active{% endif %}">任务列表</a>
                 </li>
                 <li class="nav-item">
                     <a href="/api/tensorboard"

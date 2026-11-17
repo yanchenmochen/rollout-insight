@@ -155,6 +155,18 @@
 - `def attach_slime_job_type(target: MutableMapping[str, Any], env: Optional[Mapping[str, Any]]=No…` — 就地写入 ``job_type`` / ``job_type_label`` 等字段。
 - `def load_env_from_run_dir(run_dir: Optional[Path | str]) -> Tuple[Dict[str, str], str, str]` — 从 run 目录读取 env 与 launcher。
 
+### `utils/tb_deep_link.py`
+
+- `def installed_tensorboard_version() -> str` — 已安装的 tensorboard 版本；导入失败时返回空串。
+- `def tag_filter_supported(version: Optional[str]=None) -> bool` — 该版本是否能用 ``?tagFilter=`` 定位到单个 scalar tag。
+- `def tensorboard_tag_filter(tag: str) -> str` — 精确匹配一个 tag 的正则（``tagFilter`` 按正则解释）。
+- `def append_tag_filter(base_url: str, tag: str) -> str` — 在 TensorBoard 根 URL 上追加 ``tagFilter``，并丢掉 hash。
+
+### `utils/tb_metric_catalog.py`
+
+- `def classify_tb_tag(tag: str) -> str` — 返回 ``primary`` / ``truncated_ratio`` / ``attempt_count`` / ``unknown``。
+- `def describe_tb_tag(tag: str) -> str` — 已知评测 tag 的中文说明；对不上的返回「未收录」。
+
 ### `utils/tb_run_paths.py`
 
 - `def resolve_run_dir(rollout_root: Optional[str]) -> Optional[Path]` — 从 ``task.rollout_root``（通常指向 ``.../generated/rollout_dumps``）推 run 根目录。
@@ -231,7 +243,7 @@
 - `staticmethod` `def get_by_segment_id() -> Optional[DBSegmentTranscript]`
 - `staticmethod` `def upsert_transcript(prompt_text: str='', response_text: str='', turns: Optional[List[Any]]=No…`
 - `staticmethod` `def mark_fetched(tokenizer_path_used: str='') -> bool`
-- `staticmethod` `def search_by_keyword(task_id: Optional[int]=None, limit: int=100, offset: int=0) -> List[DBSeg…`
+- `staticmethod` `def search_by_keyword(task_id: Optional[int]=None, limit: int=100, offset: int=0, group_index: …`
 - `staticmethod` `def delete_by_segment_id() -> bool`
 
 #### `DBSegmentTurnService` (`db/db_segment_turn_service.py`)
@@ -307,6 +319,13 @@
 - `staticmethod` `def get_attempt_failure_detail(attempt_pk: int) -> Dict[str, Any]`
 - `staticmethod` `def get_attempt_trajectory(attempt_pk: int, offset: int=0, limit: int=200, errors_only: bool=Fa…`
 
+### `insight_page_service_module` (`service/insight_page_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def build_insight_page(task_id: Optional[int]) -> Dict[str, Any]`
+- `staticmethod` `def read_latest_scalars(event_dir: Optional[Path | str]) -> Tuple[List[Dict[str, Any]], Optiona…`
+
 ### `nanhu_client_module` (`service/nanhu_client.py`)
 
 模块级公开函数（不在 class 内）：
@@ -338,7 +357,7 @@
 
 模块级公开函数（不在 class 内）：
 
-- `staticmethod` `def search_segments(task_id: Optional[int]=None, min_reward: float=0.0, keyword: str='', limit:…`
+- `staticmethod` `def search_segments(task_id: Optional[int]=None, min_reward: Optional[float]=None, keyword: str…`
 
 ### `segment_transcript_service_module` (`service/segment_transcript_service.py`)
 
@@ -395,11 +414,13 @@
 | `auth_controller` | POST | `/api/auth/register` | `api_register` | 注册端点。 |
 | `auth_controller` | POST | `/api/auth/logout` | `api_logout` | 登出：清 session，返回 /api/tasks。 |
 | `auth_controller` | GET | `/api/auth/me` | `api_me` | 返回当前用户 dict；未登录返回 401 JSON。 |
-| `failure_controller` | GET | `/api/failures` | `page_failure_overview` | 渲染 failure_overview.html；无 task_id 时列出任务供选择。 |
+| `failure_controller` | GET | `/api/tasks/{task_id}/failures` | `page_task_failures` | 任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。 |
+| `failure_controller` | GET | `/api/failures` | `page_failure_overview` | 旧地址。有 task_id 时与任务失败分析相同；没有 task_id 时只给回任务列表的说明。 |
 | `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}` | `page_failure_attempt` | 渲染 failure_attempt.html：单 attempt 怎么失败的。 |
 | `failure_controller` | GET | `/api/failures/tasks/{task_id}/overview.json` | `api_failure_overview` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt 列表 + 原因聚类。 |
 | `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}/detail.json` | `api_failure_attempt_detail` | 单 attempt 失败详情（结论 / 评测证据 / 耗时 / patch / 回跳链接）。 |
 | `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}/trajectory.json` | `api_failure_attempt_trajectory` | 分页返回 OpenHands 轨迹事件（errors_only=true 只看报错步）。 |
+| `insight_controller` | GET | `/api/insights` | `page_insights` | 渲染洞察页。没有事件目录时页面给出说明，不返回 500。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/page` | `page_nanhu_jobs` | 渲染 nanhu_jobs.html（页面 + 表 + 过滤）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs` | `api_list_nanhu_jobs` | JSON 列表；refresh=1 会先调 nanhu_client.list_train_jobs 同步落库。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/{job_id}/resolve-for-task` | `api_resolve_job_for_task` | 根据南湖 job 详情解析创建 Rollout 任务所需字段。 |
@@ -409,7 +430,8 @@
 | `rollout_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_id}` | `page_rollout_detail` | 渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。 |
 | `rollout_controller` | GET | `/api/rollouts/{rollout_id}` | `api_get_rollout_json` | JSON 端点：返回 rollout 概览 + attempts 列表。 |
 | `rollout_controller` | POST | `/api/rollouts/{rollout_id}/parse` | `api_parse_rollout` | 触发 T3 重解析（默认 force=True）。 |
-| `segment_controller` | GET | `/api/segments/search` | `api_segments_search` | Segment 检索：调 SegmentSearchService.search_segments。 |
+| `segment_controller` | GET | `/api/segments/search` | `api_segments_search` | Segment 检索 JSON：调 SegmentSearchService.search_segments。 |
+| `segment_controller` | GET | `/api/segments/search/page` | `page_segments_search` | Segment 检索页。JSON 接口仍是 GET /api/segments/search，留给 CLI。 |
 | `segment_controller` | GET | `/api/segments/{segment_id}` | `page_segment_transcript` | 渲染 segment_transcript.html（v0.4.0 T5：注入 turns 列表 + 兄弟 segment 导航）。 |
 | `segment_controller` | GET | `/api/segments/{segment_id}/transcript.json` | `api_segment_transcript_json` | 调 SegmentService.ensure_transcript 后返回 JSON。 |
 | `segment_controller` | GET | `/api/segments/{segment_id}/turns.json` | `api_segment_turns_json` | 按需返回某个 segment 的 turn 列表（供 rollout 详情页懒加载）。 |

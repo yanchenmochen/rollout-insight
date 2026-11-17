@@ -69,12 +69,23 @@
                         </span>
                     </summary>
                     <div class="tree-body" data-segment-body="{{ s.primary_id }}">
-                        <div class="loading-hint">点击展开以加载 turns…</div>
+                        <div class="sglang-seq-label">当前正文是 sglang 序列</div>
+                        <div class="sglang-turns">
+                            <div class="loading-hint">点击展开以加载 turns…</div>
+                        </div>
+                        <details class="sandbox-exec" data-attempt-pk="{{ a.primary_id }}">
+                            <summary>沙盒执行 <small>OpenHands history.jsonl 里的真实命令、环境返回与 exit_code</small></summary>
+                            <div class="sandbox-exec-body">展开后读取该 attempt 的轨迹文件。</div>
+                        </details>
                     </div>
                 </details>
                 {% endfor %}
             {% else %}
                 <div class="empty-inline">该 attempt 暂无 segment</div>
+                <details class="sandbox-exec" data-attempt-pk="{{ a.primary_id }}">
+                    <summary>沙盒执行 <small>OpenHands history.jsonl 里的真实命令、环境返回与 exit_code</small></summary>
+                    <div class="sandbox-exec-body">展开后读取该 attempt 的轨迹文件。</div>
+                </details>
             {% endif %}
         </div>
     </details>

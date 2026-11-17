@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Segment 检索 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid var(--ri-border);
+    }
+    .page-header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .filter-panel {
+        background: #f4f6f8;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+    .filter-panel .form-group {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 120px;
+    }
+    .filter-panel label {
+        font-size: 12px;
+        color: var(--ri-muted);
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+    .filter-panel input,
+    .filter-panel select {
+        padding: 6px 8px;
+        border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius);
+        font-size: 14px;
+        background: white;
+    }
+    .filter-panel .grow { min-width: 220px; flex: 1; }
+    table.result-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.result-table th, table.result-table td {
+        border-bottom: 1px solid var(--ri-border);
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+    }
+    table.result-table th { background: #f3f5f8; color: var(--ri-muted); font-weight: 600; }
+    .snippet { color: var(--ri-muted); font-size: 12px; word-break: break-all; }
+    .pager { display: flex; gap: 10px; align-items: center; margin-top: 12px; font-size: 13px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .muted { color: var(--ri-muted); font-size: 13px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a> / Segment 检索
+</div>
+<div class="page-header">
+    <div>
+        <h1>Segment 检索</h1>
+        <div class="page-subtitle">按任务、group、attempt id、reward 下限或关键字查找 segment。group 与 attempt id 精确匹配，可只填一个。</div>
+    </div>
+</div>
+
+{% if form_error %}
+<div class="alert alert-warning">{{ form_error }}</div>
+{% endif %}
+
+<form method="get" action="/api/segments/search/page" class="filter-panel">
+    <input type="hidden" name="submitted" value="1" />
+    <div class="form-group">
+        <label for="task_id">任务</label>
+        <select id="task_id" name="task_id">
+            <option value="">全部任务</option>
+            {% set known = [] %}
+            {% for t in tasks %}
+                {% set _ = known.append(t.primary_id) %}
+                <option value="{{ t.primary_id }}" {% if task_id is not none and task_id == t.primary_id %}selected{% endif %}>#{{ t.primary_id }} {{ t.task_name }}</option>
+            {% endfor %}
+            {% if task_id is not none and task_id not in known %}
+                <option value="{{ task_id }}" selected>任务 #{{ task_id }}</option>
+            {% endif %}
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="group_index">group</label>
+        <input id="group_index" name="group_index" type="text" inputmode="numeric"
+               value="{{ '' if group_index is none else group_index }}" placeholder="精确" />
+    </div>
+    <div class="form-group">
+        <label for="attempt_id">attempt id</label>
+        <input id="attempt_id" name="attempt_id" type="text" inputmode="numeric"
+               value="{{ '' if attempt_id is none else attempt_id }}" placeholder="业务 id，精确" />
+    </div>
+    <div class="form-group">
+        <label for="min_reward">reward 下限</label>
+        <input id="min_reward" name="min_reward" type="text" inputmode="decimal"
+               value="{{ '' if min_reward is none else min_reward }}" placeholder="0" />
+    </div>
+    <div class="form-group grow">
+        <label for="keyword">关键字</label>
+        <input id="keyword" name="keyword" type="search" value="{{ keyword or '' }}" placeholder="命中 transcript 正文" />
+    </div>
+    <div class="form-group">
+        <label>&nbsp;</label>
+        <button type="submit" class="btn">检索</button>
+    </div>
+</form>
+
+{% if not searched %}
+<p class="muted">填写条件后点检索。结果会链到对应 segment 页。命令行仍使用 JSON 接口 <code>/api/segments/search</code>。</p>
+{% elif form_error %}
+{% else %}
+<p class="muted">共 {{ total }} 条{% if page_count > 1 %} · 第 {{ page }} / {{ page_count }} 页{% endif %}</p>
+{% if not items %}
+<p class="muted">没有符合条件的 segment。</p>
+{% else %}
+<table class="result-table">
+    <thead>
+        <tr>
+            <th>segment</th>
+            <th>group</th>
+            <th>attempt id</th>
+            <th>attempt 主键</th>
+            <th>reward</th>
+            <th>sandbox</th>
+            <th>摘要</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td><a href="/api/segments/{{ item.segment_id }}">#{{ item.segment_id }}</a></td>
+            <td class="mono">{{ item.group_index if item.group_index is not none else "-" }}</td>
+            <td class="mono">{{ item.attempt_biz_id if item.attempt_biz_id is not none else "-" }}</td>
+            <td class="mono">{{ item.attempt_id }}</td>
+            <td class="mono">{% if item.reward is not none %}{{ "%.4f"|format(item.reward) }}{% else %}-{% endif %}</td>
+            <td class="mono">{{ item.sandbox_id or "-" }}</td>
+            <td class="snippet">{{ item.snippet or "" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<div class="pager">
+    {% if prev_url %}<a href="{{ prev_url }}">上一页</a>{% endif %}
+    {% if next_url %}<a href="{{ next_url }}">下一页</a>{% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

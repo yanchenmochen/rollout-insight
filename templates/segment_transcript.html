@@ -451,7 +451,7 @@
 </div>
 
 <div class="section">
-    <h2>Turns <small style="color: var(--ri-muted); font-size: 12px;">{{ turns | length }} turn(s)</small></h2>
+    <h2>Turns <small style="color: var(--ri-muted); font-size: 12px;">当前正文是 sglang 序列 · {{ turns | length }} turn(s)</small></h2>
 
     {% if turns %}
     <div class="toolbar">
@@ -502,6 +502,11 @@
     </div>
     {% endif %}
 </div>
+
+<details class="sandbox-exec" data-attempt-pk="{{ segment.attempt_id or '' }}">
+    <summary>沙盒执行 <small>OpenHands history.jsonl 里的真实命令、环境返回与 exit_code</small></summary>
+    <div class="sandbox-exec-body">展开后读取该 attempt 的轨迹文件。</div>
+</details>
 {% endblock %}
 
 {% block extra_js %}
@@ -715,4 +720,5 @@
         }
     });
 </script>
+{% include "_sandbox_exec.html" %}
 {% endblock %}
