@@ -28,6 +28,7 @@ from data.rollout_insight_exception import RolloutInsightException
 from utils.rollout_pt_parser import (
     load_pt,
     parse_attempts_and_segments,
+    split_markdown_headed_turns,
     split_response_to_turns,
     split_response_to_turns_with_tokenizer,
     token_estimate,
@@ -145,7 +146,10 @@ class RolloutParseService:
             response_text = seg.get("response_text") or ""
             if not response_text:
                 continue
-            turns = split_response_to_turns(response_text)
+            # 渲染产物常无 <|im_start|>，但有 ### turn N · role；先走 markdown 切分
+            turns = split_markdown_headed_turns(response_text)
+            if len(turns) < 2:
+                turns = split_response_to_turns(response_text)
             if not turns:
                 continue
             try:

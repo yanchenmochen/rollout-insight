@@ -248,11 +248,61 @@
         border-radius: 2px;
     }
 
-    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+    .toolbar .view-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn.is-active { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
     .empty-row { text-align: center; color: var(--ri-muted); padding: 24px 8px; font-size: 14px; }
     .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 14px; }
     .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
     .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+
+    /* 平铺对话视图：按 turn 合并分组，组内再拆步骤 */
+    .flat-conv { display: flex; flex-direction: column; gap: 10px; }
+    .flat-turn {
+        border: 1px solid #e4e8ec; border-radius: var(--te-radius);
+        border-left: 4px solid #9aa8b8; background: #fafbfc; overflow: hidden;
+    }
+    .flat-turn.flat-assistant { border-left-color: var(--ri-success); }
+    .flat-turn.flat-user { border-left-color: #2d6a9f; }
+    .flat-turn.flat-system { border-left-color: #8a5a12; }
+    .flat-turn.flat-tool { border-left-color: #757575; }
+    .flat-turn-head {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        padding: 8px 12px; font-size: 13px; background: #ffffff;
+        border-bottom: 1px solid #e4e8ec; color: var(--ri-ink);
+    }
+    .flat-turn-head .flat-meta { margin-left: auto; color: var(--ri-muted); font-size: 11px; }
+    .flat-turn-body { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 8px; }
+    .flat-tile {
+        border: 1px solid #e4e8ec; border-radius: 4px;
+        border-left: 3px solid #9aa8b8; background: #fff; overflow: hidden;
+    }
+    .flat-tile.kind-think { border-left-color: #8e44ad; background: #faf5ff; }
+    .flat-tile.kind-tool_call { border-left-color: #1e88e5; background: #f4f8fc; }
+    .flat-tile.kind-tool_response { border-left-color: #f39c12; background: #fffaf0; }
+    .flat-tile.kind-text { border-left-color: #2d6a4f; background: #ffffff; }
+    .flat-head {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        padding: 4px 10px; font-size: 12px; border-bottom: 1px dashed #e4e8ec;
+        color: var(--ri-ink);
+    }
+    .flat-head .flat-kind {
+        font-family: ui-monospace, monospace; font-size: 11px;
+        padding: 1px 6px; border-radius: 8px; background: #eef3f8; color: #1e5080;
+    }
+    .flat-head .flat-kind.k-think { background: #f0e2f8; color: #6a1b9a; }
+    .flat-head .flat-kind.k-tool_call { background: #e8f0fa; color: #1e5080; }
+    .flat-head .flat-kind.k-tool_response { background: #f0e2c5; color: #8a5a12; }
+    .flat-head .flat-meta { margin-left: auto; color: var(--ri-muted); font-size: 11px; }
+    .flat-tile pre.flat-body {
+        margin: 0; padding: 8px 12px; font-family: ui-monospace, monospace;
+        font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+        max-height: 280px; overflow: auto; background: transparent;
+    }
+    .flat-tile pre.flat-body.is-long { max-height: 160px; }
+    .flat-hint { font-size: 11px; color: var(--ri-muted); padding: 2px 0 6px; }
+    #transcriptContainer[data-view="flat"] { display: none; }
+    #flatContainer[hidden] { display: none !important; }
 </style>
 {% endblock %}
 
@@ -405,11 +455,14 @@
 
     {% if turns %}
     <div class="toolbar">
-        <button type="button" class="btn btn-secondary" id="expandAllBtn">展开全部</button>
-        <button type="button" class="btn btn-secondary" id="collapseAllBtn">折叠全部</button>
+        <span class="view-btns">
+            <button type="button" class="btn btn-secondary turns-view-btn" data-view="expand" id="expandAllBtn">展开全部</button>
+            <button type="button" class="btn btn-secondary turns-view-btn is-active" data-view="collapse" id="collapseAllBtn">折叠全部</button>
+            <button type="button" class="btn btn-secondary turns-view-btn" data-view="flat" id="flatViewBtn">平铺对话</button>
+        </span>
     </div>
 
-    <div class="transcript" id="transcriptContainer">
+    <div class="transcript" id="transcriptContainer" data-view="collapse">
         {% for t in turns %}
         <details class="turn turn-{{ t.role_class }}" data-index="{{ t.turn_index }}">
             <summary>
@@ -434,6 +487,12 @@
         </details>
         {% endfor %}
     </div>
+    <div id="flatContainer" hidden></div>
+    <script type="application/json" id="turnsDataJson">[
+{%- for t in turns %}
+{"turn_index":{{ (t.turn_index if t.turn_index is defined else loop.index) | tojson }},"role_label":{{ (t.role_label if t.role_label is defined else "unknown") | tojson }},"role_class":{{ (t.role_class if t.role_class is defined else "unknown") | tojson }},"body_text":{{ (t.body_text if t.body_text is defined else "") | tojson }},"body_char_count":{{ (t.body_char_count if t.body_char_count is defined else 0) | tojson }},"token_estimate":{{ (t.token_estimate if t.token_estimate is defined else 0) | tojson }},"has_tool_call":{{ (t.has_tool_call if t.has_tool_call is defined else false) | tojson }},"has_think":{{ (t.has_think if t.has_think is defined else false) | tojson }},"tool_call_names":{{ (t.tool_call_names if t.tool_call_names is defined else []) | tojson }}}{% if not loop.last %},{% endif %}
+{%- endfor %}
+]</script>
     {% else %}
     <div class="empty-row">
         该 segment 暂无 turn 文本。
@@ -450,13 +509,167 @@
     const SEGMENT_ID = {{ (segment.id or 0) | tojson }};
     const ROLLOUT_PK = {{ (rollout_pk or 0) | tojson }};
 
-    document.getElementById("expandAllBtn") && document.getElementById("expandAllBtn").addEventListener("click", function () {
-        document.querySelectorAll("details.turn").forEach(function (d) { d.open = true; });
-        document.querySelectorAll("pre.turn-body.collapsed-text").forEach(function (p) { p.classList.remove("collapsed-text"); });
-        document.querySelectorAll(".expand-toggle").forEach(function (b) { b.style.display = "none"; });
-    });
-    document.getElementById("collapseAllBtn") && document.getElementById("collapseAllBtn").addEventListener("click", function () {
-        document.querySelectorAll("details.turn").forEach(function (d) { d.open = false; });
+    function escapeHtml(s) {
+        if (s == null) return "";
+        return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function splitTurnBody(body) {
+        if (!body) return [{ kind: "text", text: "" }];
+        const chunks = [];
+        const patterns = [
+            { kind: "tool_call", re: /<(?:\|)?tool_call[^>]*>[\s\S]*?<\/tool_call>/gi },
+            { kind: "tool_response", re: /<(?:\|)?tool_response[^>]*>[\s\S]*?<\/tool_response>/gi },
+            { kind: "think", re: /<think>[\s\S]*?<\/think>/gi },
+        ];
+        const hits = [];
+        for (const p of patterns) {
+            let m;
+            p.re.lastIndex = 0;
+            while ((m = p.re.exec(body)) !== null) {
+                hits.push({ kind: p.kind, start: m.index, end: m.index + m[0].length, text: m[0] });
+                if (m.index === p.re.lastIndex) p.re.lastIndex++;
+            }
+        }
+        hits.sort((a, b) => a.start - b.start);
+        let cursor = 0;
+        for (const h of hits) {
+            if (cursor < h.start) {
+                const seg = body.slice(cursor, h.start);
+                if (seg.trim()) chunks.push({ kind: "text", text: seg });
+            }
+            chunks.push({ kind: h.kind, text: h.text });
+            cursor = h.end;
+        }
+        if (cursor < body.length) {
+            const seg = body.slice(cursor);
+            if (seg.trim()) chunks.push({ kind: "text", text: seg });
+        }
+        if (chunks.length === 0) chunks.push({ kind: "text", text: body });
+        return chunks;
+    }
+
+    function toolNameFromChunk(c) {
+        if (c.kind !== "tool_call") return "";
+        const m = /<(?:\|)?tool_call[^>]*>/i.exec(c.text || "");
+        return m ? ((c.text.slice(m[0].length).match(/[A-Za-z0-9_]+/) || [""])[0]) : "";
+    }
+
+    function loadTurnsData() {
+        const el = document.getElementById("turnsDataJson");
+        if (!el) return [];
+        try { return JSON.parse(el.textContent || "[]"); } catch (e) { return []; }
+    }
+
+    function isNoiseChunk(c) {
+        const raw = String(c.text || "").trim();
+        if (!raw) return true;
+        if (/^(?:<\|im_end\|>|<\|im_start\|>\s*\w*)+$/i.test(raw)) return true;
+        return false;
+    }
+
+    function meaningfulChunks(body) {
+        const chunks = splitTurnBody(body || "").filter(function (c) { return !isNoiseChunk(c); });
+        const merged = [];
+        for (let i = 0; i < chunks.length; i++) {
+            const c = chunks[i];
+            const prev = merged[merged.length - 1];
+            if (prev && prev.kind === "text" && c.kind === "text") {
+                prev.text += c.text;
+            } else {
+                merged.push({ kind: c.kind, text: c.text });
+            }
+        }
+        return merged.length ? merged : [{ kind: "text", text: body || "" }];
+    }
+
+    function renderFlatConversation(turns) {
+        let tileCount = 0;
+        const groups = turns.map(function (t) {
+            const role = String(t.role_label || t.role_class || "unknown").toLowerCase();
+            const idx = t.turn_index;
+            const chunks = meaningfulChunks(t.body_text || "");
+            const chars = t.body_char_count || (t.body_text || "").length;
+            const tok = t.token_estimate || 0;
+            const parts = chunks.map(function (c) {
+                tileCount += 1;
+                const n = (c.text || "").length;
+                const tool = toolNameFromChunk(c);
+                const kindLabel = c.kind === "tool_call" && tool
+                    ? ("tool_call: " + tool)
+                    : (c.kind === "tool_response" ? "tool_result" : c.kind);
+                const longCls = n > 1200 ? " is-long" : "";
+                // 只标片段类型，不引入「步骤」语义
+                return (
+                    '<div class="flat-tile kind-' + escapeHtml(c.kind) + '">' +
+                    '<div class="flat-head">' +
+                    '<span class="flat-kind k-' + escapeHtml(c.kind) + '">' + escapeHtml(kindLabel) + "</span>" +
+                    '<span class="flat-meta">' + n + " chars</span>" +
+                    "</div>" +
+                    '<pre class="flat-body' + longCls + '">' + escapeHtml(c.text || "") + "</pre>" +
+                    "</div>"
+                );
+            }).join("");
+            return (
+                '<div class="flat-turn flat-' + escapeHtml(role) + '">' +
+                '<div class="flat-turn-head">' +
+                '<span class="turn-index">turn #' + idx + "</span>" +
+                '<span class="role-badge role-' + escapeHtml(role) + '">' + escapeHtml(role) + "</span>" +
+                '<span class="turn-meta">' + chunks.length + " 片段</span>" +
+                '<span class="flat-meta">' + chars + " chars" + (tok ? (" · ~" + tok + " tok") : "") + "</span>" +
+                "</div>" +
+                '<div class="flat-turn-body">' + parts + "</div>" +
+                "</div>"
+            );
+        }).join("");
+        return '<div class="flat-hint">平铺视图：每个 turn 一组；组内按原文标记拆成 think / text / tool_call / tool_response 片段（共 ' +
+            tileCount + " 段），便于扫废话与工具往返。已去掉仅含 &lt;|im_end|&gt; 的噪声。</div>" +
+            '<div class="flat-conv">' + groups + "</div>";
+    }
+
+    function setActiveViewBtn(view) {
+        document.querySelectorAll(".turns-view-btn").forEach(function (b) {
+            b.classList.toggle("is-active", b.dataset.view === view);
+        });
+    }
+
+    function applySegmentTurnsView(view) {
+        const accordion = document.getElementById("transcriptContainer");
+        const flatBox = document.getElementById("flatContainer");
+        if (!accordion) return;
+        setActiveViewBtn(view);
+        if (view === "flat") {
+            accordion.setAttribute("data-view", "flat");
+            accordion.style.display = "none";
+            if (flatBox) {
+                flatBox.innerHTML = renderFlatConversation(loadTurnsData());
+                flatBox.hidden = false;
+            }
+            return;
+        }
+        accordion.style.display = "";
+        accordion.setAttribute("data-view", view);
+        if (flatBox) flatBox.hidden = true;
+        const open = view === "expand";
+        document.querySelectorAll("details.turn").forEach(function (d) { d.open = open; });
+        if (open) {
+            document.querySelectorAll("pre.turn-body.collapsed-text").forEach(function (p) {
+                p.classList.remove("collapsed-text");
+            });
+            document.querySelectorAll(".expand-toggle").forEach(function (b) { b.style.display = "none"; });
+        }
+    }
+
+    document.querySelectorAll(".turns-view-btn").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+            e.preventDefault();
+            applySegmentTurnsView(btn.dataset.view || "collapse");
+        });
     });
 
     // 「展开全文」按钮：去掉 collapsed-text + 隐藏自己

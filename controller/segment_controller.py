@@ -171,12 +171,20 @@ def _build_turns_html(transcript_text: str) -> List[Dict[str, Any]]:
     """把 transcript 文本切成 turn，并预渲染高亮 HTML。"""
     raw_turns = _split_by_im_start(transcript_text)
     out: List[Dict[str, Any]] = []
-    for t in raw_turns:
-        body = t.get("body", "")
+    for i, t in enumerate(raw_turns, 1):
+        body = t.get("body", "") or ""
+        role_label = t.get("role_label", "unknown")
         out.append({
+            "turn_index": i,
             "role": t.get("role", ""),
-            "role_label": t.get("role_label", "unknown"),
-            "role_class": t.get("role_label", "unknown"),
+            "role_label": role_label,
+            "role_class": role_label,
+            "body_text": body,
+            "body_char_count": len(body),
+            "has_tool_call": "<tool_call" in body or "<|tool_call" in body,
+            "has_think": "<think>" in body,
+            "tool_call_names": [],
+            "token_estimate": 0,
             "html": _highlight_html(body),
             "char_count": len(body),
         })
@@ -363,7 +371,7 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
                     turns = _load_turns_for_segment(segment_id, session)
                     if not turns:
                         # 没有 turns：触发一次 ensure_transcript（懒加载 .pt）
-                        # 然后调 T3 split_response_to_turns 落库到 turn 表
+                        # 然后切分并落库到 turn 表
                         transcript_text = _ensure_turns_for_segment(segment_id, obj, seg)
                         if transcript_text:
                             turns = _load_turns_for_segment(segment_id, session)
@@ -392,6 +400,11 @@ async def page_segment_transcript(segment_id: int, request: Request) -> HTMLResp
                                     "未找到 transcript 文本（可能为 2D 阶段尚未补 ensure_transcript，"
                                     "或未提供 tokenizer 目录）"
                                 )
+
+                    # 旧数据常把整段 ### turn markdown 截断成 1 条 ASSISTANT；
+                    # 与 turns.json 对齐：用完整 transcript 重切 / 拆开 / 回退 turns_json
+                    if turns:
+                        turns = _repair_collapsed_markdown_turns(segment_id, turns)
 
                     # 统计 turn 数据 + 兄弟 segment 导航
                     if turns:
@@ -480,7 +493,10 @@ def _load_turns_for_segment(segment_id: int, session: Any) -> List[Dict[str, Any
 
 
 def _ensure_turns_for_segment(segment_id: int, seg_obj: Any, seg_dict: Dict[str, Any]) -> str:
-    """懒加载：调 T3 split_response_to_turns，把 turn 写到 ``ri_segment_turn_table``。
+    """懒加载：切分 transcript 并写入 ``ri_segment_turn_table``。
+
+    优先 ``### turn N · role`` markdown 切分（ensure_transcript 渲染产物常见），
+    再回退 ``<|im_start|>`` 切分。
 
     Returns:
         response_text（写入前的内容），用于诊断。
@@ -511,11 +527,16 @@ def _ensure_turns_for_segment(segment_id: int, seg_obj: Any, seg_dict: Dict[str,
         return ""
 
     try:
-        from utils.rollout_pt_parser import split_response_to_turns
+        from utils.rollout_pt_parser import (
+            split_markdown_headed_turns,
+            split_response_to_turns,
+        )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("import split_response_to_turns 失败: {}", exc)
+        logger.warning("import turn splitters 失败: {}", exc)
         return response_text
-    turns = split_response_to_turns(response_text)
+    turns = split_markdown_headed_turns(response_text)
+    if len(turns) < 2:
+        turns = split_response_to_turns(response_text)
     if not turns:
         return response_text
     try:
@@ -525,6 +546,146 @@ def _ensure_turns_for_segment(segment_id: int, seg_obj: Any, seg_dict: Dict[str,
     except Exception as exc:  # noqa: BLE001
         logger.warning("upsert_segment_turns 失败 segment_id={}: {}", segment_id, exc)
     return response_text
+
+
+def _decorate_turn_for_template(t: Dict[str, Any]) -> Dict[str, Any]:
+    """补齐 segment_transcript.html 需要的字段（html / role_class 等）。"""
+    body = t.get("body_text") or t.get("body") or t.get("content") or ""
+    if not isinstance(body, str):
+        body = str(body)
+    role = (t.get("role_label") or t.get("role") or "unknown")
+    if not isinstance(role, str):
+        role = str(role)
+    role = role.lower() or "unknown"
+    tool_calls = t.get("tool_call_names") or []
+    if not isinstance(tool_calls, list):
+        tool_calls = []
+    out = dict(t)
+    out.update(
+        {
+            "role": role,
+            "role_label": role,
+            "role_class": role,
+            "body_text": body,
+            "body_char_count": int(t.get("body_char_count") or len(body)),
+            "has_tool_call": bool(
+                t.get("has_tool_call")
+                or ("<tool_call" in body)
+                or ("<|tool_call" in body)
+            ),
+            "has_think": bool(t.get("has_think") or ("<think>" in body)),
+            "tool_call_names": [str(x) for x in tool_calls if x],
+            "token_estimate": int(t.get("token_estimate") or 0),
+            "html": t.get("html") if t.get("html") else _highlight_html(body),
+        }
+    )
+    if out.get("turn_index") is None:
+        out["turn_index"] = 0
+    return out
+
+
+def _hydrate_from_transcript_turns_json(
+    segment_id: int, turns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """turn 表仍塌缩时，用 ``ri_segment_transcript_table.turns_json`` 回填多轮。"""
+    if len(turns) >= 2:
+        return turns
+    try:
+        from db.db_element import Session
+        from db.db_segment_transcript import DBSegmentTranscript
+    except Exception:  # noqa: BLE001
+        return turns
+    try:
+        with Session() as session:
+            row = (
+                session.query(DBSegmentTranscript)
+                .filter(DBSegmentTranscript.segment_id == segment_id)
+                .first()
+            )
+            raw = row.turns_json if row is not None else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_hydrate_from_transcript_turns_json: 读 turns_json 失败 segment_id={}: {}",
+            segment_id,
+            exc,
+        )
+        return turns
+    payload = _safe_json_load(raw, default=[])
+    if not isinstance(payload, list) or len(payload) < 2:
+        return turns
+
+    hydrated: List[Dict[str, Any]] = []
+    upsert_turns: List[Dict[str, Any]] = []
+    for i, item in enumerate(payload, 1):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "unknown").lower()
+        body = item.get("content") or item.get("body") or item.get("body_text") or ""
+        if not isinstance(body, str):
+            body = str(body)
+        hydrated.append(
+            {
+                "turn_index": i,
+                "role": role,
+                "role_label": role,
+                "body_text": body,
+                "body": body,
+                "has_tool_call": ("<tool_call" in body) or ("<|tool_call" in body),
+                "has_think": "<think>" in body,
+                "tool_call_names": [],
+                "body_char_count": len(body),
+                "token_estimate": 0,
+                "prompt_summary": "",
+            }
+        )
+        upsert_turns.append(
+            {
+                "turn_index": i,
+                "role": role,
+                "role_label": role,
+                "body": body,
+                "has_tool_call": ("<tool_call" in body) or ("<|tool_call" in body),
+                "has_think": "<think>" in body,
+                "tool_call_names": [],
+                "im_start_marker": "### turn",
+                "token_estimate": 0,
+            }
+        )
+    if len(hydrated) < 2:
+        return turns
+    try:
+        from db.db_segment_turn_service import DBSegmentTurnService
+
+        DBSegmentTurnService.upsert_segment_turns(
+            segment_id=int(segment_id), turns=upsert_turns, force=True
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_hydrate_from_transcript_turns_json: 写回 turn 表失败 segment_id={}: {}",
+            segment_id,
+            exc,
+        )
+    logger.info(
+        "_hydrate_from_transcript_turns_json: segment_id={} 从 turns_json 恢复 {} 轮",
+        segment_id,
+        len(hydrated),
+    )
+    return hydrated
+
+
+def _repair_collapsed_markdown_turns(
+    segment_id: int, turns: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """修复「整段 markdown 被截成 1 条 ASSISTANT」的旧数据，供 HTML 页与 turns.json 共用。"""
+    if not turns:
+        return turns
+    repaired, _source = _recover_truncated_markdown(int(segment_id), turns, "turn_table")
+    repaired, _source = _explode_markdown_turns(repaired, _source)
+    repaired = _hydrate_from_transcript_turns_json(int(segment_id), repaired)
+    # 重编号，避免 explode 后 turn_index 重复
+    for i, t in enumerate(repaired, 1):
+        t["turn_index"] = i
+    return [_decorate_turn_for_template(t) for t in repaired]
 
 
 def _extract_time_cost(seg_dict: Dict[str, Any], seg_obj: Any) -> Optional[float]:
@@ -946,10 +1107,10 @@ async def api_segment_turns_json(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("懒切分 turn 失败 segment_id={}: {}", segment_id, exc)
 
-    # 单条 turn 被 100KB 截断时，标题只剩前半段；用完整 transcript 重切
-    turns, source = _recover_truncated_markdown(int(segment_id), turns, source)
-    # 正文若是「### turn N · role」拼在一起的单条，拆成多轮再返回
-    turns, source = _explode_markdown_turns(turns, source)
+    # 单条 turn 被截断 / 嵌套 ### turn 时，用完整 transcript 重切；再回退 turns_json
+    turns = _repair_collapsed_markdown_turns(int(segment_id), turns or [])
+    if turns:
+        source = source or "repaired"
 
     # 渲染时附带预计算的高亮 HTML & 摘要，便于前端直接渲染
     items: List[Dict[str, Any]] = []
