@@ -7,9 +7,13 @@
 <p class="meta" style="margin-bottom:16px;">
     由 rollout-insight 拉起本机 TensorBoard（不嵌入）。将库内所有含
     <code>tbs/</code> 或 <code>tf_logs/</code> 的任务拼进同一实例，便于叠曲线对比。
+    TensorBoard 左侧 <strong>Run 名就是任务名</strong>（例如
+    <code>c021-e18-f1-ctx128k</code>），可直接按任务名筛选、对照曲线。
     需本机已安装 <code>tensorboard</code>；无事件目录的任务会被跳过。
     默认端口 <code>{{ tensorboard_port }}</code>（可用
     <code>tensorboard_port</code> / <code>ROLLOUT_INSIGHT_TENSORBOARD_PORT</code> 覆盖）。
+    若该端口上已有别的 TensorBoard，点击对比时会先停掉再启动，避免仍看到旧的实验目录别名。
+    同一事件目录里训练重启会再写一份从 step 0 开始的短事件文件。TensorBoard 默认快速加载只显示这几步，完整的 rollout 曲线会被截掉；这里改为读全部事件文件。
 </p>
 
 <div class="tb-actions" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;">
@@ -22,7 +26,7 @@
     <h2 style="margin-top:8px;">本次纳入的 run</h2>
     <table>
         <thead>
-            <tr><th>run 名</th><th>task_id</th><th>tbs 路径</th></tr>
+            <tr><th>TensorBoard Run（任务名）</th><th>task_id</th><th>事件目录</th></tr>
         </thead>
         <tbody id="tbRunsBody"></tbody>
     </table>
@@ -57,7 +61,13 @@
         const runs = (data && data.runs) || [];
         const skipped = (data && data.skipped) || [];
         runsBody.innerHTML = runs.map(function (r) {
-            return "<tr><td>" + escapeHtml(r.name) + "</td><td class=\"mono\">"
+            var runName = r.name || "";
+            var taskName = r.task_name || runName;
+            var label = runName;
+            if (taskName && taskName !== runName) {
+                label = runName + "（" + taskName + "）";
+            }
+            return "<tr><td>" + escapeHtml(label) + "</td><td class=\"mono\">"
                 + r.task_id + "</td><td class=\"mono\">" + escapeHtml(r.tbs_dir) + "</td></tr>";
         }).join("") || "<tr><td colspan=\"3\">无</td></tr>";
         skippedBody.innerHTML = skipped.map(function (s) {

@@ -49,7 +49,7 @@ python main.py
 ### 训练曲线（TensorBoard）
 
 - 任务详情「训练曲线」可启动本机 TensorBoard，**新标签**打开（不嵌入 iframe）。
-- 顶栏 / 侧栏「曲线对比」→ `/api/tensorboard`：一键对比库内全部含 `tbs/` 或 `tf_logs/` 的任务（`--logdir_spec`）。
+- 顶栏「曲线对比」→ `/api/tensorboard`：一键对比库内全部含 `tbs/` 或 `tf_logs/` 的任务。TensorBoard 左侧 Run 名即任务名（符号链接目录），可按任务名筛选对照。若默认端口上已有其他 TensorBoard，启动时会先停掉再绑定。启动参数含 `--load_fast=false` 与 `--purge_orphaned_data=false`：同一目录里后写入的短事件文件不会把更长的历史 step 截掉。
 - TB 端口默认 `6006`，配置项 `tensorboard_port` 或环境变量 `ROLLOUT_INSIGHT_TENSORBOARD_PORT`。
 - 需本机已安装 `tensorboard`（见 `requirements.txt`）；无事件目录的任务会被跳过。
 
