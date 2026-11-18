@@ -1,8 +1,9 @@
 """任务问题分析路由。
 
-- GET  /api/tasks/{task_id}/problem-analysis       问题分析页
-- GET  /api/tasks/{task_id}/problem-analysis.json  通过率曲线 + 已有响应统计
-- POST /api/tasks/{task_id}/response-stats         按 rollout 分批补响应计数
+- GET  /api/tasks/{task_id}/problem-analysis            问题分析页
+- GET  /api/tasks/{task_id}/problem-analysis/pass.json  只返回按题目的通过率
+- GET  /api/tasks/{task_id}/problem-analysis.json       通过率曲线 + 已有响应统计
+- POST /api/tasks/{task_id}/response-stats              按 rollout 分批补响应计数
 
 读 attempt / turn / .pt 会阻塞，统一放到线程池。
 """
@@ -69,6 +70,16 @@ async def page_instance_appearances(
             "view": view,
         },
     )
+
+
+@router.get("/api/tasks/{task_id}/problem-analysis/pass.json")
+async def api_problem_pass_trend(task_id: int) -> Response:
+    """按题目列出历次出现的 rollout 与通过率，不读响应统计。"""
+    from service.problem_analysis_service import build_pass_trend
+
+    logger.info("题目通过率 task_id={}", task_id)
+    trend = await asyncio.to_thread(build_pass_trend, int(task_id))
+    return Response.success(msg="ok", data=trend)
 
 
 @router.get("/api/tasks/{task_id}/problem-analysis.json")

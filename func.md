@@ -447,6 +447,7 @@
 | `nanhu_controller` | POST | `/api/nanhu/jobs/restart` | `api_restart_job` | 重启南湖 job；默认 dry-run。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis` | `page_problem_analysis` | 任务详情下的问题分析：通过率曲线与 sglang 响应统计。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/instance` | `page_instance_appearances` | 按题目名列出每次出现的 rollout 与轨迹入口。 |
+| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/pass.json` | `api_problem_pass_trend` | 按题目列出历次出现的 rollout 与通过率，不读响应统计。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis.json` | `api_problem_analysis` | 通过率（按题目出现次序）以及当前已能给出的响应统计。 |
 | `problem_analysis_controller` | POST | `/api/tasks/{task_id}/response-stats` | `api_advance_response_stats` | 补统计下一批 rollout 的 assistant 回复。不写入 turn 正文。 |
 | `rollout_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_id}` | `page_rollout_detail` | 渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。 |

@@ -63,8 +63,28 @@
 
     .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 13px; }
     .filters select, .filters input { padding: 4px 8px; border: 1px solid var(--ri-border); border-radius: 4px; font-size: 13px; }
-    .filters input#fText { min-width: 240px; }
+    .filters input#fText, .filters input#fProblem { min-width: 240px; }
     .filters input.num { width: 108px; min-width: 0; }
+    button.linkish { background: none; border: none; padding: 0; color: var(--ri-accent); cursor: pointer;
+        font: inherit; text-align: left; word-break: break-all; }
+    button.linkish:hover { text-decoration: underline; }
+    .prob-note { margin: 0 0 8px 0; }
+    .prob-chips { margin-bottom: 8px; }
+    .chip.up { border-color: #2d6a4f; color: #2d6a4f; }
+    .chip.down { border-color: #c62828; color: #c62828; }
+    .chip.flat { border-color: #8a939c; color: #5c6b7a; }
+    .delta-up { color: #2d6a4f; font-weight: 600; }
+    .delta-down { color: #c62828; font-weight: 600; }
+    .delta-flat { color: #5c6b7a; }
+    .visit-row { display: flex; flex-wrap: wrap; gap: 4px; max-height: 92px; overflow: auto; max-width: 460px; }
+    .visit-chip { display: inline-flex; gap: 4px; align-items: baseline; padding: 1px 6px; border-radius: 10px;
+        border: 1px solid var(--ri-border); font-size: 11px; background: #f8fafb; white-space: nowrap; }
+    .visit-chip a { color: var(--ri-accent); text-decoration: none; }
+    .visit-chip.up { border-color: #2d6a4f; color: #2d6a4f; }
+    .visit-chip.down { border-color: #c62828; color: #c62828; }
+    .visit-chip.flat { color: #5c6b7a; }
+    .visit-chip.hit { outline: 2px solid var(--ri-accent); }
+    .change-line { color: var(--ri-muted); font-size: 11px; margin-top: 4px; }
     table.att { font-size: 12px; }
     table.att td { vertical-align: top; padding: 5px 8px; }
     table.att td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -129,18 +149,32 @@
         <div class="tabs">
             <button type="button" class="tab active" data-tab="clusters">按聚类</button>
             <button type="button" class="tab" data-tab="attempts">按 attempt</button>
+            <button type="button" class="tab" data-tab="problems">按题目</button>
         </div>
         <div class="filters">
             <label>rollout <select id="fRollout"><option value="">全部</option></select></label>
-            <label>group <input id="fGroup" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
-            <label>attempt id <input id="fAttempt" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
-            <label>结局 <select id="fCat">
-                <option value="">全部非通过</option><option value="fail">正常失败</option>
-                <option value="timeout">超时/截断</option><option value="abort">abort</option><option value="other">其它</option>
-            </select></label>
-            <label>原因 <select id="fReason"><option value="">全部</option></select></label>
-            <input id="fText" type="search" placeholder="搜 instance_id / 失败用例 / 错误摘要" />
-            <span class="muted" id="filterCount"></span>
+            <span id="attemptFilters" style="display:contents">
+                <label>group <input id="fGroup" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
+                <label>attempt id <input id="fAttempt" class="num" type="text" inputmode="numeric" placeholder="精确" /></label>
+                <label>结局 <select id="fCat">
+                    <option value="">全部非通过</option><option value="fail">正常失败</option>
+                    <option value="timeout">超时/截断</option><option value="abort">abort</option><option value="other">其它</option>
+                </select></label>
+                <label>原因 <select id="fReason"><option value="">全部</option></select></label>
+                <input id="fText" type="search" placeholder="搜 instance_id / 失败用例 / 错误摘要" />
+                <span class="muted" id="filterCount"></span>
+            </span>
+            <span id="problemFilters" style="display:none">
+                <label>题目名称 <input id="fProblem" type="search" placeholder="搜题目名称" /></label>
+                <label>变化 <select id="fTrend">
+                    <option value="">全部</option>
+                    <option value="improved">变好</option>
+                    <option value="worsened">变坏</option>
+                    <option value="unchanged">不变</option>
+                    <option value="once">只出现一次</option>
+                </select></label>
+                <span class="muted" id="problemCount"></span>
+            </span>
         </div>
         <div id="tab-clusters"><div class="cluster-list" id="clusterList"></div></div>
         <div id="tab-attempts" style="display:none">
@@ -158,6 +192,22 @@
                 <button type="button" class="btn btn-secondary btn-xs" id="nextPage">下一页</button>
             </div>
         </div>
+        <div id="tab-problems" style="display:none">
+            <p class="muted prob-note">用题目名称检索。同一题在不同 rollout 各采样一次；通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数。变化 = 最后一次减第一次。点题目名称看每次的轨迹。</p>
+            <div class="chip-row prob-chips" id="problemChips"></div>
+            <div id="problemStatus" class="muted"></div>
+            <table class="att" id="problemTable">
+                <thead><tr>
+                    <th>题目</th><th>出现</th><th>历次 rollout · 通过率</th><th>曲线</th><th>变化</th>
+                </tr></thead>
+                <tbody id="problemBody"></tbody>
+            </table>
+            <div class="pager" id="problemPager">
+                <button type="button" class="btn btn-secondary btn-xs" id="prevProblem">上一页</button>
+                <span id="problemPageInfo"></span>
+                <button type="button" class="btn btn-secondary btn-xs" id="nextProblem">下一页</button>
+            </div>
+        </div>
     </div>
 </div>
 {% endif %}
@@ -170,10 +220,19 @@
     const TASK_ID = {{ task_id | tojson }};
     const INIT_ROLLOUT = {{ rollout_id | tojson }};
     const PAGE_SIZE = 100;
+    const PROBLEM_PAGE = 20;
     const CAT_ZH = { pass: "通过", fail: "正常失败", timeout: "超时/截断", abort: "abort", other: "其它" };
+    const TREND_ZH = { improved: "变好", worsened: "变坏", unchanged: "不变", once: "只出现一次" };
     let DATA = null;
     let page = 0;
-    const state = { rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT), cat: "", reason: "", text: "", group: "", attempt: "" };
+    let problemPage = 0;
+    let activeTab = "clusters";
+    const problemState = { status: "idle", data: null, error: "" };
+    const state = {
+        rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT),
+        cat: "", reason: "", text: "", group: "", attempt: "",
+        problemText: "", trend: "",
+    };
 
     const $ = (id) => document.getElementById(id);
     function esc(s) {
@@ -307,7 +366,7 @@
                 <td><a href="/api/tasks/${TASK_ID}/rollouts/${a.rollout_pk}">${a.rollout_id}</a></td>
                 <td>${a.group_index}</td>
                 <td class="mono">${a.attempt_id}</td>
-                <td class="mono">${esc(a.instance_id)}</td>
+                <td class="mono">${a.instance_id ? `<button type="button" class="linkish" data-problem="${esc(a.instance_id)}">${esc(a.instance_id)}</button>` : "-"}</td>
                 <td>${catBadge(a.category)}</td>
                 <td class="reason">${esc(a.reason)}</td>
                 <td class="err" title="${esc(err)}">${esc(err) || '<span class="muted">-</span>'}</td>
@@ -341,32 +400,204 @@
         $("fReason").value = state.reason;
     }
 
+    function pct(v) {
+        if (v == null || Number.isNaN(Number(v))) return "-";
+        return (Number(v) * 100).toFixed(1) + "%";
+    }
+    function signedDelta(v) {
+        if (v == null) return `<span class="delta-flat">只出现一次</span>`;
+        const n = Number(v);
+        const text = (n > 0 ? "+" : "") + (n * 100).toFixed(1) + " pct";
+        const cls = n > 1e-9 ? "delta-up" : (n < -1e-9 ? "delta-down" : "delta-flat");
+        const label = n > 1e-9 ? "变好" : (n < -1e-9 ? "变坏" : "不变");
+        return `<span class="${cls}">${text}</span> <span class="muted">${label}</span>`;
+    }
+    function rolloutPk(rid) {
+        const row = (DATA.progress || []).find((p) => String(p.rollout_id) === String(rid));
+        return row ? row.rollout_pk : null;
+    }
+    function spark(visits, trend) {
+        const w = 112, h = 28, pad = 3;
+        const color = trend === "improved" ? "#2d6a4f" : (trend === "worsened" ? "#c62828" : "#8a939c");
+        const n = visits.length;
+        if (!n) return "";
+        if (n === 1) {
+            const y = h - pad - visits[0].rate * (h - 2 * pad);
+            return `<svg width="${w}" height="${h}" aria-hidden="true"><circle cx="${w / 2}" cy="${y.toFixed(1)}" r="3" fill="${color}"></circle></svg>`;
+        }
+        const pts = visits.map((v, i) => {
+            const x = pad + i * (w - 2 * pad) / (n - 1);
+            const y = h - pad - v.rate * (h - 2 * pad);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(" ");
+        return `<svg width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6"></polyline></svg>`;
+    }
+    function visitChips(visits) {
+        return `<div class="visit-row">${visits.map((v, i) => {
+            const prev = i ? visits[i - 1].rate : null;
+            let cls = "";
+            if (prev != null) {
+                if (v.rate > prev + 1e-9) cls = "up";
+                else if (v.rate < prev - 1e-9) cls = "down";
+                else cls = "flat";
+            }
+            const hit = state.rollout !== "" && String(v.rollout_id) === state.rollout ? " hit" : "";
+            const pk = rolloutPk(v.rollout_id);
+            const label = pk ? `<a href="/api/tasks/${TASK_ID}/rollouts/${pk}">r${v.rollout_id}</a>` : `r${v.rollout_id}`;
+            return `<span class="visit-chip ${cls}${hit}" title="rollout ${v.rollout_id} · ${v.n_pass}/${v.n_attempts}">${label} ${v.n_pass}/${v.n_attempts} ${pct(v.rate)}</span>`;
+        }).join("")}</div>`;
+    }
+    function changeLine(task) {
+        const visits = task.visits || [];
+        if (!visits.length) return "";
+        const first = visits[0];
+        const last = visits[visits.length - 1];
+        if (visits.length < 2) {
+            return `只在 rollout ${first.rollout_id} 出现，通过率 ${pct(first.rate)}（${first.n_pass}/${first.n_attempts}）`;
+        }
+        return `首次 rollout ${first.rollout_id} ${pct(first.rate)} → 末次 rollout ${last.rollout_id} ${pct(last.rate)}`;
+    }
+    function filteredProblems() {
+        const tasks = (problemState.data && problemState.data.tasks) || [];
+        const q = state.problemText.trim().toLowerCase();
+        return tasks.filter((task) => {
+            if (state.trend && task.trend !== state.trend) return false;
+            if (q && !String(task.instance_id || "").toLowerCase().includes(q)) return false;
+            if (state.rollout !== "" && !(task.visits || []).some((v) => String(v.rollout_id) === state.rollout)) return false;
+            return true;
+        });
+    }
+    function renderProblems() {
+        const status = $("problemStatus");
+        const table = $("problemTable");
+        const pager = $("problemPager");
+        if (problemState.status === "loading" || problemState.status === "idle") {
+            status.textContent = "正在按题目汇总历次通过率…";
+            table.style.display = "none";
+            pager.style.display = "none";
+            $("problemChips").innerHTML = "";
+            $("problemCount").textContent = "";
+            $("problemPageInfo").textContent = "";
+            return;
+        }
+        if (problemState.status === "error") {
+            status.textContent = "加载题目通过率失败：" + problemState.error;
+            table.style.display = "none";
+            pager.style.display = "none";
+            $("problemChips").innerHTML = "";
+            $("problemCount").textContent = "";
+            return;
+        }
+        status.textContent = state.rollout !== ""
+            ? `只列出在 rollout ${state.rollout} 出现过的题，历次通过率仍包含其它 rollout。`
+            : "";
+        table.style.display = "";
+        pager.style.display = "";
+        const all = filteredProblems();
+        const counts = { improved: 0, worsened: 0, unchanged: 0, once: 0 };
+        all.forEach((task) => { if (counts[task.trend] != null) counts[task.trend] += 1; });
+        $("problemChips").innerHTML = [
+            ["变好", counts.improved, "up"],
+            ["变坏", counts.worsened, "down"],
+            ["不变", counts.unchanged, "flat"],
+            ["只出现一次", counts.once, "flat"],
+        ].map(([name, n, cls]) => `<span class="chip ${cls}">${name} <strong>${n}</strong></span>`).join("");
+        const pages = Math.max(1, Math.ceil(all.length / PROBLEM_PAGE));
+        problemPage = Math.min(problemPage, pages - 1);
+        if (problemPage < 0) problemPage = 0;
+        const slice = all.slice(problemPage * PROBLEM_PAGE, (problemPage + 1) * PROBLEM_PAGE);
+        $("problemCount").textContent = `${all.length} 题`;
+        $("problemBody").innerHTML = slice.map((task) => {
+            const href = `/api/tasks/${TASK_ID}/problem-analysis/instance?instance_id=${encodeURIComponent(task.instance_id)}`;
+            const visits = task.visits || [];
+            return `<tr>
+                <td class="mono"><a href="${href}">${esc(task.instance_id)}</a></td>
+                <td class="num">${visits.length}</td>
+                <td>${visitChips(visits)}<div class="change-line">${esc(changeLine(task))}</div></td>
+                <td>${spark(visits, task.trend)}</td>
+                <td class="num">${signedDelta(task.delta)}</td>
+            </tr>`;
+        }).join("") || `<tr><td colspan="5" class="muted">没有符合筛选的题目。</td></tr>`;
+        $("problemPageInfo").textContent = `第 ${problemPage + 1}/${pages} 页`;
+        $("prevProblem").disabled = problemPage <= 0;
+        $("nextProblem").disabled = problemPage >= pages - 1;
+    }
+    async function ensureProblems() {
+        if (problemState.status === "ready" || problemState.status === "loading") return;
+        problemState.status = "loading";
+        renderProblems();
+        try {
+            let resp = await fetch(`/api/tasks/${TASK_ID}/problem-analysis/pass.json`, { headers: { Accept: "application/json" } });
+            let body = await resp.json().catch(() => ({}));
+            if (resp.status === 404) {
+                resp = await fetch(`/api/tasks/${TASK_ID}/problem-analysis.json`, { headers: { Accept: "application/json" } });
+                body = await resp.json().catch(() => ({}));
+                if (!resp.ok || body.code !== 0 || !body.data || !body.data.pass_trend) {
+                    throw new Error((body && body.msg) || ("HTTP " + resp.status));
+                }
+                problemState.data = body.data.pass_trend;
+            } else {
+                if (!resp.ok || body.code !== 0) throw new Error((body && body.msg) || ("HTTP " + resp.status));
+                problemState.data = body.data;
+            }
+            problemState.status = "ready";
+        } catch (e) {
+            problemState.status = "error";
+            problemState.error = e && e.message ? e.message : String(e);
+        }
+        if (activeTab === "problems") renderProblems();
+    }
+    function openProblem(name) {
+        state.problemText = name || "";
+        state.trend = "";
+        problemPage = 0;
+        $("fProblem").value = state.problemText;
+        $("fTrend").value = "";
+        switchTab("problems");
+    }
+
     function refresh() {
         const items = filtered();
         $("filterCount").textContent = `${items.length} 条`;
         renderProgress();
         renderClusters(items);
         renderAttempts(items);
+        if (activeTab === "problems") renderProblems();
     }
 
     function switchTab(name) {
+        activeTab = name;
         document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
         $("tab-clusters").style.display = name === "clusters" ? "" : "none";
         $("tab-attempts").style.display = name === "attempts" ? "" : "none";
+        $("tab-problems").style.display = name === "problems" ? "" : "none";
+        $("attemptFilters").style.display = name === "problems" ? "none" : "contents";
+        $("problemFilters").style.display = name === "problems" ? "contents" : "none";
+        if (name === "problems") ensureProblems();
+        refresh();
     }
 
     function bind() {
         document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
         $("fRollout").innerHTML = '<option value="">全部</option>' + DATA.progress.map((p) => `<option value="${p.rollout_id}">rollout ${p.rollout_id}</option>`).join("");
         $("fRollout").value = state.rollout;
-        $("fRollout").addEventListener("change", (e) => { state.rollout = e.target.value; page = 0; fillReasonOptions(); refresh(); });
+        $("fRollout").addEventListener("change", (e) => { state.rollout = e.target.value; page = 0; problemPage = 0; fillReasonOptions(); refresh(); });
         $("fCat").addEventListener("change", (e) => { state.cat = e.target.value; page = 0; fillReasonOptions(); refresh(); });
         $("fReason").addEventListener("change", (e) => { state.reason = e.target.value; page = 0; refresh(); });
         $("fText").addEventListener("input", (e) => { state.text = e.target.value; page = 0; refresh(); });
         $("fGroup").addEventListener("input", (e) => { state.group = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
         $("fAttempt").addEventListener("input", (e) => { state.attempt = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
+        $("fProblem").addEventListener("input", (e) => { state.problemText = e.target.value; problemPage = 0; renderProblems(); });
+        $("fTrend").addEventListener("change", (e) => { state.trend = e.target.value; problemPage = 0; renderProblems(); });
         $("prevPage").addEventListener("click", () => { page--; refresh(); });
         $("nextPage").addEventListener("click", () => { page++; refresh(); });
+        $("prevProblem").addEventListener("click", () => { problemPage--; renderProblems(); });
+        $("nextProblem").addEventListener("click", () => { problemPage++; renderProblems(); });
+        $("attBody").addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-problem]");
+            if (!btn) return;
+            openProblem(btn.getAttribute("data-problem") || "");
+        });
     }
 
     async function load() {

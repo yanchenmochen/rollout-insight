@@ -110,6 +110,7 @@ rollout-insight/
 | GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析 |
 | GET  | `/api/tasks/{id}/problem-analysis` | 任务问题分析：通过率曲线与 sglang 响应统计 |
 | GET  | `/api/tasks/{id}/problem-analysis/instance?instance_id=` | 一道题每次出现的 rollout 与轨迹 |
+| GET  | `/api/tasks/{id}/problem-analysis/pass.json` | 按题目的历次通过率（不含响应统计） |
 | GET  | `/api/tasks/{id}/problem-analysis.json` | 通过率与已有响应统计 JSON |
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
@@ -131,7 +132,8 @@ rollout-insight/
 
 - **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
 - **按聚类**：按失败原因（`abort_reason` → `diagnosis` → agent 结束态）聚类，可下钻到对应 attempt 列表。
-- **按 attempt**：逐条列出非通过 attempt，可跳「失败轨迹」或「手风琴定位」。
+- **按 attempt**：逐条列出非通过 attempt，可跳「失败轨迹」或「手风琴定位」。点题目名称切到「按题目」。
+- **按题目**：用题目名称（`instance_id`）检索。同一题会在多个 rollout 里各采样一次（通常约 8 条 attempt）。列出每次所在的 rollout、该次通过率，以及最后一次减第一次的变化。通过率与问题分析同一套算法。
 - **单 attempt 详情**：结论、首个失败用例、评测 stdout/stderr、耗时分解、同组 8 次尝试、OpenHands 轨迹（默认看结尾，可只看报错步）、patch。
 - **与 Rollout 详情页四层手风琴联动**：失败 attempt 行右侧出现「失败轨迹 →」；详情页「在手风琴中定位」跳回 `/api/tasks/{id}/rollouts/{pk}?group=..#attempt-{pk}` 并自动展开高亮。任务详情页的 Rollout 列表新增「失败分析」列。
 
