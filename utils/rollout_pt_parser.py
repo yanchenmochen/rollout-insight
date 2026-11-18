@@ -862,6 +862,21 @@ def split_markdown_headed_turns(text: str) -> List[Dict[str, Any]]:
     return turns
 
 
+def _segment_index_matches(
+    stored: Any, target: Optional[int], sample_idx: Optional[int]
+) -> bool:
+    """segment 表上的序号是否对上这条 sample。
+
+    metadata.segment_index 缺失时，扫描会把 sample 下标写进 segment 表。
+    abort 样本经常没有 segment_index，仍要用下标对上，否则读不到这条 sample。
+    """
+    if target is None:
+        return True
+    if stored == target:
+        return True
+    return stored is None and sample_idx == target
+
+
 def _normalize_role(role: str) -> str:
     r = (role or "").lower().strip()
     if r in ("system",):

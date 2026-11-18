@@ -1045,6 +1045,7 @@ async def api_segment_turns_json(
 
     turns: List[Dict[str, Any]] = []
     source = "turn_table"
+    sample_hit_for_note: Optional[Dict[str, Any]] = None
 
     # 0) 优先：直接读该 sample 的 response(str)，按 <|im_start|> 切轮；
     #    轮内前端再拆 <think> / <tool_call> / <tool_response>。
@@ -1057,6 +1058,7 @@ async def api_segment_turns_json(
                 split_response_to_turns_with_tokenizer,
                 _discover_tokenizer_path,
                 _load_tokenizer,
+                _segment_index_matches,
             )
             from db.db_segment_turn_service import DBSegmentTurnService
 
@@ -1086,29 +1088,27 @@ async def api_segment_turns_json(
                 for i, s in enumerate(samples):
                     md = s.get("metadata") or {}
                     # 新扫描：attempt_id == sample.rollout_id，再配 segment_index
+                    same_segment = _segment_index_matches(
+                        md.get("segment_index"), target_si, i
+                    )
                     key_hit = (
                         target_attempt_id is not None
                         and s.get("rollout_id") == int(target_attempt_id)
                         and s.get("group_index") == target_gi
-                        and (
-                            target_si is None
-                            or md.get("segment_index") == target_si
-                        )
+                        and same_segment
                     )
-                    # 旧库兼容：attempt_id 曾等于 sample 下标
+                    # 旧库兼容：attempt_id 曾等于 sample 下标。
+                    # abort 时 rollout_id 为空，扫描把 sample 下标同时写成 attempt_id 和 segment_index。
                     legacy_hit = (
                         target_attempt_id is not None
                         and i == int(target_attempt_id)
                         and s.get("group_index") == target_gi
-                        and (
-                            target_si is None
-                            or md.get("segment_index") == target_si
-                        )
+                        and same_segment
                     )
                     seg_hit = (
                         target_attempt_id is None
                         and s.get("group_index") == target_gi
-                        and md.get("segment_index") == target_si
+                        and same_segment
                     )
                     if key_hit or legacy_hit or seg_hit:
                         sample_hit = s if isinstance(s, dict) else None
@@ -1120,6 +1120,7 @@ async def api_segment_turns_json(
                 )
 
             if sample_hit is not None:
+                sample_hit_for_note = sample_hit
                 response_text = sample_hit.get("response") or ""
                 if isinstance(response_text, str) and response_text.strip():
                     parsed = split_response_to_turns(response_text)
@@ -1233,6 +1234,11 @@ async def api_segment_turns_json(
                 parsed = split_markdown_headed_turns(transcript_text)
                 if len(parsed) < 2:
                     parsed = split_response_to_turns(transcript_text)
+                parsed = [
+                    item
+                    for item in parsed
+                    if not _is_placeholder_turn_body(item.get("body") or "")
+                ]
                 if parsed:
                     DBSegmentTurnService.upsert_segment_turns(
                         segment_id=int(segment_id), turns=parsed, force=True
@@ -1244,8 +1250,14 @@ async def api_segment_turns_json(
 
     # 单条 turn 被截断 / 嵌套 ### turn 时，用完整 transcript 重切；再回退 turns_json
     turns = _repair_collapsed_markdown_turns(int(segment_id), turns or [])
+    turns = [
+        item
+        for item in (turns or [])
+        if not _is_placeholder_turn_body(item.get("body_text") or item.get("body") or "")
+    ]
     if turns:
         source = source or "repaired"
+    sequence_note = _wiped_sequence_note(sample_hit_for_note) if not turns else None
 
     # 渲染时附带预计算的高亮 HTML & 摘要，便于前端直接渲染
     items: List[Dict[str, Any]] = []
@@ -1275,8 +1287,53 @@ async def api_segment_turns_json(
             "turn_count": len(items),
             "turns": items,
             "source": source,
+            "note": sequence_note,
         }
     )
+
+
+def _is_placeholder_turn_body(text: str) -> bool:
+    """legacy transcript 标记行被误当成一轮对话时返回 True。
+
+    空 response 渲染后，标记行尾巴是 ``(response only) -----``，
+    按 <|im_start|> 切会变成一条 21 字符的 assistant。
+    """
+    flat = " ".join((text or "").replace("-", " ").split()).strip().lower().strip("() ")
+    return flat in {
+        "response only",
+        "legacy transcript response only",
+        "full token sequence unavailable",
+        "dataset prompt full token sequence unavailable",
+    }
+
+
+def _wiped_sequence_note(sample: Optional[Dict[str, Any]]) -> Optional[str]:
+    """abort 把训练序列清掉之后，说明多轮正文为什么不在 .pt 里。"""
+    if not isinstance(sample, dict):
+        return None
+    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    status = str(sample.get("status") or "").lower()
+    reason = str(metadata.get("abort_reason") or metadata.get("train_drop_reason") or "").strip()
+    response = sample.get("response") or ""
+    tokens = sample.get("tokens") or []
+    response_empty = not (isinstance(response, str) and response.strip())
+    token_stub = not isinstance(tokens, list) or len(tokens) <= 2
+    if not response_empty or not token_stub:
+        return None
+    if status not in {"aborted", "abort"} and not reason:
+        return None
+    turns_n = metadata.get("attempt_completed_turns")
+    generated = metadata.get("attempt_generated_response_tokens")
+    head = "这次 attempt 被标成 abort"
+    if reason:
+        head += f"（{reason}）"
+    head += "。slime 落盘前把 response 清空、tokens 换成 [0, 0]，sglang 多轮正文没有留在这份 .pt 里。"
+    if isinstance(turns_n, int) and turns_n > 0:
+        head += f"元数据仍记着生成了 {turns_n} 轮"
+        if isinstance(generated, int) and generated > 0:
+            head += f"、约 {generated} 个 response token"
+        head += "。"
+    return head
 
 
 def _recover_truncated_markdown(

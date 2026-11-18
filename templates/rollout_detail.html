@@ -1288,7 +1288,8 @@
         if (!root) return;
         const turns = (data && data.turns) || [];
         if (!turns.length) {
-            root.innerHTML = '<div class="empty-inline">该 segment 暂无 turn 文本（可能 .pt 还未解析）</div>';
+            const note = (data && data.note) || '该 segment 暂无 turn 文本（可能 .pt 还未解析）';
+            root.innerHTML = `<div class="empty-inline">${escapeHtml(note)}</div>`;
             return;
         }
         root._turnsCache = { turns, data: data || {} };
