@@ -335,6 +335,7 @@
         border: 1px solid #c7def5; padding: 1px 6px; border-radius: 8px;
         font-family: ui-monospace, monospace; font-size: 11px; margin: 1px 3px 1px 0;
     }
+    .sum-tools { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
     .tool-chip-row { padding: 4px 14px; font-size: 12px; background: #f4f8fc; border-top: 1px dashed #c7def5; }
     .loading-hint { color: var(--ri-muted); font-size: 12px; padding: 8px 12px; }
     .sglang-seq-label { font-size: 12px; color: var(--ri-muted); padding: 8px 12px 0; font-weight: 600; }
@@ -1150,16 +1151,33 @@
         </div>`;
     }
 
+    function turnToolNames(t) {
+        const stored = (t.tool_call_names || []).map((n) => String(n || '').trim()).filter(Boolean);
+        if (stored.length) return stored;
+        if (!t.has_tool_call) return [];
+        const seen = [];
+        splitTurnBody(t.body_text || '').forEach((c) => {
+            if (c.kind !== 'tool_call') return;
+            const name = toolNameFromChunk(c);
+            if (name) seen.push(name);
+        });
+        return seen;
+    }
+
+    function renderToolNameChips(names) {
+        return names.map((n) => `<span class="tool-chip">${escapeHtml(n)}</span>`).join('');
+    }
+
     function renderAccordionTurns(turns) {
         return turns.map((t) => {
             const role = escapeHtml(t.role_label || t.role || 'unknown');
             const idx = t.turn_index;
             const chars = t.body_char_count || 0;
             const tok = t.token_estimate || 0;
-            const toolTag = t.has_tool_call ? '🔧' : '';
+            const names = turnToolNames(t);
+            const toolTag = (t.has_tool_call || names.length) ? '🔧' : '';
             const thinkTag = t.has_think ? '💭' : '';
-            const toolList = (t.tool_call_names || []).map((n) => `<span class="tool-chip">${escapeHtml(n)}</span>`).join('');
-            const toolRow = toolList ? `<div class="tool-chip-row">tools: ${toolList}</div>` : '';
+            const toolNames = renderToolNameChips(names);
             const chunks = splitTurnBody(t.body_text || '');
             const chunksHtml = chunks.map(renderChunk).join('');
             const summary = escapeHtml(t.prompt_summary || shortSummary(t.body_text || '', 120));
@@ -1169,9 +1187,9 @@
                     <span class="badge role-${escapeHtml(t.role_label || t.role || 'unknown')}">${role}</span>
                     ${toolTag ? `<span title="包含 tool call">🔧</span>` : ''}
                     ${thinkTag ? `<span title="包含 think 块">💭</span>` : ''}
+                    ${toolNames ? `<span class="sum-tools" title="本轮调用的工具">${toolNames}</span>` : ''}
                     <span class="sum-meta">${chars} chars${tok ? ' · ~' + tok + ' tok' : ''}</span>
                 </summary>
-                ${toolRow}
                 <div class="tree-body">
                     <div class="summary-line">${summary || '<span style="color:var(--ri-muted);">(空)</span>'}</div>
                     ${chunksHtml}
@@ -1229,6 +1247,7 @@
             const chunks = meaningfulChunks(t.body_text || '');
             const chars = t.body_char_count || (t.body_text || '').length;
             const tok = t.token_estimate || 0;
+            const toolNames = renderToolNameChips(turnToolNames(t));
             const parts = chunks.map((c) => {
                 tileCount += 1;
                 return renderFlatChunkTile(c);
@@ -1237,6 +1256,7 @@
                 <div class="flat-turn-head">
                     <span class="sum-id">turn #${idx}</span>
                     <span class="badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
+                    ${toolNames ? `<span class="sum-tools" title="本轮调用的工具">${toolNames}</span>` : ''}
                     <span class="sum-meta">${chunks.length} 片段</span>
                     <span class="flat-meta">${chars} chars${tok ? ' · ~' + tok + ' tok' : ''}</span>
                 </div>

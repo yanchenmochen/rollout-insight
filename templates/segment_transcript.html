@@ -162,6 +162,13 @@
         margin-left: auto;
     }
 
+    .sum-tools {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+        min-width: 0;
+    }
     .tool-call-list {
         width: 100%;
         font-size: 12px;
@@ -171,6 +178,7 @@
         margin: 0;
         border-top: 1px dashed #c7def5;
     }
+    .sum-tools .tool-name,
     .tool-call-list .tool-name {
         display: inline-block;
         background: #ffffff;
@@ -470,16 +478,15 @@
                 <span class="role-badge role-{{ t.role_class }}">{{ t.role_label }}</span>
                 {% if t.has_think %}<span class="turn-icon has-think" title="包含 think 块">💭</span>{% endif %}
                 {% if t.has_tool_call %}<span class="turn-icon has-tool-call" title="包含 tool call">🔧</span>{% endif %}
+                {% if t.tool_call_names %}
+                <span class="sum-tools" title="本轮调用的工具">
+                    {% for name in t.tool_call_names %}
+                    <span class="tool-name">{{ name }}</span>
+                    {% endfor %}
+                </span>
+                {% endif %}
                 <span class="turn-meta">{{ t.body_char_count }} chars{% if t.token_estimate %} · ~{{ t.token_estimate }} tok{% endif %}</span>
             </summary>
-            {% if t.role_label == 'assistant' and t.tool_call_names %}
-            <div class="tool-call-list">
-                tools:
-                {% for name in t.tool_call_names %}
-                    <span class="tool-name">{{ name }}</span>
-                {% endfor %}
-            </div>
-            {% endif %}
             <pre class="turn-body{% if t.body_char_count > 3000 %} collapsed-text{% endif %}">{{ t.html | safe }}</pre>
             {% if t.body_char_count > 3000 %}
             <button type="button" class="expand-toggle">展开全文</button>
@@ -620,11 +627,16 @@
                     "</div>"
                 );
             }).join("");
+            const names = (t.tool_call_names || []).filter(Boolean);
+            const toolNames = names.map(function (n) {
+                return '<span class="tool-name">' + escapeHtml(n) + "</span>";
+            }).join("");
             return (
                 '<div class="flat-turn flat-' + escapeHtml(role) + '">' +
                 '<div class="flat-turn-head">' +
                 '<span class="turn-index">turn #' + idx + "</span>" +
                 '<span class="role-badge role-' + escapeHtml(role) + '">' + escapeHtml(role) + "</span>" +
+                (toolNames ? ('<span class="sum-tools" title="本轮调用的工具">' + toolNames + "</span>") : "") +
                 '<span class="turn-meta">' + chunks.length + " 片段</span>" +
                 '<span class="flat-meta">' + chars + " chars" + (tok ? (" · ~" + tok + " tok") : "") + "</span>" +
                 "</div>" +
