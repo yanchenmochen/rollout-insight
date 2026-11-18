@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block title %}问题分析{% if task_id %} - 任务 #{{ task_id }}{% endif %} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 22px; border-bottom: none; padding-bottom: 0; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; max-width: 820px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .chip.up { border-color: #2d6a4f; color: #2d6a4f; }
+    .chip.down { border-color: #c62828; color: #c62828; }
+    .chip.flat { border-color: #8a939c; color: #5c6b7a; }
+    .meta-line { font-size: 13px; color: var(--ri-ink); margin-bottom: 8px; }
+    .hist { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin: 8px 0 4px; }
+    .hist .bin { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; height: 100%; }
+    .hist .bar { width: 100%; background: #2d6a9f; border-radius: 2px 2px 0 0; min-height: 0; }
+    .hist .bar.neg { background: #c62828; }
+    .hist .bar.zero { background: #8a939c; }
+    .hist .bin span { font-size: 10px; color: var(--ri-muted); margin-top: 2px; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; font-size: 13px; }
+    .filters button { padding: 4px 10px; border: 1px solid var(--ri-border); background: #fff; border-radius: 12px; cursor: pointer; font-size: 12px; }
+    .filters button.active { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
+    table.tasks { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.tasks th, table.tasks td { padding: 6px 8px; border-bottom: 1px solid #e4e8ec; text-align: left; vertical-align: middle; }
+    table.tasks th { font-size: 11px; color: var(--ri-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    table.tasks td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    a.inst { color: var(--ri-accent); text-decoration: none; }
+    a.inst:hover { text-decoration: underline; }
+    .delta-up { color: #2d6a4f; font-weight: 600; }
+    .delta-down { color: #c62828; font-weight: 600; }
+    .delta-flat { color: #5c6b7a; }
+    .visits { color: var(--ri-muted); font-variant-numeric: tabular-nums; }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+    .names { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .names span { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #f3f5f8; border: 1px solid var(--ri-border); }
+    .names span.finish { background: #e8f5e9; border-color: #2d6a4f; color: #2d6a4f; }
+    .names span.bad { background: #fdecea; border-color: #c62828; color: #c62828; }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 问题分析{% endif %}
+</div>
+<div class="page-header">
+    <div>
+        <h1 id="pageTitle">问题分析</h1>
+        <div class="page-subtitle" id="pageNote">按题目在训练中的出现次序看通过率，并统计 sglang 回复里的 tool_call。</div>
+    </div>
+    {% if task_id %}
+    <a class="btn btn-secondary" href="/api/tasks/{{ task_id }}/failures">失败分析</a>
+    {% endif %}
+</div>
+<div id="errorBox" class="alert alert-warning" style="display:none;"></div>
+<div id="loading" class="loading">正在加载问题分析…</div>
+<div id="body" style="display:none;">
+    <div class="section" id="passSection">
+        <h2>任务通过分析 <small id="passMeta"></small></h2>
+        <div class="chip-row" id="passChips"></div>
+        <div class="meta-line" id="epochMeta"></div>
+        <div id="alignBox"></div>
+        <h2 style="border:none;padding:0;margin-top:8px;">首尾通过率差值</h2>
+        <div class="hist" id="hist"></div>
+        <div class="muted" id="histNote">横轴是最后一次减第一次，每格 1/8。只出现一次的题不在图里。</div>
+        <div class="filters" id="filters">
+            <button type="button" data-trend="" class="active">全部</button>
+            <button type="button" data-trend="improved">变好</button>
+            <button type="button" data-trend="worsened">变坏</button>
+            <button type="button" data-trend="unchanged">不变</button>
+            <button type="button" data-trend="once">只出现一次</button>
+            <span class="muted" id="filterCount"></span>
+        </div>
+        <table class="tasks">
+            <thead>
+                <tr>
+                    <th>题目</th>
+                    <th>各次通过</th>
+                    <th>曲线</th>
+                    <th class="num">首尾差</th>
+                </tr>
+            </thead>
+            <tbody id="taskBody"></tbody>
+        </table>
+        <div class="pager">
+            <button type="button" class="btn btn-secondary" id="prevPage">上一页</button>
+            <span id="pageLabel"></span>
+            <button type="button" class="btn btn-secondary" id="nextPage">下一页</button>
+        </div>
+    </div>
+
+    <div class="section" id="respSection">
+        <h2>响应 fake_response <small>sglang assistant 回复</small></h2>
+        <div id="respBody"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const TASK_ID = {{ task_id if task_id is not none else "null" }};
+    const PAGE = 40;
+    const $ = (id) => document.getElementById(id);
+    let DATA = null;
+    let trendFilter = "";
+    let page = 0;
+    let scanning = false;
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+    function pct(v) {
+        if (v == null || Number.isNaN(v)) return "-";
+        return (v * 100).toFixed(1) + "%";
+    }
+    function signed(v) {
+        if (v == null) return "-";
+        const n = Number(v);
+        const text = (n > 0 ? "+" : "") + n.toFixed(3);
+        const cls = n > 1e-9 ? "delta-up" : (n < -1e-9 ? "delta-down" : "delta-flat");
+        return `<span class="${cls}">${text}</span>`;
+    }
+    function showError(msg) {
+        $("errorBox").style.display = "";
+        $("errorBox").textContent = msg;
+    }
+
+    function spark(visits, trend) {
+        const w = 128, h = 32, pad = 3;
+        const color = trend === "improved" ? "#2d6a4f" : (trend === "worsened" ? "#c62828" : "#8a939c");
+        const n = visits.length;
+        if (!n) return "";
+        if (n === 1) {
+            const y = h - pad - visits[0].rate * (h - 2 * pad);
+            return `<svg width="${w}" height="${h}" aria-hidden="true"><circle cx="${w / 2}" cy="${y.toFixed(1)}" r="3" fill="${color}"></circle></svg>`;
+        }
+        const pts = visits.map((v, i) => {
+            const x = pad + i * (w - 2 * pad) / (n - 1);
+            const y = h - pad - v.rate * (h - 2 * pad);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(" ");
+        return `<svg width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6"></polyline></svg>`;
+    }
+
+    function renderPass(trend) {
+        const s = trend.summary || {};
+        $("passMeta").textContent = `${trend.n_problems} 题 · 观测 ${trend.n_epochs_observed} 个 epoch`;
+        $("pageNote").textContent = trend.note || $("pageNote").textContent;
+        $("passChips").innerHTML = [
+            ["变好", s.improved || 0, "up"],
+            ["不变", s.unchanged || 0, "flat"],
+            ["变坏", s.worsened || 0, "down"],
+            ["只出现一次", s.once || 0, "flat"],
+        ].map(([name, n, cls]) => `<span class="chip ${cls}">${name} <strong>${n}</strong></span>`).join("");
+
+        const batchSrc = trend.batch_size_source === "env" ? "环境变量 ROLLOUT_BATCH_SIZE"
+            : (trend.batch_size_source === "group_mode" ? "每个 rollout 的 group 数众数" : "未能确定");
+        const steps = trend.steps_per_epoch == null ? "-" : Number(trend.steps_per_epoch).toFixed(trend.steps_per_epoch_exact ? 0 : 2);
+        const fromSteps = trend.n_epochs_from_steps == null ? "-" : Number(trend.n_epochs_from_steps).toFixed(2);
+        $("epochMeta").textContent =
+            `题目 ${trend.n_problems} · rollout ${trend.n_rollouts} · batch ${trend.batch_size == null ? "-" : trend.batch_size}（${batchSrc}）` +
+            ` · 每 epoch ${steps} 步 · 按步数折合 ${fromSteps} 个 epoch` +
+            (trend.n_attempts_without_instance ? ` · ${trend.n_attempts_without_instance} 条 attempt 没有 instance_id，未画入曲线` : "");
+
+        if (trend.alignment_checked && trend.epoch_aligned === false) {
+            const samples = (trend.alignment_violations || []).slice(0, 3).map((v) =>
+                `${esc(v.instance_id)} 在窗口 ${v.window} 出现 ${v.count} 次`
+            ).join("；");
+            $("alignBox").innerHTML = `<div class="alert alert-warning">按 batch 切开的 epoch 窗口里，有题目出现了不止一次。曲线仍按出现次序绘制。${samples}</div>`;
+        } else if (trend.alignment_checked && trend.epoch_aligned) {
+            $("alignBox").innerHTML = `<div class="alert alert-info">按 batch 切开后，每个 epoch 窗口内题目没有重复出现。</div>`;
+        } else {
+            $("alignBox").innerHTML = `<div class="muted">batch 不能整除题目数，或还没有足够的 rollout，未做 epoch 窗口核对。</div>`;
+        }
+
+        const hist = trend.histogram || [];
+        const max = Math.max(1, ...hist.map((b) => b.count || 0));
+        $("hist").innerHTML = hist.map((b) => {
+            const h = Math.round((b.count || 0) / max * 100);
+            const cls = b.hi <= 0 ? "neg" : (b.lo <= 1e-9 ? "zero" : "");
+            return `<div class="bin" title="${esc(b.label)} · ${b.count}"><div class="bar ${cls}" style="height:${h}%"></div><span>${b.count ? b.count : ""}</span></div>`;
+        }).join("");
+        renderTasks();
+    }
+
+    function filteredTasks() {
+        const all = (DATA && DATA.pass_trend && DATA.pass_trend.tasks) || [];
+        if (!trendFilter) return all;
+        return all.filter((t) => t.trend === trendFilter);
+    }
+
+    function renderTasks() {
+        const all = filteredTasks();
+        const pages = Math.max(1, Math.ceil(all.length / PAGE));
+        if (page >= pages) page = pages - 1;
+        if (page < 0) page = 0;
+        const slice = all.slice(page * PAGE, page * PAGE + PAGE);
+        $("filterCount").textContent = `${all.length} 题`;
+        $("pageLabel").textContent = `${page + 1} / ${pages}`;
+        $("prevPage").disabled = page <= 0;
+        $("nextPage").disabled = page >= pages - 1;
+        $("taskBody").innerHTML = slice.map((t) => {
+            const visits = (t.visits || []).map((v) => `${v.n_pass}/${v.n_attempts}`).join(" → ");
+            const href = `/api/tasks/${TASK_ID}/problem-analysis/instance?instance_id=${encodeURIComponent(t.instance_id)}`;
+            return `<tr>
+                <td class="mono"><a class="inst" href="${href}" title="查看每次出现的 rollout 与轨迹">${esc(t.instance_id)}</a></td>
+                <td class="visits">${esc(visits)}</td>
+                <td>${spark(t.visits || [], t.trend)}</td>
+                <td class="num">${signed(t.delta)}</td>
+            </tr>`;
+        }).join("") || `<tr><td colspan="4" class="muted">没有符合筛选的题目。</td></tr>`;
+    }
+
+    function renderResponse(resp) {
+        if (!resp) {
+            $("respBody").innerHTML = `<div class="muted">没有响应统计。</div>`;
+            return;
+        }
+        const cov = resp.coverage || {};
+        const prog = resp.progress || {};
+        const stats = resp.stats;
+        const covText = `turn 覆盖 ${cov.n_segments_with_turns || 0}/${cov.n_segments || 0} 个 segment（${pct(cov.ratio)}）`;
+        const progText = ` .pt 缓存 ${prog.processed_rollouts || 0}/${prog.total_rollouts || 0} 个 rollout`;
+        const sourceText = {
+            turns: "来自已解析的 turn，未重读 .pt",
+            partial_turns: "只覆盖了已解析的 turn",
+            pt_cache: "来自 .pt 计数缓存，未把正文写入 turn 表",
+            none: "还没有可汇总的回复",
+        }[resp.source] || resp.source;
+        let html = `<div class="muted">${esc(sourceText)} · ${covText} · ${progText}</div>`;
+        if (resp.complete) {
+            html += `<div class="alert alert-info">统计已覆盖当前任务的全部来源。</div>`;
+        }
+        if (!resp.complete) {
+            html += `<p><button type="button" class="btn" id="scanBtn">${scanning ? "正在统计…" : "统计全部响应"}</button>
+                <span class="muted">每次处理 1 个 rollout，只累计 tool_call，不写入回复正文。</span></p>`;
+        }
+        (resp.errors || []).forEach((err) => {
+            html += `<div class="alert alert-warning">rollout ${esc(err.rollout_id)}：${esc(err.error)}</div>`;
+        });
+        if (!stats) {
+            html += `<div class="muted">还没有回复计数。点「统计全部响应」后从 .pt 累计。</div>`;
+            $("respBody").innerHTML = html;
+            bindScan();
+            return;
+        }
+        const r = stats.ratios || {};
+        html += `<div class="chip-row">
+            <span class="chip">有 tool_call <strong>${stats.n_with_tool_call}</strong></span>
+            <span class="chip">无 tool_call <strong>${stats.n_without_tool_call}</strong></span>
+            <span class="chip finish">finish 出现 <strong>${stats.n_finish_calls}</strong></span>
+            <span class="chip">assistant 回复 <strong>${stats.n_assistant}</strong></span>
+        </div>`;
+        html += `<div class="meta-line">回复维度：无 tool_call 占 ${pct(r.without_tool_call)}，有 tool_call 占 ${pct(r.with_tool_call)}。finish 是工具名出现次数，不是「最后一条」。</div>`;
+        html += `<div class="names">${(stats.tool_names || []).slice(0, 16).map((item) => {
+            const cls = String(item.name).toLowerCase() === "finish" ? "finish" : "";
+            return `<span class="${cls}">${esc(item.name)} ${item.count}</span>`;
+        }).join("")}</div>`;
+        if ((stats.invalid_names || []).length) {
+            html += `<div class="meta-line" style="margin-top:8px;">有 tool_call 但工具名不在 execute_bash / str_replace_editor / think / finish 中的回复：${stats.n_invalid_responses}</div>`;
+            html += `<div class="names">${stats.invalid_names.slice(0, 12).map((item) => `<span class="bad">${esc(item.name)} ${item.count}</span>`).join("")}</div>`;
+        }
+        const denom = stats.n_attempts_with_assistant || 0;
+        html += `<h2 style="margin-top:16px;">attempt 维度 <small>分母是有 assistant 回复的 ${denom} 个 attempt；任务共 ${resp.n_attempts_in_task || 0} 个 attempt，本统计看到 ${stats.n_attempts} 个</small></h2>`;
+        html += `<div class="chip-row">
+            <span class="chip">出现过无 tool_call <strong>${stats.n_attempts_no_tool_call}</strong> <span class="muted">${pct(r.attempts_no_tool_call)}</span></span>
+            <span class="chip">最后一条不是 finish <strong>${stats.n_attempts_last_not_finish}</strong> <span class="muted">${pct(r.attempts_last_not_finish)}</span></span>
+            <span class="chip down">两者并集 <strong>${stats.n_attempts_incomplete}</strong> <span class="muted">${pct(r.attempts_incomplete)}</span></span>
+            <span class="chip up">最后一条是 finish <strong>${stats.n_attempts_last_is_finish}</strong></span>
+        </div>`;
+        html += `<div class="muted">最后一条按该 attempt 时间序上的最后一条 assistant 回复判断，看它的最后一个工具名是不是 finish。中间的 execute_bash 不算没收尾。</div>`;
+        $("respBody").innerHTML = html;
+        bindScan();
+    }
+
+    function bindScan() {
+        const btn = $("scanBtn");
+        if (!btn) return;
+        btn.disabled = scanning;
+        btn.addEventListener("click", () => scanAll());
+    }
+
+    async function scanAll() {
+        if (scanning) return;
+        scanning = true;
+        renderResponse(DATA.response);
+        try {
+            while (DATA.response && !DATA.response.complete) {
+                const res = await fetch(`/api/tasks/${TASK_ID}/response-stats?rollout_limit=1`, { method: "POST" });
+                const payload = await res.json();
+                if (!payload || payload.code !== 0) {
+                    showError("统计响应失败：" + ((payload && payload.msg) || res.status));
+                    break;
+                }
+                DATA.response = payload.data;
+                renderResponse(DATA.response);
+                if ((payload.data.errors || []).length && !payload.data.complete) {
+                    break;
+                }
+                if ((payload.data.progress || {}).total_rollouts === 0) break;
+            }
+        } catch (e) {
+            showError("统计响应失败：" + (e && e.message ? e.message : e));
+        } finally {
+            scanning = false;
+            renderResponse(DATA.response);
+        }
+    }
+
+    async function load() {
+        if (TASK_ID == null) {
+            $("loading").textContent = "缺少任务。";
+            return;
+        }
+        try {
+            const res = await fetch(`/api/tasks/${TASK_ID}/problem-analysis.json`);
+            const payload = await res.json();
+            if (!payload || payload.code !== 0) {
+                throw new Error((payload && payload.msg) || res.status);
+            }
+            DATA = payload.data || {};
+            $("loading").style.display = "none";
+            $("body").style.display = "";
+            const name = {{ task_name | tojson }};
+            if (name) $("pageTitle").textContent = name + " · 问题分析";
+            renderPass(DATA.pass_trend || {});
+            renderResponse(DATA.response || {});
+        } catch (e) {
+            $("loading").style.display = "none";
+            showError("加载问题分析失败：" + (e && e.message ? e.message : e));
+        }
+    }
+
+    document.querySelectorAll("#filters button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            trendFilter = btn.dataset.trend || "";
+            page = 0;
+            document.querySelectorAll("#filters button").forEach((b) => b.classList.toggle("active", b === btn));
+            renderTasks();
+        });
+    });
+    $("prevPage").addEventListener("click", () => { page--; renderTasks(); });
+    $("nextPage").addEventListener("click", () => { page++; renderTasks(); });
+    load();
+})();
+</script>
+{% endblock %}

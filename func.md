@@ -231,6 +231,7 @@
 #### `DBSegmentService` (`db/db_segment_service.py`)
 
 - `staticmethod` `def upsert(**fields: Any) -> DBSegment`
+- `staticmethod` `def map_first_segment_id() -> Dict[int, int]`
 - `staticmethod` `def list_by_attempt(limit: int=500, offset: int=0) -> List[DBSegment]`
 - `staticmethod` `def get_by_id() -> Optional[DBSegment]`
 - `staticmethod` `def list_by_task(limit: int=2000, offset: int=0) -> List[DBSegment]`
@@ -252,6 +253,8 @@
 - `staticmethod` `def list_turns() -> List[Dict[str, Any]]`
 - `staticmethod` `def delete_by_segment() -> int`
 - `staticmethod` `def list_orm_turns() -> List[DBSegmentTurn]`
+- `staticmethod` `def segment_turn_coverage() -> Dict[str, int]`
+- `staticmethod` `def list_assistant_turn_flags() -> List[Dict[str, Any]]`
 - `staticmethod` `def get_tool_call_names() -> List[str]`
 
 #### `DBTaskService` (`db/db_task_service.py`)
@@ -335,6 +338,21 @@
 - `staticmethod` `def create_train_job(cluster: str, yaml_path: str, submit: bool=False, local_user_id: Optional[…`
 - `staticmethod` `def restart_job(cluster: str, job_id: str, submit: bool=False, local_user_id: Optional[int]=Non…`
 - `staticmethod` `def module_diagnostics() -> Dict[str, Any]`
+
+### `problem_analysis_service_module` (`service/problem_analysis_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def summarize_pass_visits(rows: Sequence[Dict[str, Any]], *, batch_size: Optional[int]=None, ba…`
+- `staticmethod` `def group_instance_appearances(instance_id: str, rows: Sequence[Dict[str, Any]], rollout_pks: O…`
+- `staticmethod` `def build_instance_appearances(task_id: int, instance_id: str) -> Dict[str, Any]`
+- `staticmethod` `def build_pass_trend(task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def summarize_response_attempts(attempts: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
+- `staticmethod` `def merge_response_stats(parts: Iterable[Dict[str, Any]]) -> Dict[str, Any]`
+- `staticmethod` `def public_response_stats(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]`
+- `staticmethod` `def build_response_tool_stats(task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def advance_response_tool_stats(task_id: int, rollout_limit: int=1) -> Dict[str, Any]`
+- `staticmethod` `def count_rollout_file(pt_path: str) -> Dict[str, Any]`
 
 ### `RolloutParseService` (`service/rollout_parse_service.py`)
 
@@ -427,6 +445,10 @@
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/link-task` | `api_link_task` | 关联 task 到南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/unlink-task` | `api_unlink_task` | 解绑 task 与南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/restart` | `api_restart_job` | 重启南湖 job；默认 dry-run。 |
+| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis` | `page_problem_analysis` | 任务详情下的问题分析：通过率曲线与 sglang 响应统计。 |
+| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/instance` | `page_instance_appearances` | 按题目名列出每次出现的 rollout 与轨迹入口。 |
+| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis.json` | `api_problem_analysis` | 通过率（按题目出现次序）以及当前已能给出的响应统计。 |
+| `problem_analysis_controller` | POST | `/api/tasks/{task_id}/response-stats` | `api_advance_response_stats` | 补统计下一批 rollout 的 assistant 回复。不写入 turn 正文。 |
 | `rollout_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_id}` | `page_rollout_detail` | 渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。 |
 | `rollout_controller` | GET | `/api/rollouts/{rollout_id}` | `api_get_rollout_json` | JSON 端点：返回 rollout 概览 + attempts 列表。 |
 | `rollout_controller` | POST | `/api/rollouts/{rollout_id}/parse` | `api_parse_rollout` | 触发 T3 重解析（默认 force=True）。 |

@@ -108,6 +108,10 @@ rollout-insight/
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
 | GET  | `/api/tasks/create` | 渲染 task_create.html |
 | GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析 |
+| GET  | `/api/tasks/{id}/problem-analysis` | 任务问题分析：通过率曲线与 sglang 响应统计 |
+| GET  | `/api/tasks/{id}/problem-analysis/instance?instance_id=` | 一道题每次出现的 rollout 与轨迹 |
+| GET  | `/api/tasks/{id}/problem-analysis.json` | 通过率与已有响应统计 JSON |
+| POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
@@ -132,6 +136,14 @@ rollout-insight/
 - **与 Rollout 详情页四层手风琴联动**：失败 attempt 行右侧出现「失败轨迹 →」；详情页「在手风琴中定位」跳回 `/api/tasks/{id}/rollouts/{pk}?group=..#attempt-{pk}` 并自动展开高亮。任务详情页的 Rollout 列表新增「失败分析」列。
 
 数据来源为运行目录下的 `attempt_artifacts/`（`summaries/`、`patches/`、`failed_trajectories/`），从 `task.rollout_root` 向上最多 4 层查找；首次读取会在该目录写入索引缓存 `.ri_artifacts_index.json`（按 summaries 目录 mtime/文件数自动失效）。没有 `attempt_artifacts` 的任务回退为 `.pt` 标注的失败原因。
+
+### 5.2 问题分析（任务级）
+
+问题分析在失败分析下面：任务详情左侧「问题分析」或页顶按钮进入 `/api/tasks/{task_id}/problem-analysis`。它回答两件事。
+
+**任务通过分析。** 一道题的一次出现是同一个 `rollout_id` 下的同一个 `instance_id`（通常约 8 条 attempt）。按 `rollout_id` 升序，第 k 次出现就是第 k 个 epoch。通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数；abort 与 timeout 计入分母、不计入分子。变好或变坏只看该题最后一次减第一次：大于 0 为绿，小于 0 为红，相等为灰。只出现一次的题单独计数，不进直方图。题目名可点进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，按出现次序看每次所在的 rollout，以及该次每条 attempt 的 sglang 轨迹。总览用首尾差值直方图，每格 1/8。`ROLLOUT_BATCH_SIZE` 来自 run 目录环境变量，读不到时用每个 rollout 的 group 数众数，只用来核对「每个 epoch 窗口里一题是否只出现一次」，不用来重画曲线。
+
+**响应 fake_response。** 统计 sglang 序列里的 assistant 回复：有 tool_call、无 tool_call、工具名（其中 finish 单独列出）。「最后一条是不是 finish」看该 attempt 最后一条 assistant 回复的最后一个工具名。attempt 维度分开报告「出现过无 tool_call」和「最后一条不是 finish」，并给出两者的并集。合法工具名是 `execute_bash`、`str_replace_editor`、`think`、`finish`；有标签但名字不在其中仍算有 tool_call，另外单列。turn 已全部落库时直接用标记，不读正文。覆盖不全时，页面上的「统计全部响应」按 rollout 从 `.pt` 只累计计数，不把正文写入 turn 表，结果缓存在 `rollout_root/.ri_response_stats.json`，按 pt 的路径、大小和 mtime 失效。
 
 ---
 

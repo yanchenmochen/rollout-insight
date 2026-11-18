@@ -7,6 +7,8 @@
 - ``upsert_segment_turns(segment_id, turns, force=False)``：先删旧再批量插
 - ``list_turns(segment_id)``：按 turn_index 升序返回
 - ``delete_by_segment(segment_id)``：清空某 segment 的 turn 行
+- ``list_assistant_turn_flags(task_id)``：任务下 assistant turn 的工具标记，不读正文
+- ``segment_turn_coverage(task_id)``：已写入 turn 的 segment 覆盖率
 """
 from __future__ import annotations
 
@@ -14,7 +16,9 @@ import json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from sqlalchemy import func
 
+from db.db_attempt import DBAttempt
 from db.db_element import Session
 from db.db_segment import DBSegment
 from db.db_segment_turn import DBSegmentTurn
@@ -196,6 +200,83 @@ class DBSegmentTurnService:
                 .order_by(DBSegmentTurn.turn_index.asc())
                 .all()
             )
+
+    @staticmethod
+    def segment_turn_coverage(task_id: int) -> Dict[str, int]:
+        """任务下 segment 总数，以及至少有一行 turn 的 segment 数。"""
+        if task_id is None:
+            raise RolloutInsightException(
+                RolloutInsightException.INVALID_ARGUMENT, "task_id 不能为空"
+            )
+        with Session() as session:
+            n_segments = (
+                session.query(func.count(DBSegment.primary_id))
+                .join(DBAttempt, DBSegment.attempt_id == DBAttempt.primary_id)
+                .filter(DBAttempt.task_id == int(task_id))
+                .scalar()
+            )
+            n_with_turns = (
+                session.query(func.count(func.distinct(DBSegmentTurn.segment_id)))
+                .join(DBSegment, DBSegmentTurn.segment_id == DBSegment.primary_id)
+                .join(DBAttempt, DBSegment.attempt_id == DBAttempt.primary_id)
+                .filter(DBAttempt.task_id == int(task_id))
+                .scalar()
+            )
+        return {
+            "n_segments": int(n_segments or 0),
+            "n_segments_with_turns": int(n_with_turns or 0),
+        }
+
+    @staticmethod
+    def list_assistant_turn_flags(task_id: int) -> List[Dict[str, Any]]:
+        """列出任务下 assistant turn 的工具标记。
+
+        不读取 ``body_text``。顺序为 attempt、segment_index、turn_index，
+        便于取每个 attempt 的最后一条回复。
+        """
+        if task_id is None:
+            raise RolloutInsightException(
+                RolloutInsightException.INVALID_ARGUMENT, "task_id 不能为空"
+            )
+        with Session() as session:
+            rows = (
+                session.query(
+                    DBAttempt.primary_id,
+                    DBAttempt.rollout_id,
+                    DBSegment.segment_index,
+                    DBSegmentTurn.turn_index,
+                    DBSegmentTurn.has_tool_call,
+                    DBSegmentTurn.tool_call_names_json,
+                )
+                .join(DBSegment, DBSegmentTurn.segment_id == DBSegment.primary_id)
+                .join(DBAttempt, DBSegment.attempt_id == DBAttempt.primary_id)
+                .filter(
+                    DBAttempt.task_id == int(task_id),
+                    func.lower(DBSegmentTurn.role) == "assistant",
+                )
+                .order_by(
+                    DBAttempt.primary_id.asc(),
+                    DBSegment.segment_index.asc(),
+                    DBSegmentTurn.turn_index.asc(),
+                )
+                .all()
+            )
+        out: List[Dict[str, Any]] = []
+        for attempt_pk, rollout_id, segment_index, turn_index, has_tool_call, names_json in rows:
+            names = _safe_load_json(names_json, default=[])
+            if not isinstance(names, list):
+                names = []
+            out.append(
+                {
+                    "attempt_pk": int(attempt_pk),
+                    "rollout_id": rollout_id,
+                    "segment_index": int(segment_index or 0),
+                    "turn_index": int(turn_index or 0),
+                    "has_tool_call": bool(has_tool_call),
+                    "tool_call_names": [str(x) for x in names if x],
+                }
+            )
+        return out
 
     @staticmethod
     def get_tool_call_names(row: DBSegmentTurn) -> List[str]:

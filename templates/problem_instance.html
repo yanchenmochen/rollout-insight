@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{{ view.instance_id }} - 题目出现 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 20px; border-bottom: none; padding-bottom: 0; word-break: break-all; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; }
+    .visit { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 12px 16px; margin-bottom: 12px; }
+    .visit h2 { margin: 0 0 8px 0; font-size: 15px; border-bottom: none; padding: 0; }
+    .visit h2 a { color: var(--ri-accent); text-decoration: none; }
+    .visit h2 a:hover { text-decoration: underline; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+    table.atts { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+    table.atts th, table.atts td { padding: 5px 8px; border-bottom: 1px solid #e4e8ec; text-align: left; }
+    table.atts th { font-size: 11px; color: var(--ri-muted); text-transform: uppercase; }
+    table.atts td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.atts a { color: var(--ri-accent); text-decoration: none; }
+    table.atts a:hover { text-decoration: underline; }
+    .tag { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; color: #fff; }
+    .tag-pass { background: #2d6a4f; }
+    .tag-fail { background: #8e24aa; }
+    .tag-timeout { background: #fb8c00; }
+    .tag-abort { background: #c62828; }
+    .tag-other { background: #78909c; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a>
+    / <a href="/api/tasks/{{ task_id }}/problem-analysis">问题分析</a>
+    / {{ view.instance_id }}
+</div>
+<div class="page-header">
+    <h1 class="mono">{{ view.instance_id }}</h1>
+    <div class="page-subtitle">
+        {% if task_name %}{{ task_name }} · {% endif %}
+        按出现次序共 {{ view.n_visits }} 次。每次列出所在 rollout，以及该次每条 attempt 的轨迹。
+    </div>
+</div>
+
+{% if not view.visits %}
+<p class="muted">没有找到这道题的 attempt。</p>
+{% endif %}
+
+{% for visit in view.visits %}
+<div class="visit">
+    <h2>
+        第 {{ visit.epoch }} 次
+        · 通过 {{ visit.n_pass }}/{{ visit.n_attempts }}
+        {% if visit.rollout_pk %}
+        · <a href="/api/tasks/{{ task_id }}/rollouts/{{ visit.rollout_pk }}{% if visit.groups %}?group={{ visit.groups[0] }}{% endif %}">rollout {{ visit.rollout_id }}</a>
+        {% else %}
+        · rollout {{ visit.rollout_id }}
+        {% endif %}
+    </h2>
+    <table class="atts">
+        <thead>
+            <tr>
+                <th>group</th>
+                <th>attempt</th>
+                <th>结局</th>
+                <th class="num">reward</th>
+                <th>轨迹</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in visit.attempts %}
+            <tr>
+                <td class="num">{{ a.group_index if a.group_index is not none else "-" }}</td>
+                <td class="mono">{{ a.attempt_id }}</td>
+                <td>
+                    {% if a.category == "pass" %}<span class="tag tag-pass">通过</span>
+                    {% elif a.category == "fail" %}<span class="tag tag-fail">失败</span>
+                    {% elif a.category == "timeout" %}<span class="tag tag-timeout">超时</span>
+                    {% elif a.category == "abort" %}<span class="tag tag-abort">中止</span>
+                    {% else %}<span class="tag tag-other">其它</span>{% endif %}
+                </td>
+                <td class="num">{% if a.reward is not none %}{{ "%.3f"|format(a.reward) }}{% else %}-{% endif %}</td>
+                <td>
+                    {% if visit.rollout_pk and a.attempt_pk %}
+                    <a href="/api/tasks/{{ task_id }}/rollouts/{{ visit.rollout_pk }}{% if a.group_index is not none %}?group={{ a.group_index }}{% endif %}#attempt-{{ a.attempt_pk }}">sglang 轨迹</a>
+                    {% else %}
+                    <span class="muted">无 rollout</span>
+                    {% endif %}
+                    {% if a.segment_id %}
+                    · <a href="/api/segments/{{ a.segment_id }}">正文</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% endblock %}

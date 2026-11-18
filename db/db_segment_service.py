@@ -7,7 +7,7 @@
 存在则覆盖可更新字段，不存在则 INSERT。
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import and_, func
 
@@ -64,6 +64,31 @@ class DBSegmentService:
             session.commit()
             session.refresh(existing)
             return existing
+
+    @staticmethod
+    def map_first_segment_id(attempt_ids: Sequence[int]) -> Dict[int, int]:
+        """每个 attempt 取 segment_index 最小的那条 segment 主键。"""
+        ids = [int(item) for item in attempt_ids if item is not None]
+        if not ids:
+            return {}
+        with Session() as session:
+            rows = (
+                session.query(
+                    DBSegment.attempt_id,
+                    DBSegment.primary_id,
+                    DBSegment.segment_index,
+                )
+                .filter(DBSegment.attempt_id.in_(ids))
+                .all()
+            )
+        best: Dict[int, tuple] = {}
+        for attempt_id, segment_id, segment_index in rows:
+            key = int(attempt_id)
+            index = int(segment_index or 0)
+            prev = best.get(key)
+            if prev is None or index < prev[0]:
+                best[key] = (index, int(segment_id))
+        return {key: pair[1] for key, pair in best.items()}
 
     @staticmethod
     def list_by_attempt(
