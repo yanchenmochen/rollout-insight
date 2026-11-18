@@ -167,6 +167,7 @@ def summarize_pass_visits(
         "alignment_violations": alignment["alignment_violations"],
         "summary": summary,
         "histogram": _histogram(deltas),
+        "epoch_series": _epoch_pass_series(tasks),
         "tasks": tasks,
         "note": _PAGE_NOTE,
     }
@@ -669,6 +670,36 @@ def _count_list(counts: Dict[str, Any]) -> List[Dict[str, Any]]:
     ]
     rows.sort(key=lambda item: (-item["count"], item["name"]))
     return rows
+
+
+def _epoch_pass_series(tasks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按出现次序把全部题目的 attempt 加总，得到每个 epoch 的通过率。
+
+    第 k 个点只含已经出现第 k 次的题。通过率 = 这些题该次 ``n_pass`` 之和 / ``n_attempts`` 之和。
+    单步 raw_reward 只覆盖当步抽到的题，这里按 epoch 看全量题目。
+    """
+    pooled: Dict[int, Dict[str, int]] = {}
+    for task in tasks:
+        for index, visit in enumerate(task.get("visits") or []):
+            slot = pooled.setdefault(index, {"n_problems": 0, "n_pass": 0, "n_attempts": 0})
+            slot["n_problems"] += 1
+            slot["n_pass"] += int(visit.get("n_pass") or 0)
+            slot["n_attempts"] += int(visit.get("n_attempts") or 0)
+    series: List[Dict[str, Any]] = []
+    for index in sorted(pooled):
+        slot = pooled[index]
+        n_attempts = int(slot["n_attempts"])
+        n_pass = int(slot["n_pass"])
+        series.append(
+            {
+                "epoch": index + 1,
+                "n_problems": int(slot["n_problems"]),
+                "n_pass": n_pass,
+                "n_attempts": n_attempts,
+                "rate": (n_pass / n_attempts) if n_attempts else None,
+            }
+        )
+    return series
 
 
 def _histogram(deltas: Sequence[float]) -> List[Dict[str, Any]]:

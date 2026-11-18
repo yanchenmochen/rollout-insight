@@ -28,6 +28,12 @@
     .chip.down { border-color: #c62828; color: #c62828; }
     .chip.flat { border-color: #8a939c; color: #5c6b7a; }
     .meta-line { font-size: 13px; color: var(--ri-ink); margin-bottom: 8px; }
+    .epoch-chart { width: 100%; margin: 4px 0 6px; }
+    .epoch-chart svg { width: 100%; height: auto; display: block; }
+    .epoch-chart circle { cursor: pointer; }
+    .epoch-readout { font-size: 13px; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+    .epoch-readout .up { color: #2d6a4f; font-weight: 600; }
+    .epoch-readout .down { color: #c62828; font-weight: 600; }
     .hist { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin: 8px 0 4px; }
     .hist .bin { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; height: 100%; }
     .hist .bar { width: 100%; background: #2d6a9f; border-radius: 2px 2px 0 0; min-height: 0; }
@@ -78,9 +84,13 @@
         <div class="chip-row" id="passChips"></div>
         <div class="meta-line" id="epochMeta"></div>
         <div id="alignBox"></div>
-        <h2 style="border:none;padding:0;margin-top:8px;">首尾通过率差值</h2>
+        <h2 style="border:none;padding:0;margin-top:8px;">全量通过率</h2>
+        <div class="epoch-readout" id="epochReadout"></div>
+        <div class="epoch-chart" id="epochChart"></div>
+        <div class="muted" id="epochNote"></div>
+        <h2 style="border:none;padding:0;margin-top:14px;">首尾通过率差值</h2>
         <div class="hist" id="hist"></div>
-        <div class="muted" id="histNote">横轴是最后一次减第一次，每格 1/8。只出现一次的题不在图里。</div>
+        <div class="muted" id="histNote">每道题一个点：最后一次通过率减第一次，按 1/8 分格计数。只出现一次的题没有差值，不进图。</div>
         <div class="filters" id="filters">
             <button type="button" data-trend="" class="active">全部</button>
             <button type="button" data-trend="improved">变好</button>
@@ -163,6 +173,119 @@
         return `<svg width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6"></polyline></svg>`;
     }
 
+    function pctPoints(delta) {
+        if (delta == null || Number.isNaN(delta)) return "-";
+        const n = delta * 100;
+        const text = (n > 0 ? "+" : "") + n.toFixed(1) + " pct";
+        const cls = n > 0.05 ? "up" : (n < -0.05 ? "down" : "");
+        return `<span class="${cls}">${text}</span>`;
+    }
+
+    function epochLine(point, nProblems) {
+        if (!point || point.rate == null) return "";
+        const cover = nProblems ? ` · ${point.n_problems}/${nProblems} 题` : ` · ${point.n_problems} 题`;
+        return `epoch ${point.epoch}　${pct(point.rate)}（${point.n_pass}/${point.n_attempts}）${cover}`;
+    }
+
+    function renderEpochChart(trend) {
+        const series = (trend && trend.epoch_series) || [];
+        const readout = $("epochReadout");
+        const note = $("epochNote");
+        const host = $("epochChart");
+        const nProblems = trend ? (trend.n_problems || 0) : 0;
+        if (!series.length) {
+            host.innerHTML = "";
+            readout.textContent = "";
+            note.textContent = "还没有可以按 epoch 汇总的通过率。";
+            return;
+        }
+        const first = series[0];
+        const last = series[series.length - 1];
+        const delta = (first.rate != null && last.rate != null) ? last.rate - first.rate : null;
+        const summary = series.length < 2
+            ? epochLine(first, nProblems)
+            : `${epochLine(first, nProblems)}　→　${epochLine(last, nProblems)}　变化 ${pctPoints(delta)}`;
+        readout.innerHTML = summary;
+        const partial = series.some((p) => nProblems && p.n_problems < nProblems);
+        note.textContent = "第 k 个点：每道题按 rollout_id 从小到大，取第 k 次出现的那组 attempt；只保留已经出现过第 k 次的题。"
+            + "通过率 = 其中 pass（reward≈1）的条数 / 该组 attempt 条数。abort、超时、失败只进分母。"
+            + (partial ? " 空心点表示这一档还没覆盖全部题目。" : "");
+
+        const rates = series.map((p) => Number(p.rate)).filter((v) => !Number.isNaN(v));
+        let yMin = Math.min(...rates);
+        let yMax = Math.max(...rates);
+        const padY = Math.max((yMax - yMin) * 0.22, 0.015);
+        yMin = Math.max(0, yMin - padY);
+        yMax = Math.min(1, yMax + padY);
+        if (yMax - yMin < 0.04) {
+            const mid = (yMin + yMax) / 2;
+            yMin = Math.max(0, mid - 0.02);
+            yMax = Math.min(1, yMin + 0.04);
+        }
+        if (!(yMax > yMin)) {
+            yMin = 0;
+            yMax = 1;
+        }
+        const w = 720, h = 228;
+        const padL = 48, padR = 16, padT = 16, padB = 36;
+        const plotW = w - padL - padR;
+        const plotH = h - padT - padB;
+        const n = series.length;
+        const xAt = (i) => padL + (n === 1 ? plotW / 2 : i * plotW / (n - 1));
+        const yAt = (rate) => padT + plotH - ((rate - yMin) / (yMax - yMin)) * plotH;
+        const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => yMin + t * (yMax - yMin));
+        const yDigits = (yMax - yMin) < 0.25 ? 1 : 0;
+        let grid = "";
+        yTicks.forEach((tick) => {
+            const y = yAt(tick);
+            grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e4e8ec" stroke-width="1"></line>`;
+            grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${(tick * 100).toFixed(yDigits)}%</text>`;
+        });
+        const labelEvery = n <= 12 ? 1 : Math.ceil(n / 8);
+        let xLabels = "";
+        series.forEach((point, i) => {
+            const show = i === 0 || i === n - 1 || (i % labelEvery === 0);
+            if (!show) return;
+            const x = xAt(i);
+            xLabels += `<line x1="${x.toFixed(1)}" y1="${padT + plotH}" x2="${x.toFixed(1)}" y2="${padT + plotH + 4}" stroke="#5c6b7a"></line>`;
+            xLabels += `<text x="${x.toFixed(1)}" y="${padT + plotH + 18}" text-anchor="middle" font-size="11" fill="#5c6b7a">${point.epoch}</text>`;
+        });
+        const pts = series.map((point, i) => `${xAt(i).toFixed(1)},${yAt(point.rate).toFixed(1)}`).join(" ");
+        const base = (padT + plotH).toFixed(1);
+        const area = n > 1
+            ? `${xAt(0).toFixed(1)},${base} ${pts} ${xAt(n - 1).toFixed(1)},${base}`
+            : "";
+        const dots = series.map((point, i) => {
+            const full = !nProblems || point.n_problems >= nProblems;
+            const x = xAt(i).toFixed(1);
+            const y = yAt(point.rate).toFixed(1);
+            const fill = full ? "#2d6a9f" : "#ffffff";
+            const title = `epoch ${point.epoch} · ${pct(point.rate)} · ${point.n_pass}/${point.n_attempts} · ${point.n_problems}/${nProblems || point.n_problems} 题`;
+            return `<g data-i="${i}"><circle cx="${x}" cy="${y}" r="11" fill="transparent"></circle><circle cx="${x}" cy="${y}" r="4.2" fill="${fill}" stroke="#2d6a9f" stroke-width="1.6"><title>${esc(title)}</title></circle></g>`;
+        }).join("");
+        host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="按 epoch 汇总的全量题目通过率">
+            <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
+            ${grid}
+            <line x1="${padL}" y1="${base}" x2="${padL + plotW}" y2="${base}" stroke="#5c6b7a" stroke-width="1"></line>
+            <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${base}" stroke="#5c6b7a" stroke-width="1"></line>
+            ${xLabels}
+            <text x="${padL + plotW / 2}" y="${h - 4}" text-anchor="middle" font-size="11" fill="#5c6b7a">epoch</text>
+            <text x="14" y="${padT + plotH / 2}" text-anchor="middle" font-size="11" fill="#5c6b7a" transform="rotate(-90 14 ${padT + plotH / 2})">通过率</text>
+            ${area ? `<polygon points="${area}" fill="#2d6a9f" opacity="0.08"></polygon>` : ""}
+            ${n > 1 ? `<polyline points="${pts}" fill="none" stroke="#2d6a9f" stroke-width="2"></polyline>` : ""}
+            ${dots}
+        </svg>`;
+        host.addEventListener("mouseleave", () => { readout.innerHTML = summary; });
+        host.querySelectorAll("g[data-i]").forEach((node) => {
+            const show = () => {
+                const point = series[Number(node.getAttribute("data-i"))];
+                readout.innerHTML = epochLine(point, nProblems);
+            };
+            node.addEventListener("mouseenter", show);
+            node.addEventListener("click", show);
+        });
+    }
+
     function renderPass(trend) {
         const s = trend.summary || {};
         $("passMeta").textContent = `${trend.n_problems} 题 · 观测 ${trend.n_epochs_observed} 个 epoch`;
@@ -193,6 +316,8 @@
         } else {
             $("alignBox").innerHTML = `<div class="muted">batch 不能整除题目数，或还没有足够的 rollout，未做 epoch 窗口核对。</div>`;
         }
+
+        renderEpochChart(trend);
 
         const hist = trend.histogram || [];
         const max = Math.max(1, ...hist.map((b) => b.count || 0));

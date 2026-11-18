@@ -66,6 +66,16 @@ class TestPassTrend(unittest.TestCase):
         self.assertEqual(sum(item["count"] for item in trend["histogram"]), 3)
         self.assertFalse(trend["steps_per_epoch_exact"])
         self.assertFalse(trend["alignment_checked"])
+        series = trend["epoch_series"]
+        self.assertEqual([item["epoch"] for item in series], [1, 2])
+        self.assertEqual(series[0]["n_problems"], 5)
+        self.assertEqual(series[0]["n_pass"], 10)
+        self.assertEqual(series[0]["n_attempts"], 35)
+        self.assertAlmostEqual(series[0]["rate"], 10 / 35)
+        self.assertEqual(series[1]["n_problems"], 3)
+        self.assertEqual(series[1]["n_pass"], 7)
+        self.assertEqual(series[1]["n_attempts"], 25)
+        self.assertAlmostEqual(series[1]["rate"], 7 / 25)
 
     def test_epoch_window_detects_repeat(self):
         rows = []
