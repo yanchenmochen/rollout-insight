@@ -36,6 +36,17 @@
     .card .label { color: var(--ri-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
     .card .value { color: var(--ri-ink); line-height: 1.45; }
     .card .examples { margin-top: 8px; font-size: 12px; }
+    /* 奖励杠杆卡片：左侧色条表示严重程度 */
+    .lever-card { border: 1px solid var(--ri-border); border-left-width: 4px; border-radius: var(--te-radius);
+        padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+    .lever-card.ok { border-left-color: #2d6a4f; }
+    .lever-card.warn { border-left-color: #e0a800; }
+    .lever-card.bad { border-left-color: #c62828; }
+    .lever-card.unknown { border-left-color: #8a939c; }
+    .lever-title { font-size: 14px; font-weight: 600; }
+    .lever-value { float: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .lever-body { font-size: 12px; color: var(--ri-muted); margin-top: 4px; }
+    .lever-body b { color: var(--ri-ink); font-weight: 600; }
     .card .examples a { color: var(--ri-accent); text-decoration: none; margin-right: 8px; }
     .card .examples a:hover { text-decoration: underline; }
     .rel-explains_drop { color: #c62828; font-weight: 600; }
@@ -97,6 +108,12 @@
         <div class="readout" id="splitReadout"></div>
         <div class="line-chart" id="splitChart"></div>
         <div class="muted" id="splitNote"></div>
+    </div>
+
+    <div class="section" id="leverSection">
+        <h2>奖励还能怎么涨 <small>按严重程度排序 · 先修 bad，再看 warn</small></h2>
+        <div class="muted" id="leverNote" style="margin-bottom:10px;"></div>
+        <div id="leverCards"></div>
     </div>
 
     <div class="section" id="behaviorSection">
@@ -321,6 +338,30 @@
         }).join("");
     }
 
+    // 奖励杠杆：占比类按百分比展示，其余按小数展示
+    const RATIO_LEVER_KEYS = new Set([
+        "learnable_ratio", "timeout_ratio", "abort_ratio",
+    ]);
+
+    function renderLevers(payload) {
+        const levers = (payload && payload.levers) || [];
+        $("leverNote").textContent = (payload && payload.note) || "";
+        if (!levers.length) {
+            $("leverCards").innerHTML = `<div class="muted">暂无奖励杠杆数据。</div>`;
+            return;
+        }
+        $("leverCards").innerHTML = levers.map((l) => {
+            const value = RATIO_LEVER_KEYS.has(l.key)
+                ? (l.value == null ? "-" : pct(l.value))
+                : (l.value == null ? "-" : num(l.value));
+            return `<div class="lever-card ${esc(l.status)}">
+                <span class="lever-value">${esc(value)}</span>
+                <div class="lever-title">${esc(l.title)}</div>
+                <div class="lever-body"><b>现象：</b>${esc(l.phenomenon)}<br/><b>建议：</b>${esc(l.action)}</div>
+            </div>`;
+        }).join("");
+    }
+
     async function load() {
         if (TASK_ID == null) {
             showError("缺少 task_id");
@@ -342,6 +383,7 @@
             if (data.page_note) $("pageNote").textContent = data.page_note;
             renderGradient(data.gradient_groups || {});
             renderSplit(data.reward_split || {});
+            renderLevers(data.levers || {});
             renderBehavior(data.behavior || {}, data.turn_coverage || {});
             $("loading").style.display = "none";
             $("body").style.display = "";

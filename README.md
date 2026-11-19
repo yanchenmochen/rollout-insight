@@ -169,6 +169,18 @@ rollout-insight/
 
 **行为失败卡片。** 对非通过 attempt 按优先级打主类：abort → timeout → 无 tool_call → 最后不是 finish → 过早 finish（已 finish 但工具步很少且 diff 很小）。每张卡片给出现象、占失败 attempt 比例、与可测通过率是否同向、建议杠杆，以及跳到失败详情的样例链接。后三类依赖已落库的 assistant turn 标记。
 
+**奖励还能怎么涨。** 奖励诊断页新增杠杆区块，把「奖励为什么不涨」拆成 5 条可执行杠杆，按状态排序（先修 bad，再看 warn）：
+
+| 杠杆 | 含义 | 异常时说明 |
+| ---- | ---- | ---- |
+| `learnable_ratio` | 有效梯度组（混合组）占比 | 偏低或骤降 → 大量样本同号，梯度趋零，没有上升空间 |
+| `measurable_pass_rate` | 可测通过率（去掉 abort / timeout 的分母） | 停滞 → 策略本身没在学 |
+| `timeout_ratio` | 超时 / 上下文打满占比 | 升高 → 奖励被截断吃掉，可测样本变少 |
+| `abort_ratio` | abort 占比 | 升高 → 奖励不可测，属基建问题而非策略问题 |
+| `raw_mean_reward` | 训练实际拿到的奖励 | 明显低于可测通过率 → 差值就是被 abort / timeout 扣掉的部分 |
+
+口径由 `service/reward_diagnosis_service.build_reward_levers` 统一提供，跨任务对比页复用同一份实现。
+
 ### 5.4 训练曲线（任务级）
 
 训练曲线从任务进入：任务详情页顶「训练曲线」进入 `/api/tasks/{task_id}/train-curve`。它把该任务 `rollout_root` 下 `tbs/` 或 `tf_logs/` 的 TensorBoard scalar 画成折线。

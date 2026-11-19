@@ -21,6 +21,7 @@ __all__ = [
     "classify_behavior_primary",
     "summarize_behavior_cards",
     "build_reward_diagnosis",
+    "build_reward_levers",
 ]
 
 _RATE_EPS = 1e-9
@@ -524,8 +525,147 @@ def build_reward_diagnosis(task_id: int) -> Dict[str, Any]:
         "gradient_groups": gradient,
         "reward_split": reward_split,
         "behavior": behavior,
+        "levers": build_reward_levers(rows),
         "page_note": (
             "先看可学习组占比与奖励分解，再看行为卡片对应的奖励杠杆；"
             "样例链到失败详情页。"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 奖励上升杠杆：把「奖励还能怎么涨」拆成可执行的几条
+# ---------------------------------------------------------------------------
+
+# 每条杠杆：(key, 标题, 现象判据, 建议动作)
+_LEVER_RULES: Tuple[Tuple[str, str, str, str], ...] = (
+    (
+        "learnable_ratio",
+        "有效梯度组占比",
+        "混合组（有对有挂）占比偏低或近期骤降 → 大量样本同号，梯度趋零。",
+        "优先恢复混合组：放宽采样难度配比、避免过度过滤已通过的题，"
+        "让每批里都留有「差一点就能过」的样本。",
+    ),
+    (
+        "measurable_pass_rate",
+        "可测通过率",
+        "可测通过率（去掉 abort / timeout 的分母）停滞 → 策略本身没在学。",
+        "对比本任务与基线任务在同一批题目上的通过率；"
+        "变坏的题目多半对应某个行为缺陷，去失败分析里定位。",
+    ),
+    (
+        "timeout_ratio",
+        "超时 / 上下文打满占比",
+        "timeout 占比升高 → 奖励被截断吃掉，可测样本变少。",
+        "调 max_turns / 上下文长度，或加长度惩罚；"
+        "同时看训练曲线里的 context_exhausted 是否同步上升。",
+    ),
+    (
+        "abort_ratio",
+        "abort 占比",
+        "abort 占比升高 → 奖励不可测，属于基建问题而非策略问题。",
+        "先修沙箱 / driver / 调度；不要把 abort 当作负样本进训练。",
+    ),
+    (
+        "raw_mean_reward",
+        "训练实际拿到的奖励",
+        "原始平均奖励明显低于可测通过率 → 差值就是被 abort / timeout 扣掉的部分。",
+        "对齐两者的差值与 abort / timeout 占比，判断奖励是「策略没学会」"
+        "还是「环境把奖励吃了」。",
+    ),
+)
+
+
+
+
+def _lever_status(
+    key: str,
+    value: Optional[float],
+    gradient: Dict[str, Any],
+    split: Dict[str, Any],
+) -> str:
+    """给单条杠杆判定状态：ok / warn / bad / unknown。"""
+    if value is None:
+        return "unknown"
+    if key == "learnable_ratio":
+        dips = gradient.get("dips") or []
+        if dips:
+            return "bad"
+        if value < 0.2:
+            return "bad"
+        if value < 0.35:
+            return "warn"
+        return "ok"
+    if key == "measurable_pass_rate":
+        series = split.get("series") or []
+        if len(series) >= 2:
+            first = series[0].get("measurable_pass_rate")
+            last = series[-1].get("measurable_pass_rate")
+            if isinstance(first, (int, float)) and isinstance(last, (int, float)):
+                if last - first < -_RATE_EPS:
+                    return "bad"
+                if last - first <= _RATE_EPS:
+                    return "warn"
+        return "ok" if value > 0 else "warn"
+    if key in ("timeout_ratio", "abort_ratio"):
+        if value >= 0.1:
+            return "bad"
+        if value >= 0.03:
+            return "warn"
+        return "ok"
+    if key == "raw_mean_reward":
+        measurable = split.get("series")[-1].get("measurable_pass_rate") if split.get("series") else None
+        if isinstance(measurable, (int, float)) and measurable > 0:
+            if value < measurable * 0.8:
+                return "warn"
+        return "ok"
+    return "unknown"
+
+
+def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """把奖励相关指标整理成「哪一条在拖后腿 + 该做什么」。
+
+    纯函数：输入 attempt 结局行，输出杠杆卡片列表。
+    单任务奖励诊断页与跨任务对比页共用这一份口径。
+    """
+    gradient = summarize_gradient_groups(rows)
+    split = summarize_reward_split(rows)
+    latest_gradient = gradient.get("latest") or {}
+    latest_split = split.get("series")[-1] if split.get("series") else {}
+
+    values: Dict[str, Optional[float]] = {
+        "learnable_ratio": latest_gradient.get("learnable_ratio"),
+        "n_mixed": latest_gradient.get("n_mixed"),
+        "n_groups": latest_gradient.get("n_groups"),
+        "measurable_pass_rate": latest_split.get("measurable_pass_rate"),
+        "timeout_ratio": latest_split.get("timeout_ratio"),
+        "abort_ratio": latest_split.get("abort_ratio"),
+        "raw_mean_reward": latest_split.get("raw_mean_reward"),
+        "n_attempts": latest_split.get("n_attempts"),
+    }
+
+    levers: List[Dict[str, Any]] = []
+    for key, title, phenomenon, action in _LEVER_RULES:
+        levers.append(
+            {
+                "key": key,
+                "title": title,
+                "value": values.get(key),
+                "status": _lever_status(key, values.get(key), gradient, split),
+                "phenomenon": phenomenon,
+                "action": action,
+            }
+        )
+
+    order = {"bad": 0, "warn": 1, "unknown": 2, "ok": 3}
+    levers.sort(key=lambda item: (order.get(item["status"], 9), str(item["key"])))
+
+    return {
+        "values": values,
+        "levers": levers,
+        "gradient_dips": gradient.get("dips") or [],
+        "note": (
+            "按「状态」排序：先修 bad，再看 warn。"
+            "每条杠杆都给出可执行动作；跨任务对比时用同一口径比较不同配置。"
         ),
     }
