@@ -102,6 +102,8 @@
             <button type="button" data-trend="worsened">变坏</button>
             <button type="button" data-trend="unchanged">不变</button>
             <button type="button" data-trend="once">只出现一次</button>
+            <button type="button" data-trend="too_easy" title="每一次出现都全通过，例如每次都是 8/8">太容易</button>
+            <button type="button" data-trend="too_hard" title="每一次出现都没有通过，例如每次都是 0/8">太难</button>
             <span class="muted" id="filterCount"></span>
         </div>
         <table class="tasks">
@@ -334,9 +336,20 @@
         renderTasks();
     }
 
+    function everyVisit(task, pred) {
+        const visits = task.visits || [];
+        return visits.length > 0 && visits.every(pred);
+    }
+
     function filteredTasks() {
         const all = (DATA && DATA.pass_trend && DATA.pass_trend.tasks) || [];
         if (!trendFilter) return all;
+        if (trendFilter === "too_easy") {
+            return all.filter((t) => everyVisit(t, (v) => v.n_attempts > 0 && v.n_pass === v.n_attempts));
+        }
+        if (trendFilter === "too_hard") {
+            return all.filter((t) => everyVisit(t, (v) => Number(v.n_pass) === 0));
+        }
         return all.filter((t) => t.trend === trendFilter);
     }
 
