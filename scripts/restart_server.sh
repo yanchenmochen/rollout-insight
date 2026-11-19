@@ -3,13 +3,18 @@
 #
 # 解决：ERROR [Errno 98] ... bind on address ('0.0.0.0', 39998): address already in use
 #
+# 默认**后台启动**：用 setsid 把服务丢进独立会话，彻底脱离当前终端，
+# 关闭终端 / 断开 SSH 都不影响服务；日志写 log/server.log。
+# 需要前台跑（Ctrl+C 结束）时加 --fg。
+#
 # 用法（在任意目录执行均可）：
-#   bash scripts/restart_server.sh              # 默认：停旧进程 → 前台启动
+#   bash scripts/restart_server.sh              # 默认：停旧进程 → 后台启动
 #   bash scripts/restart_server.sh restart      # 同上
 #   bash scripts/restart_server.sh stop         # 只停
 #   bash scripts/restart_server.sh start        # 只启（端口占用则先尝试安全释放）
 #   bash scripts/restart_server.sh status       # 看谁占用端口、是否像本服务
-#   bash scripts/restart_server.sh restart --bg # 后台启动，日志写 log/server.log
+#   bash scripts/restart_server.sh restart --fg # 前台启动（Ctrl+C 结束）
+#   bash scripts/restart_server.sh restart --bg # 显式后台启动（默认行为）
 #   bash scripts/restart_server.sh restart --force   # 端口上非本服务进程也强制杀掉
 #
 # 环境变量：
@@ -40,11 +45,11 @@ else
 fi
 
 CMD="restart"
-BACKGROUND=0
+BACKGROUND=1
 FORCE=0
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 is_our_cmd() {
@@ -258,15 +263,34 @@ do_start() {
   export ROLLOUT_INSIGHT_PORT="$PORT"
 
   if [[ "$BACKGROUND" -eq 1 ]]; then
-    # 后台：nohup + pid 文件；stdout/stderr 进 log/server.log
-    nohup "$PYTHON" main.py >>"$LOG_FILE" 2>&1 &
-    local new_pid=$!
-    echo "$new_pid" >"$PID_FILE"
-    echo "已后台启动 pid=${new_pid}，日志：${LOG_FILE}"
-    wait_ready
+    # 后台：用 setsid 开新会话，彻底脱离当前终端 —— 关终端 / 断 SSH 都不影响服务。
+    # stdout/stderr 追加进 log/server.log；pid 写进 log/server.pid 供 stop 用。
+    local launch
+    if command -v setsid >/dev/null 2>&1; then
+      # setsid --fork 保证子进程拿到新 sid，不受当前终端 SIGHUP 影响
+      setsid --fork "$PYTHON" main.py >>"$LOG_FILE" 2>&1 &
+      launch=$!
+    else
+      # 无 setsid 时退回 nohup（功能可用，但未完全脱离会话）
+      nohup "$PYTHON" main.py >>"$LOG_FILE" 2>&1 &
+      launch=$!
+    fi
+    echo "已后台启动，日志：${LOG_FILE}"
+    # 健康检查失败不终止脚本：仍要落下 pid 文件，方便后续 stop / status
+    wait_ready || echo "警告：健康检查未通过，进程可能仍在启动，请查看 ${LOG_FILE}"
+    # 以「真正监听端口的进程」为准回写 pid（setsid --fork 会换 pid）
+    local real_pid
+    real_pid="$(listener_pids "$PORT" | head -n 1 || true)"
+    if [[ -n "$real_pid" ]]; then
+      echo "$real_pid" >"$PID_FILE"
+      echo "服务 pid=${real_pid}，端口 ${PORT}"
+    else
+      echo "$launch" >"$PID_FILE"
+      echo "服务 pid=${launch}（尚未监听端口），端口 ${PORT}"
+    fi
     print_holders
   else
-    echo "前台启动（Ctrl+C 结束）。后台请加 --bg"
+    echo "前台启动（Ctrl+C 结束）。默认后台启动；需要前台请显式加 --fg"
     # 前台：若端口仍冲突，uvicorn 会立刻失败；已在上面 reclaim
     exec "$PYTHON" main.py
   fi
@@ -296,6 +320,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --bg|--background) BACKGROUND=1; shift ;;
+    --fg|--foreground) BACKGROUND=0; shift ;;
     --force) FORCE=1; shift ;;
     --port)
       PORT="$2"

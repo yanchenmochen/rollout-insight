@@ -44,12 +44,14 @@ python main.py
 # 浏览器访问 http://<host>:39998/  → 自动跳转 /api/tasks
 
 # 端口已被占用（Errno 98）时，用重启脚本：先安全释放本服务旧进程再启动
-bash scripts/restart_server.sh              # 前台重启
-bash scripts/restart_server.sh restart --bg # 后台重启，日志 log/server.log
+bash scripts/restart_server.sh              # 默认后台重启（脱离终端，可直接关终端）
+bash scripts/restart_server.sh restart --fg # 前台重启（Ctrl+C 结束）
 bash scripts/restart_server.sh status       # 查看谁占用 39998
 ```
 
 > 端口优先级：`$ROLLOUT_INSIGHT_PORT`（默认 `39998`）。`restart_server.sh` 默认只杀掉命令行像本服务（`main.py` / `main:app`）的监听进程；其它进程占用时需显式加 `--force`。
+>
+> **默认后台启动**：脚本用 `setsid` 把服务放进独立会话（`PPID=1`、无控制终端），**关闭终端 / 断开 SSH 都不影响服务**；日志追加到 `log/server.log`，pid 记录在 `log/server.pid`，用 `bash scripts/restart_server.sh stop` 停止。需要前台跑（Ctrl+C 结束）时显式加 `--fg`。
 
 ### 训练曲线（TensorBoard）
 

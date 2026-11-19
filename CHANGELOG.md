@@ -1,5 +1,21 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 重启脚本默认后台启动
+
+### 概述
+
+`scripts/restart_server.sh` 之前默认**前台**启动（`exec python main.py`），服务绑在当前
+终端上，关终端 / 断 SSH 服务就一起没了。现在**默认后台启动**，并且用 `setsid` 把进程
+放进**独立会话**，彻底脱离当前终端。
+
+- **默认后台**：`bash scripts/restart_server.sh` 直接返回，服务在后台跑，日志追加到
+  `log/server.log`，pid 写入 `log/server.pid`。
+- **彻底脱离终端**：`setsid --fork` 让服务 `PPID=1`（被 init 接管）、拥有独立 `SID`、
+  没有控制终端；实测向启动进程组发 `SIGHUP` 后服务仍存活。
+- **前台仍可用**：需要 `Ctrl+C` 结束时显式加 `--fg`（`--bg` 保留为显式写法）。
+- **健壮性**：健康检查超时不再中断脚本，pid 文件照常落下；pid 以「真正监听端口的进程」
+  为准（`setsid --fork` 会换 pid）。无 `setsid` 环境自动退回 `nohup`。
+
 ## 未发布 — 外部评测分数 / 单题趋势 / 多任务曲线对比
 
 ### 概述
