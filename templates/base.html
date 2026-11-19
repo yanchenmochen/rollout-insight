@@ -247,7 +247,7 @@
                 <li class="nav-item">
                     <a href="/api/tensorboard"
                        class="nav-link {% if request.url.path.startswith('/api/tensorboard') %}active{% endif %}"
-                       title="曲线对比：多任务 TensorBoard 指标叠图">
+                       title="曲线对比：勾选多个任务，用训练曲线同款图表叠图对比">
                        <span class="ri-icon ri-icon-chart-line"></span>曲线对比</a>
                 </li>
                 <li class="nav-item">
@@ -317,6 +317,8 @@
 
     {# 全量通过率折线图：任务详情页与问题分析页共用（需早于子页 inline script 加载） #}
     <script src="/static/ri_epoch_chart.js"></script>
+    {# 多序列折线图：问题分析单题趋势与多任务曲线对比共用 #}
+    <script src="/static/ri_multi_chart.js"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
