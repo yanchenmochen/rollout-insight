@@ -38,6 +38,13 @@
     .curve-chart { width: 100%; }
     .curve-chart svg { width: 100%; height: auto; display: block; }
     .curve-empty { font-size: 12px; color: var(--ri-muted); padding: 10px 0; }
+    /* 曲线图例 */
+    .curve-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 2px 0 6px 0; }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ri-muted); }
+    .legend-swatch { width: 14px; height: 3px; border-radius: 2px; flex: 0 0 auto; }
+    .legend-value { color: var(--ri-ink); font-variant-numeric: tabular-nums; }
+    .curve-row.multi .curve-title .tag { color: var(--ri-muted); }
+    .curve-note { font-size: 11px; color: var(--ri-muted); margin-top: 4px; }
     .custom-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
     .custom-row input[type="text"] { padding: 5px 8px; border: 1px solid var(--ri-border); border-radius: 4px; min-width: 260px; }
     .tag-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
@@ -72,7 +79,7 @@
 <div id="loading" class="loading">正在加载训练曲线…</div>
 <div id="body" style="display:none;">
     <div class="section">
-        <h2>指标按钮组 <small>默认：混合奖励 / 长度 / 梯度 / entropy_loss / context_exhausted</small></h2>
+        <h2>指标按钮组 <small>默认：奖励 / 长度 / 梯度 / entropy_loss / context_exhausted / max_fake_responses / rollout_time</small></h2>
         <div class="metric-bar" id="metricBar"></div>
         <div class="muted" id="metricHint">勾选指标后可保存。保存为「默认」对所有任务生效；保存为「本任务」只对当前任务追加展示项。</div>
         <div class="metric-actions">
@@ -90,7 +97,7 @@
     </div>
 
     <div class="section">
-        <h2>曲线 <small>每个指标一张折线 · 横轴 step</small></h2>
+        <h2>曲线 <small>每个指标一张折线图 · 同一指标的多条子曲线叠在同一张图</small></h2>
         <div id="curveBody"></div>
     </div>
 
@@ -184,15 +191,26 @@
     }
 
     // ---------------------------------------------------------------- 曲线
+    // 同一指标可能有多条子曲线（如「奖励」= generated / paired / filtered），
+    // 它们画在**同一张图**里，用不同颜色 + 图例区分。
+    const SERIES_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2"];
+
     function renderCurve(metric) {
-        const points = metric.points || [];
+        const subSeries = metric.sub_series || [];
         const head = `<div class="curve-head">
             <div class="curve-title">${esc(metric.label)}
-                <span class="tag">${esc(metric.primary_tag || "无匹配 tag")}</span>
+                ${subSeries.length > 1
+                    ? `<span class="tag">${subSeries.length} 条子曲线</span>`
+                    : `<span class="tag">${esc(metric.primary_tag || "无匹配 tag")}</span>`}
             </div>
             <div class="curve-readout" id="readout-${esc(metric.key)}"></div>
         </div>`;
-        if (!points.length) {
+
+        const drawn = subSeries
+            .map((s) => ({ series: s, points: s.points || [] }))
+            .filter((item) => item.points.length > 0);
+
+        if (!drawn.length) {
             const hint = (metric.tags || []).length
                 ? `命中的 tag：${metric.tags.map(esc).join("、")}`
                 : "该指标没有匹配到事件目录里的 tag";
@@ -201,13 +219,19 @@
 
         const w = 760, h = 190, padL = 56, padR = 14, padT = 12, padB = 30;
         const plotW = w - padL - padR, plotH = h - padT - padB;
-        const values = points.map((p) => Number(p.value));
-        let yMin = Math.min(...values), yMax = Math.max(...values);
+
+        // 纵轴范围：所有子曲线一起算，否则不同量纲的子曲线没法比
+        const allValues = [];
+        const allX = [];
+        drawn.forEach((item) => item.points.forEach((p) => {
+            allValues.push(Number(p.value));
+            allX.push(Number(p.step));
+        }));
+        let yMin = Math.min(...allValues), yMax = Math.max(...allValues);
         if (yMax === yMin) { yMin -= 0.5; yMax += 0.5; }
         const padY = (yMax - yMin) * 0.12;
         yMin -= padY; yMax += padY;
-        const steps = points.map((p) => Number(p.step));
-        const xMin = Math.min(...steps), xMax = Math.max(...steps);
+        const xMin = Math.min(...allX), xMax = Math.max(...allX);
         const xAt = (s) => xMax === xMin ? padL + plotW / 2 : padL + (s - xMin) * plotW / (xMax - xMin);
         const yAt = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
 
@@ -219,45 +243,79 @@
             grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${fmt(tick)}</text>`;
         });
 
-        const path = points.map((p, i) =>
-            `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
-        ).join(" ");
+        // 每条子曲线：路径 + 圆点 + 颜色
+        let paths = "";
+        let dots = "";
+        const legend = [];
+        drawn.forEach((item, idx) => {
+            const color = SERIES_COLORS[idx % SERIES_COLORS.length];
+            const pts = item.points;
+            const path = pts.map((p, i) =>
+                `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
+            ).join(" ");
+            paths += `<path d="${path}" fill="none" stroke="${color}" stroke-width="1.8"></path>`;
+            dots += pts.map((p, i) => {
+                const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
+                return `<circle class="pt" cx="${x}" cy="${y}" r="2.6" fill="${color}" data-i="${i}" data-s="${idx}" />`;
+            }).join("");
 
-        const dots = points.map((p, i) => {
-            const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
-            return `<circle class="pt" cx="${x}" cy="${y}" r="2.6" fill="#2d6a9f" data-i="${i}" />`;
-        }).join("");
-
-        const xLabelEvery = points.length <= 8 ? 1 : Math.ceil(points.length / 8);
-        let xLabels = "";
-        points.forEach((p, i) => {
-            if (i !== 0 && i !== points.length - 1 && i % xLabelEvery !== 0) return;
-            const x = xAt(Number(p.step)).toFixed(1);
-            xLabels += `<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`;
+            const first = pts[0], last = pts[pts.length - 1];
+            const delta = Number(last.value) - Number(first.value);
+            const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
+            legend.push({
+                label: item.series.label || item.series.tag,
+                color: color,
+                delta: delta,
+                deltaCls: cls,
+                first: first,
+                last: last,
+                n: pts.length,
+            });
         });
 
-        const first = points[0], last = points[points.length - 1];
-        const delta = Number(last.value) - Number(first.value);
-        const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
+        // 横轴刻度（用第一条子曲线的点，x 值在多子曲线间一致）
+        const xLabels = [];
+        const refPoints = drawn[0].points;
+        const xLabelEvery = refPoints.length <= 8 ? 1 : Math.ceil(refPoints.length / 8);
+        refPoints.forEach((p, i) => {
+            if (i !== 0 && i !== refPoints.length - 1 && i % xLabelEvery !== 0) return;
+            const x = xAt(Number(p.step)).toFixed(1);
+            xLabels.push(`<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`;
+        });
 
         const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(metric.label)} 曲线">
             <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
             ${grid}
             <line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
             <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
-            ${xLabels}
+            ${xLabels.join("")}
             <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">step</text>
-            <path d="${path}" fill="none" stroke="#2d6a9f" stroke-width="1.8"></path>
+            ${paths}
             ${dots}
         </svg>`;
 
-        const summary = `${points.length} 个点 · step ${first.step}→${last.step} · `
-            + `${fmt(first.value)} → ${fmt(last.value)} `
-            + `<span style="color:${cls}">（${delta >= 0 ? "+" : ""}${fmt(delta)}）</span>`;
+        const legendHtml = legend.length > 1
+            ? `<div class="curve-legend">${legend.map((item) => `<span class="legend-item">
+                    <span class="legend-swatch" style="background:${item.color}"></span>
+                    <span>${esc(item.label)}</span>
+                    <span class="legend-value">${fmt(item.last.value)}</span>
+                    <span style="color:${item.deltaCls}">(${item.delta >= 0 ? "+" : ""}${fmt(item.delta)})</span>
+                </span>`).join("")}</div>`
+            : "";
 
-        return `<div class="curve-row">${head}
+        const primary = legend[0];
+        const summary = primary
+            ? `${primary.n} 个点 · step ${primary.first.step}→${primary.last.step} · `
+                + `${fmt(primary.first.value)} → ${fmt(primary.last.value)} `
+                + `<span style="color:${primary.deltaCls}">（${primary.delta >= 0 ? "+" : ""}${fmt(primary.delta)}）</span>`
+            : "";
+
+        const rowClass = subSeries.length > 1 ? "curve-row multi" : "curve-row";
+        return `<div class="${rowClass}" data-key="${esc(metric.key)}">${head}
+            ${legendHtml}
             <div class="curve-chart">${svg}</div>
             <div class="curve-readout" data-summary="${esc(summary)}"></div>
+            <div class="curve-note">${esc(metric.desc || "")}</div>
         </div>`;
     }
 
@@ -272,9 +330,7 @@
         host.innerHTML = shown.map(renderCurve).join("");
 
         shown.forEach((metric) => {
-            const row = host.querySelectorAll(".curve-row");
-            const index = shown.indexOf(metric);
-            const box = row[index];
+            const box = host.querySelector(`.curve-row[data-key="${cssEscape(metric.key)}"]`);
             if (!box) return;
             const readout = box.querySelector(".curve-readout");
             const summary = readout.getAttribute("data-summary");
@@ -282,16 +338,28 @@
             const svg = box.querySelector("svg");
             const dots = box.querySelectorAll("circle.pt");
             if (!svg || !dots.length) return;
+            const subSeries = metric.sub_series || [];
             dots.forEach((dot) => {
-                const point = metric.points[Number(dot.getAttribute("data-i"))];
+                const sIdx = Number(dot.getAttribute("data-s"));
+                const pIdx = Number(dot.getAttribute("data-i"));
+                const series = subSeries[sIdx];
+                if (!series) return;
+                const point = (series.points || [])[pIdx];
+                if (!point) return;
                 dot.addEventListener("mouseenter", () => {
-                    readout.innerHTML = `step ${point.step} · ${fmt(point.value)}`;
+                    readout.innerHTML = `${esc(series.label || series.tag)} · step ${point.step} · ${fmt(point.value)}`;
                 });
                 dot.addEventListener("mouseleave", () => {
                     readout.innerHTML = summary;
                 });
             });
         });
+    }
+
+    function cssEscape(text) {
+        if (window.CSS && CSS.escape) return CSS.escape(String(text));
+        return String(text).replace(/["\\]/g, "\\$&");
+    }
     }
 
     // ---------------------------------------------------------------- 保存

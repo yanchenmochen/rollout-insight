@@ -5,7 +5,8 @@
 页面逻辑：
 1. 读出事件目录下全部 scalar tag；
 2. 按用户配置（全局默认 + 任务级追加）解析出要展示的指标；
-3. 每个指标命中若干 tag 时，取第一个作为主曲线，其余作为同指标备选；
+3. 每个指标可以命中多个 tag（例如「奖励」= generated / paired / filtered 三条
+   raw_reward），这些 tag **画在同一张图**里，用不同颜色区分；
 4. 输出可直接画折线的 ``series``，以及未命中任何 tag 的指标（前端提示"无数据"）。
 
 偏好读取与写入都走 ``DBTrainCurvePreferenceService``（用户默认 + 任务级追加）。
@@ -105,21 +106,52 @@ def resolve_curve_keys(
     }
 
 
+def _series_view(tag: str, points: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """单条子曲线：逐 step 点。"""
+    step_points = [
+        {"step": int(item.get("step", 0) or 0), "value": float(item.get("value", 0.0) or 0.0)}
+        for item in points or []
+    ]
+    return {
+        "tag": tag,
+        "label": _series_label(tag),
+        "points": step_points,
+        "n_points": len(step_points),
+    }
+
+
+def _series_label(tag: str) -> str:
+    """把 tag 变成人能读懂的短标签（去掉公共前缀）。"""
+    text = str(tag or "").strip()
+    for prefix in ("rollout/", "train/", "perf/", "actor/", "critic/"):
+        if text.startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
 def _metric_view(
     key: str,
     tags: Sequence[str],
     series: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
-    """把一个指标 key 组装成前端可用的视图对象。"""
+    """把一个指标 key 组装成前端可用的视图对象。
+
+    一个指标可能命中多个 tag（例如「奖励」命中 generated / paired / filtered
+    三条 raw_reward），这些子曲线放在 ``sub_series`` 里，**画在同一张图**。
+    """
     matched = resolve_metric_tags(key, list(tags))
     meta = CURVE_METRICS.get(key)
     label = meta["label"] if meta else (key.split(":", 1)[-1] if is_custom_key(key) else key)
     desc = meta["desc"] if meta else "自定义指标：直接按 TB tag 名匹配。"
 
-    points: List[Dict[str, Any]] = []
+    sub_series: List[Dict[str, Any]] = []
+    for tag in matched:
+        view = _series_view(tag, series.get(tag) or [])
+        if view["n_points"]:
+            sub_series.append(view)
+
     primary_tag = matched[0] if matched else ""
-    if primary_tag:
-        points = list(series.get(primary_tag) or [])
+    primary_points = list(series.get(primary_tag) or []) if primary_tag else []
 
     return {
         "key": key,
@@ -128,9 +160,13 @@ def _metric_view(
         "is_custom": is_custom_key(key),
         "tags": matched,
         "primary_tag": primary_tag,
-        "points": points,
-        "n_points": len(points),
-        "has_data": bool(points),
+        # 主曲线：逐 step（保持旧字段，前端可只画一条时用）
+        "points": primary_points,
+        "n_points": len(primary_points),
+        # 多条子曲线：同一张图内叠加
+        "sub_series": sub_series,
+        "n_series": len(sub_series),
+        "has_data": bool(sub_series),
     }
 
 
@@ -189,7 +225,7 @@ def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, 
         "default_keys": list(DEFAULT_CURVE_KEYS),
         "page_note": (
             "指标按钮组来自「用户默认 + 本任务追加」，保存后长期生效；"
-            "同一指标命中多个 tag 时取第一个作为主曲线。"
+            "同一指标命中多个 tag 时会在同一张图里画多条子曲线。"
         ),
     }
 
