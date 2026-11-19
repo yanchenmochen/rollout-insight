@@ -106,7 +106,7 @@
     </div>
 </div>
 <div class="section">
-    <p>打开 <a href="/api/tasks">任务列表</a>，进入任务详情后，从左侧「失败分析」或页顶按钮查看该任务的失败分布与轨迹。</p>
+    <p>打开 <a href="/api/tasks">任务列表</a>，进入任务详情后，用页顶「失败分析」查看该任务的失败分布与轨迹。</p>
     <p class="muted">带 <code>task_id</code> 的旧地址，以及单条失败轨迹地址，仍然可以直接打开。</p>
 </div>
 {% else %}
@@ -120,8 +120,11 @@
         <h1 id="pageTitle">任务 #{{ task_id }} · 失败分析</h1>
         <div class="page-subtitle" id="pageSub">加载中…</div>
     </div>
-    <div>
-        <a class="btn btn-secondary" href="/api/tasks/{{ task_id }}">返回任务详情</a>
+    <div class="action-bar">
+        {% set task_nav_id = task_id %}
+        {% set task_nav_current = 'failures' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
     </div>
 </div>
 

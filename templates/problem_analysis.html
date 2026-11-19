@@ -73,7 +73,12 @@
         <div class="page-subtitle" id="pageNote">按题目在训练中的出现次序看通过率，并统计 sglang 回复里的 tool_call。</div>
     </div>
     {% if task_id %}
-    <a class="btn btn-secondary" href="/api/tasks/{{ task_id }}/failures">失败分析</a>
+    <div class="action-bar">
+        {% set task_nav_id = task_id %}
+        {% set task_nav_current = 'problems' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
+    </div>
     {% endif %}
 </div>
 <div id="errorBox" class="alert alert-warning" style="display:none;"></div>

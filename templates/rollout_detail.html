@@ -469,7 +469,14 @@
         </div>
     </div>
     <div class="action-bar">
-        <a href="{% if task %}/api/tasks/{{ task.id }}{% else %}/api/tasks{% endif %}" class="btn btn-secondary">返回任务</a>
+        {% if task %}
+        {% set task_nav_id = task.id %}
+        {% set task_nav_current = '' %}
+        {% set task_nav_actions = false %}
+        {% include "_task_jump_nav.html" %}
+        {% else %}
+        <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
+        {% endif %}
         <button type="button" class="btn" id="reparseBtn">重解析 .pt</button>
     </div>
 </div>

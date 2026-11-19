@@ -101,6 +101,10 @@
         </div>
     </div>
     <div class="action-bar">
+        {% set task_nav_id = d.task.id %}
+        {% set task_nav_current = 'failures' %}
+        {% set task_nav_actions = false %}
+        {% include "_task_jump_nav.html" %}
         {% if d.accordion_url %}<a class="btn" href="{{ d.accordion_url }}">在手风琴中定位</a>{% endif %}
         <a class="btn btn-secondary" href="/api/tasks/{{ d.task.id }}/failures?rollout_id={{ d.rollout.rollout_id }}">本 rollout 的失败</a>
     </div>

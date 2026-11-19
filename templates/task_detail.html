@@ -61,72 +61,6 @@
         word-break: break-all;
     }
 
-    .layout-split {
-        display: flex;
-        gap: 20px;
-        align-items: flex-start;
-    }
-
-    .layout-split .left-nav {
-        flex: 0 0 200px;
-        background: var(--ri-surface);
-        border: 1px solid var(--ri-border);
-        border-radius: var(--te-radius);
-        padding: 12px 8px;
-        position: sticky;
-        top: 56px; /* 顶栏 navbar ~44px + 间距 */
-        align-self: flex-start;
-        max-height: calc(100vh - 72px);
-        overflow-y: auto;
-        z-index: 20;
-    }
-
-    .layout-split .left-nav h3 {
-        font-size: 12px;
-        color: var(--ri-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin: 4px 6px 8px 6px;
-    }
-
-    .layout-split .left-nav a {
-        display: block;
-        padding: 6px 10px;
-        border-radius: var(--te-radius);
-        color: var(--ri-ink);
-        text-decoration: none;
-        font-size: 14px;
-    }
-
-    .layout-split .left-nav a:hover {
-        background: #eef3f8;
-    }
-
-    .layout-split .left-nav a.active {
-        background: var(--ri-accent);
-        color: #fff;
-    }
-
-    .layout-split .left-nav a.nav-sub {
-        padding-left: 18px;
-        font-size: 12.5px;
-        color: var(--ri-muted);
-    }
-
-    .layout-split .left-nav a.nav-sub.active {
-        background: #e8f0fa;
-        color: #1e5080;
-    }
-
-    .layout-split .left-nav .nav-group {
-        margin-bottom: 4px;
-    }
-
-    .layout-split .right-main {
-        flex: 1;
-        min-width: 0;
-    }
-
     .section {
         background: var(--ri-surface);
         border: 1px solid var(--ri-border);
@@ -419,16 +353,6 @@
     }
     .stack-reason-list em { color: var(--ri-muted); font-style: normal; margin-left: 4px; }
     @media (max-width: 900px) {
-        .layout-split { flex-direction: column; }
-        .layout-split .left-nav {
-            flex: 1 1 auto;
-            width: 100%;
-            position: sticky;
-            top: 48px;
-            max-height: none;
-            overflow: visible;
-            z-index: 20;
-        }
         .stack-reason-grid { grid-template-columns: 1fr; }
         .stack-col { grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
         .stack-bar { height: 16px; }
@@ -494,11 +418,10 @@
         </div>
     </div>
     <div class="action-bar">
-        <a href="/api/tasks" class="btn btn-secondary">返回列表</a>
-        <a href="/api/tasks/{{ task.id }}/failures" class="btn btn-secondary">失败分析</a>
-        <a href="/api/tasks/{{ task.id }}/problem-analysis" class="btn btn-secondary">问题分析</a>
-        <button type="button" class="btn" id="rescanBtn">重扫</button>
-        <button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>
+        {% set task_nav_id = task.id %}
+        {% set task_nav_current = 'detail' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
     </div>
 </div>
 
@@ -509,35 +432,6 @@
 <div class="alert alert-warning"><strong>扫描错误：</strong> {{ task.error_message }}</div>
 {% endif %}
 
-<div class="layout-split">
-        <aside class="left-nav" id="taskSideNav">
-            <h3>本任务导航</h3>
-            <div class="nav-group">
-                <a href="#overview" class="active" data-nav="overview">概览</a>
-            </div>
-            {% if job_context and job_context.is_eval_job %}
-            <div class="nav-group">
-                <a href="#eval-scores" data-nav="eval-scores">评测评分</a>
-            </div>
-            {% endif %}
-            <div class="nav-group">
-                <a href="#train-curves" data-nav="train-curves">{% if job_context and job_context.is_eval_job %}评测曲线{% else %}训练曲线{% endif %}</a>
-            </div>
-            <div class="nav-group">
-                <a href="#rollout-stack" data-nav="rollout-stack">Attempt 分布</a>
-                <a href="#stack-reasons" class="nav-sub" data-nav="stack-reasons">失败原因 Top</a>
-                <a href="/api/tasks/{{ task.id }}/failures">失败分析</a>
-                <a href="/api/tasks/{{ task.id }}/problem-analysis">问题分析</a>
-            </div>
-            <div class="nav-group">
-                <a href="#rollouts" data-nav="rollouts">Rollout 列表 ({{ rollouts | length }})</a>
-            </div>
-            <div class="nav-group">
-                <a href="#nanhu" data-nav="nanhu">关联南湖 job</a>
-            </div>
-        </aside>
-
-    <div class="right-main">
         <div class="section" id="overview">
             <h2>概览</h2>
             <table class="info-table">
@@ -949,8 +843,6 @@
 
             <div id="bindMessage" class="alert" style="display:none; margin-top:12px;"></div>
         </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -1333,89 +1225,6 @@
     if (ANNOTATIONS_LAZY) {
         progressiveLoadAnnotations();
     }
-
-    async function postAction(url) {        const resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
-        const data = await resp.json().catch(function () { return {}; });
-        if (!data || data.code !== 0) {
-            throw new Error((data && data.msg) || ("HTTP " + resp.status));
-        }
-        return data;
-    }
-
-    document.getElementById("rescanBtn").addEventListener("click", async function () {
-        const btn = this;
-        btn.disabled = true;
-        const original = btn.textContent;
-        btn.textContent = "扫描中…";
-        try {
-            await postAction("/api/tasks/" + encodeURIComponent(TASK_ID) + "/rescan");
-            window.location.reload();
-        } catch (e) {
-            alert("重扫失败：" + e.message);
-            btn.disabled = false;
-            btn.textContent = original;
-        }
-    });
-
-    document.getElementById("deleteBtn").addEventListener("click", async function () {
-        if (!confirm("确定删除任务 " + TASK_ID + " 吗？此操作会级联删除其 rollout / attempt / segment 记录。")) return;
-        const btn = this;
-        btn.disabled = true;
-        try {
-            await postAction("/api/tasks/" + encodeURIComponent(TASK_ID) + "/delete");
-            window.location.href = "/api/tasks";
-        } catch (e) {
-            alert("删除失败：" + e.message);
-            btn.disabled = false;
-        }
-    });
-
-    // 平滑滚动 + 滚动时高亮当前区块
-    (function () {
-        const navRoot = document.getElementById("taskSideNav");
-        if (!navRoot) return;
-        const links = Array.prototype.slice.call(navRoot.querySelectorAll("a[href^='#']"));
-        const targets = links.map(function (a) {
-            const id = (a.getAttribute("href") || "").slice(1);
-            return { a: a, el: document.getElementById(id) };
-        }).filter(function (x) { return x.el; });
-
-        function setActive(anchor) {
-            links.forEach(function (n) { n.classList.remove("active"); });
-            if (anchor) anchor.classList.add("active");
-        }
-
-        links.forEach(function (a) {
-            a.addEventListener("click", function (e) {
-                const target = document.querySelector(a.getAttribute("href"));
-                if (!target) return;
-                e.preventDefault();
-                setActive(a);
-                target.scrollIntoView({ behavior: "smooth", block: "start" });
-                if (history.replaceState) {
-                    history.replaceState(null, "", a.getAttribute("href"));
-                }
-            });
-        });
-
-        let ticking = false;
-        function onScroll() {
-            if (ticking) return;
-            ticking = true;
-            requestAnimationFrame(function () {
-                ticking = false;
-                const probe = 80; // 顶栏 + sticky 偏移
-                let current = targets[0];
-                for (let i = 0; i < targets.length; i++) {
-                    const top = targets[i].el.getBoundingClientRect().top;
-                    if (top <= probe) current = targets[i];
-                }
-                if (current) setActive(current.a);
-            });
-        }
-        window.addEventListener("scroll", onScroll, { passive: true });
-        onScroll();
-    })();
 
     // -------------------------------------------------------------------------
     // 关联南湖 job：绑定 / 解除绑定

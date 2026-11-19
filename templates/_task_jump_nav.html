@@ -1,0 +1,64 @@
+{# 任务内右上角跳转。
+   调用方在包一层 .action-bar 之前设置：
+   task_nav_id       任务主键
+   task_nav_current  detail | failures | problems | reward | 空（子页）
+   task_nav_actions  是否附带重扫 / 删除
+#}
+{% set nav_current = task_nav_current if task_nav_current is defined else '' %}
+{% set nav_actions = task_nav_actions if task_nav_actions is defined else false %}
+<a class="btn btn-secondary" href="/api/tasks">返回列表</a>
+{% if nav_current != 'detail' %}
+<a class="btn btn-secondary" href="/api/tasks/{{ task_nav_id }}">任务详情</a>
+{% endif %}
+<a class="btn {% if nav_current == 'failures' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/failures"{% if nav_current == 'failures' %} aria-current="page"{% endif %}>失败分析</a>
+<a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>问题分析</a>
+<a class="btn {% if nav_current == 'reward' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/reward-diagnosis"{% if nav_current == 'reward' %} aria-current="page"{% endif %}>奖励诊断</a>
+{% if nav_actions %}
+<button type="button" class="btn" id="rescanBtn">重扫</button>
+<button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>
+<script>
+(function () {
+    var taskId = {{ task_nav_id | tojson }};
+    async function postAction(url) {
+        var resp = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data;
+    }
+    var rescanBtn = document.getElementById("rescanBtn");
+    if (rescanBtn) {
+        rescanBtn.addEventListener("click", async function () {
+            var btn = this;
+            btn.disabled = true;
+            var original = btn.textContent;
+            btn.textContent = "扫描中…";
+            try {
+                await postAction("/api/tasks/" + encodeURIComponent(taskId) + "/rescan");
+                window.location.reload();
+            } catch (e) {
+                alert("重扫失败：" + e.message);
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        });
+    }
+    var deleteBtn = document.getElementById("deleteBtn");
+    if (deleteBtn) {
+        deleteBtn.addEventListener("click", async function () {
+            if (!confirm("确定删除任务 " + taskId + " 吗？此操作会级联删除其 rollout / attempt / segment 记录。")) return;
+            var btn = this;
+            btn.disabled = true;
+            try {
+                await postAction("/api/tasks/" + encodeURIComponent(taskId) + "/delete");
+                window.location.href = "/api/tasks";
+            } catch (e) {
+                alert("删除失败：" + e.message);
+                btn.disabled = false;
+            }
+        });
+    }
+})();
+</script>
+{% endif %}

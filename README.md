@@ -130,7 +130,7 @@ rollout-insight/
 
 ### 5.1 失败分析（任务级）
 
-失败分析从任务进入：任务列表打开任务详情后，用左侧「失败分析」或页顶按钮进入 `/api/tasks/{task_id}/failures`。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
+失败分析从任务进入：任务列表打开任务详情后，用页顶「失败分析」进入 `/api/tasks/{task_id}/failures`。任务详情、失败分析、问题分析以及 rollout / attempt / segment 子页的右上角都有同一组跳转。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
 
 - **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
 - **按聚类**：按失败原因（`abort_reason` → `diagnosis` → agent 结束态）聚类，可下钻到对应 attempt 列表。
@@ -143,7 +143,7 @@ rollout-insight/
 
 ### 5.2 问题分析（任务级）
 
-问题分析在失败分析下面：任务详情左侧「问题分析」或页顶按钮进入 `/api/tasks/{task_id}/problem-analysis`。它回答两件事。
+问题分析从任务进入：任务详情页顶「问题分析」进入 `/api/tasks/{task_id}/problem-analysis`。它回答两件事。
 
 **任务通过分析。** 一道题的一次出现是同一个 `rollout_id` 下的同一个 `instance_id`（通常约 8 条 attempt）。按 `rollout_id` 升序，第 k 次出现就是第 k 个 epoch。通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数；abort 与 timeout 计入分母、不计入分子。变好或变坏只看该题最后一次减第一次：大于 0 为绿，小于 0 为红，相等为灰。只出现一次的题单独计数，不进直方图。题目名可点进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，按出现次序看每次所在的 rollout，以及该次每条 attempt 的 sglang 轨迹。总览有两条：一是按 epoch 把全部题目合在一起的通过率曲线，第 k 个点是各题第 k 次出现的 attempt 加总（分子、分母跨题相加）。单步 raw_reward 只覆盖当步抽到的题目，所以会上下跳；这条曲线按 epoch 看全量题目。该次还没再次出现的题不计入，覆盖不足全部题目时用空心点标出。二是首尾差值直方图，每格 1/8。`ROLLOUT_BATCH_SIZE` 来自 run 目录环境变量，读不到时用每个 rollout 的 group 数众数，只用来核对「每个 epoch 窗口里一题是否只出现一次」，不用来重画曲线。
 
