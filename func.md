@@ -354,6 +354,18 @@
 - `staticmethod` `def advance_response_tool_stats(task_id: int, rollout_limit: int=1) -> Dict[str, Any]`
 - `staticmethod` `def count_rollout_file(pt_path: str) -> Dict[str, Any]`
 
+### `reward_diagnosis_service_module` (`service/reward_diagnosis_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def classify_group_kind(categories: Sequence[str]) -> str`
+- `staticmethod` `def summarize_gradient_groups(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
+- `staticmethod` `def summarize_reward_split(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
+- `staticmethod` `def aggregate_attempt_turn_flags(flags: Sequence[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]`
+- `staticmethod` `def classify_behavior_primary(row: Dict[str, Any], turn_summary: Optional[Dict[str, Any]]=None)…`
+- `staticmethod` `def summarize_behavior_cards(rows: Sequence[Dict[str, Any]], turn_flags: Sequence[Dict[str, Any…`
+- `staticmethod` `def build_reward_diagnosis(task_id: int) -> Dict[str, Any]`
+
 ### `RolloutParseService` (`service/rollout_parse_service.py`)
 
 - `method` `def parse_rollout(pt_path: str, force: bool=False) -> Dict[str, Any]`
@@ -450,6 +462,8 @@
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/pass.json` | `api_problem_pass_trend` | 按题目列出历次出现的 rollout 与通过率，不读响应统计。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis.json` | `api_problem_analysis` | 通过率（按题目出现次序）以及当前已能给出的响应统计。 |
 | `problem_analysis_controller` | POST | `/api/tasks/{task_id}/response-stats` | `api_advance_response_stats` | 补统计下一批 rollout 的 assistant 回复。不写入 turn 正文。 |
+| `reward_diagnosis_controller` | GET | `/api/tasks/{task_id}/reward-diagnosis` | `page_reward_diagnosis` | 任务详情旁的奖励诊断：梯度组、奖励分解、行为失败卡片。 |
+| `reward_diagnosis_controller` | GET | `/api/tasks/{task_id}/reward-diagnosis.json` | `api_reward_diagnosis` | 返回有效梯度组曲线、奖励分解曲线与行为失败卡片。 |
 | `rollout_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_id}` | `page_rollout_detail` | 渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。 |
 | `rollout_controller` | GET | `/api/rollouts/{rollout_id}` | `api_get_rollout_json` | JSON 端点：返回 rollout 概览 + attempts 列表。 |
 | `rollout_controller` | POST | `/api/rollouts/{rollout_id}/parse` | `api_parse_rollout` | 触发 T3 重解析（默认 force=True）。 |
