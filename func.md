@@ -173,6 +173,12 @@
 - `def discover_tb_event_dir(run_dir: Path) -> Optional[Path]` — 在 run 根下按 ``TB_EVENT_DIR_NAMES`` 找可用的 TensorBoard 事件目录。
 - `def discover_tbs_dir(run_dir: Path) -> Optional[Path]` — 兼容旧名：等同 ``discover_tb_event_dir``。
 
+### `utils/tb_series_reader.py`
+
+- `def list_scalar_tags(event_dir: Optional[Path | str]) -> List[str]` — 列出事件目录下的全部 scalar tag（已排序）。
+- `def read_scalar_series(event_dir: Optional[Path | str], *, tags: Optional[Sequence[str]]=None, …` — 读取事件目录下若干 tag 的完整 scalar 序列。
+- `def series_points(series: Dict[str, List[Dict[str, Any]]], tag: str) -> List[Dict[str, Any]]` — 从序列字典里取某个 tag 的点列表（不存在返回空 list）。
+
 ## db/ — ORM 模型
 
 | ORM 类 | 文件 | 物理表 |
