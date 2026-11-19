@@ -210,6 +210,22 @@
     }
     .tb-cta .tb-cta-msg.is-error { color: #9b2c2c; }
 
+    /* 全量通过率（任务详情页核心指标） */
+    .epoch-chart { width: 100%; margin: 4px 0 6px; }
+    .epoch-chart svg { width: 100%; height: auto; display: block; }
+    .epoch-chart circle { cursor: pointer; }
+    .epoch-readout { font-size: 13px; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+    .epoch-readout .up { color: #2d6a4f; font-weight: 600; }
+    .epoch-readout .down { color: #c62828; font-weight: 600; }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .chip.up { border-color: #2d6a4f; color: #2d6a4f; }
+    .chip.down { border-color: #c62828; color: #c62828; }
+    .chip.flat { border-color: #8a939c; color: #5c6b7a; }
+    .meta-line { font-size: 13px; color: var(--ri-ink); margin-top: 8px; }
+
     /* 跨 rollout attempt 堆叠柱图（每步三柱：结局 / 奖励 / 类型） */
     .stack-legend {
         display: flex; flex-wrap: wrap; gap: 12px;
@@ -551,6 +567,15 @@
         </div>
         {% endif %}
 
+        <div class="section" id="full-pass-rate">
+            <h2>全量通过率 <small>表征任务训练进程的核心指标 · 按 epoch 汇总全部题目</small></h2>
+            <div class="chip-row" id="passRateChips"></div>
+            <div class="epoch-readout" id="passRateReadout"></div>
+            <div class="epoch-chart" id="passRateChart"></div>
+            <div class="muted" id="passRateNote"></div>
+            <div class="meta-line" id="passRateMeta"></div>
+        </div>
+
         <div class="section" id="train-curves">
             <h2>{% if job_context and job_context.is_eval_job %}评测曲线{% else %}训练曲线{% endif %} <small>委托 TensorBoard · 新标签打开 · 不嵌入</small></h2>
             <div class="tb-cta">
@@ -562,7 +587,9 @@
                 </p>
                 <div class="tb-cta-actions">
                     <button type="button" class="btn" id="openTbBtn">在 TensorBoard 中查看本任务</button>
+                    <a class="btn btn-secondary" href="/api/tasks/{{ task.id }}/train-curve">训练曲线（指标按钮组）</a>
                     <a class="btn btn-secondary" href="/api/tensorboard">多任务曲线对比</a>
+                    <a class="btn btn-secondary" href="/api/cross-task-compare">跨任务对比</a>
                 </div>
                 <div class="tb-cta-msg" id="tbCtaMsg"></div>
             </div>
@@ -849,6 +876,67 @@
 <script>
     const TASK_ID = {{ task.id | tojson }};
     const ANNOTATIONS_LAZY = {{ (annotations_lazy or false) | tojson }};
+
+    // -------------------------------------------------------------------------
+    // 全量通过率：表征任务训练进程的核心指标（放在训练指标之前）
+    // -------------------------------------------------------------------------
+    (function bindFullPassRate() {
+        const chipBox = document.getElementById("passRateChips");
+        const chartBox = document.getElementById("passRateChart");
+        if (!chartBox) return;
+
+        function pctText(v) {
+            if (v == null || Number.isNaN(v)) return "-";
+            return (Number(v) * 100).toFixed(1) + "%";
+        }
+
+        async function load() {
+            try {
+                const resp = await fetch(
+                    "/api/tasks/" + encodeURIComponent(TASK_ID) + "/problem-analysis/pass.json",
+                    { headers: { Accept: "application/json" } }
+                );
+                const payload = await resp.json().catch(function () { return {}; });
+                if (!payload || payload.code !== 0) {
+                    throw new Error((payload && payload.msg) || ("HTTP " + resp.status));
+                }
+                const trend = payload.data || {};
+                const s = trend.summary || {};
+                if (chipBox) {
+                    chipBox.innerHTML = [
+                        ["变好", s.improved || 0, "up"],
+                        ["不变", s.unchanged || 0, "flat"],
+                        ["变坏", s.worsened || 0, "down"],
+                        ["只出现一次", s.once || 0, "flat"],
+                    ].map(function (item) {
+                        return '<span class="chip ' + item[2] + '">' + item[0]
+                            + " <strong>" + item[1] + "</strong></span>";
+                    }).join("");
+                }
+                const metaEl = document.getElementById("passRateMeta");
+                if (metaEl) {
+                    metaEl.textContent = "题目 " + (trend.n_problems || 0)
+                        + " · rollout " + (trend.n_rollouts || 0)
+                        + " · 观测 " + (trend.n_epochs_observed || 0) + " 个 epoch";
+                }
+                if (window.RiEpochChart) {
+                    window.RiEpochChart.render({
+                        host: chartBox,
+                        readout: document.getElementById("passRateReadout"),
+                        note: document.getElementById("passRateNote"),
+                        trend: trend,
+                    });
+                }
+            } catch (err) {
+                const note = document.getElementById("passRateNote");
+                if (note) {
+                    note.textContent = "全量通过率加载失败：" + (err && err.message ? err.message : err);
+                }
+            }
+        }
+
+        load();
+    })();
 
     // -------------------------------------------------------------------------
     // 训练曲线：委托 TensorBoard（新标签打开）

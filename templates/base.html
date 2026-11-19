@@ -284,6 +284,8 @@
         </div>
     </main>
 
+    {# 全量通过率折线图：任务详情页与问题分析页共用（需早于子页 inline script 加载） #}
+    <script src="/static/ri_epoch_chart.js"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

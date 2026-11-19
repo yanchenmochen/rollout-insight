@@ -141,6 +141,12 @@ rollout-insight/
 
 `GET /api/segments/search` 在原有任务、reward 下限和关键字之外，可以再按 `group_index` 与业务 `attempt_id` 精确过滤。响应里的 `attempt_id` 仍是 attempt 表主键，另外返回 `group_index` 和 `attempt_biz_id`。页面检索走 `GET /api/segments/search/page`。
 
+### 5.0 任务详情页
+
+任务详情页（`/api/tasks/{task_id}`）把**全量通过率**放在**训练指标之前**——它表征任务训练进程，是该页最重要的指标。区块内容包括：按 epoch 汇总的全量题目通过率折线、变好 / 不变 / 变坏 / 只出现一次的题目计数、题目与 rollout 概览。
+
+折线绘制逻辑抽到共享模块 `static/ri_epoch_chart.js`（暴露 `window.RiEpochChart.render`），任务详情页与问题分析页共用同一份 SVG 渲染，避免两处口径漂移。
+
 ### 5.1 失败分析（任务级）
 
 失败分析从任务进入：任务列表打开任务详情后，用页顶「失败分析」进入 `/api/tasks/{task_id}/failures`。任务详情、失败分析、问题分析以及 rollout / attempt / segment 子页的右上角都有同一组跳转。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
