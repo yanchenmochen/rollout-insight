@@ -204,6 +204,79 @@ def _resolve_steps_per_epoch(task_id: int) -> Optional[int]:
     return resolve_steps_per_epoch(trend.get("n_problems"), trend.get("batch_size"))
 
 
+def _build_evaluations(rollout_root: str) -> Dict[str, Any]:
+    """读取 run 目录下的 ``evaluations.md``（外部评测台账）。
+
+    输出按「评测名」分组（如 panel / v500），每组给出每个 training step 的
+    分数，便于页面上按列渲染。文件不存在时 ``exists=False``。
+    """
+    from utils.eval_report_md import read_evaluations_for_rollout_root
+
+    try:
+        raw = read_evaluations_for_rollout_root(rollout_root)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 evaluations.md 失败 rollout_root={} err={}", rollout_root, exc)
+        return {"exists": False, "path": "", "groups": [], "runs": []}
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    for run in raw.get("runs") or []:
+        name = str(run.get("evaluation") or "").strip() or "eval"
+        group = groups.setdefault(
+            name,
+            {"name": name, "rounds": [], "points": [], "n_runs": 0},
+        )
+        group["n_runs"] += 1
+        scores = run.get("scores") or {}
+        group["rounds"].append(
+            {
+                "step": int(run.get("step") or 0),
+                "round": str(run.get("round") or ""),
+                "job_status": str(run.get("job_status") or ""),
+                "job_name": str(run.get("job_name") or ""),
+                "job_id": str(run.get("job_id") or ""),
+                "run": str(run.get("run") or ""),
+                "result": str(run.get("result") or ""),
+                "scores": scores,
+            }
+        )
+        # 折线点：优先取加权分，其次 merged，最后 holdout
+        value = scores.get("weighted")
+        if value is None:
+            value = scores.get("merged")
+        if value is None:
+            value = scores.get("holdout")
+        if value is None:
+            continue
+        group["points"].append(
+            {
+                "step": int(run.get("step") or 0),
+                "value": float(value),
+                "kind": (
+                    "weighted" if scores.get("weighted") is not None
+                    else ("merged" if scores.get("merged") is not None else "holdout")
+                ),
+                "job_status": str(run.get("job_status") or ""),
+                "round": str(run.get("round") or ""),
+            }
+        )
+
+    group_list = []
+    for group in groups.values():
+        group["points"].sort(key=lambda p: int(p.get("step") or 0))
+        group_list.append(group)
+    group_list.sort(key=lambda g: str(g.get("name") or ""))
+
+    return {
+        "exists": bool(raw.get("exists")),
+        "path": str(raw.get("path") or ""),
+        "job_name": str(raw.get("job_name") or ""),
+        "job_id": str(raw.get("job_id") or ""),
+        "updated_at": str(raw.get("updated_at") or ""),
+        "groups": group_list,
+        "runs": list(raw.get("runs") or []),
+    }
+
+
 def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
     """组装任务训练曲线页 / JSON 载荷。"""
     from data.rollout_insight_exception import RolloutInsightException
@@ -239,13 +312,16 @@ def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, 
         _metric_view(key, tags, series, steps_per_epoch) for key in keys
     ]
 
+    evaluations = _build_evaluations(rollout_root)
+
     logger.info(
-        "训练曲线 task_id={} event_dir={} tags={} metrics={} steps_per_epoch={}",
+        "训练曲线 task_id={} event_dir={} tags={} metrics={} steps_per_epoch={} evals={}",
         task_id,
         event_dir,
         len(tags),
         len(metrics),
         steps_per_epoch,
+        len(evaluations.get("runs") or []),
     )
     return {
         "task": {
@@ -272,6 +348,7 @@ def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, 
                 else "无法确定 epoch 边界（缺题目池大小或每轮抽样题数），只展示逐 step 曲线。"
             ),
         },
+        "evaluations": evaluations,
         "page_note": (
             "指标按钮组来自「用户默认 + 本任务追加」，保存后长期生效；"
             "同一指标命中多个 tag 时会在同一张图里画多条子曲线。"

@@ -52,6 +52,26 @@
     .legend-value { color: var(--ri-ink); font-variant-numeric: tabular-nums; }
     .curve-row.multi .curve-title .tag { color: var(--ri-muted); }
     .curve-note { font-size: 11px; color: var(--ri-muted); margin-top: 4px; }
+    /* 外部评测分数 */
+    .eval-block { margin-bottom: 14px; }
+    .eval-block:last-child { margin-bottom: 0; }
+    .eval-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .eval-head .badge { font-size: 11px; padding: 1px 8px; border-radius: 9px; background: #eef3f8;
+        border: 1px solid var(--ri-border); color: var(--ri-muted); font-weight: 400; }
+    .eval-chart { width: 100%; }
+    .eval-chart svg { width: 100%; height: auto; display: block; }
+    .eval-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 2px 0 6px 0; }
+    table.evals { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+    table.evals th, table.evals td { padding: 4px 8px; border-bottom: 1px solid #e4e8ec; text-align: left; }
+    table.evals th { font-size: 11px; color: var(--ri-muted); text-transform: uppercase; }
+    table.evals td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.evals .mono { font-family: ui-monospace, monospace; }
+    .eval-status { font-size: 11px; padding: 0 6px; border-radius: 8px; }
+    .eval-status.finished { background: #e4f3ea; color: #2d6a4f; }
+    .eval-status.running { background: #e8f0fa; color: #1e5080; }
+    .eval-status.scheduling { background: #f3f5f8; color: #5c6b7a; }
+    .eval-status.error { background: #fdecec; color: #c62828; }
+    .eval-empty { font-size: 12px; color: var(--ri-muted); padding: 8px 0; }
     .custom-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
     .custom-row input[type="text"] { padding: 5px 8px; border: 1px solid var(--ri-border); border-radius: 4px; min-width: 260px; }
     .tag-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
@@ -101,6 +121,15 @@
             <span class="muted">自定义指标按 tag 名精确匹配。</span>
         </div>
         <div class="tag-list" id="customList"></div>
+    </div>
+
+    <div class="section" id="evalSection" style="display:none;">
+        <h2>外部评测分数
+            <small>来自训练输出目录的 evaluations.md（检查点持续做外部评测的台账）</small>
+        </h2>
+        <div class="muted" id="evalMeta" style="margin-bottom:10px;"></div>
+        <div id="evalCharts"></div>
+        <div id="evalTableWrap"></div>
     </div>
 
     <div class="section">
@@ -394,6 +423,138 @@
         return String(text).replace(/["\\]/g, "\\$&");
     }
 
+    // ---------------------------------------------------------------- 外部评测
+    // 数据来自训练输出目录的 evaluations.md：每个 training step 的一次外部评测记录。
+    const EVAL_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2"];
+
+    function renderEvalChart(group, color) {
+        const points = group.points || [];
+        if (!points.length) return "";
+        const w = 760, h = 170, padL = 56, padR = 14, padT = 12, padB = 28;
+        const plotW = w - padL - padR, plotH = h - padT - padB;
+        const values = points.map((p) => Number(p.value));
+        let yMin = Math.min(...values), yMax = Math.max(...values);
+        if (yMax === yMin) { yMin -= 0.05; yMax += 0.05; }
+        const padY = (yMax - yMin) * 0.15;
+        yMin = Math.max(0, yMin - padY); yMax = Math.min(1, yMax + padY);
+        if (yMax <= yMin) yMax = yMin + 0.1;
+        const steps = points.map((p) => Number(p.step));
+        const xMin = Math.min(...steps), xMax = Math.max(...steps);
+        const xAt = (s) => xMax === xMin ? padL + plotW / 2 : padL + (s - xMin) * plotW / (xMax - xMin);
+        const yAt = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+        let grid = "";
+        [0, 0.25, 0.5, 0.75, 1].forEach((t) => {
+            const v = yMin + t * (yMax - yMin);
+            const y = yAt(v);
+            grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e4e8ec"></line>`;
+            grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${fmt(v)}</text>`;
+        });
+
+        const path = points.map((p, i) =>
+            `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
+        ).join(" ");
+        const dots = points.map((p, i) => {
+            const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
+            return `<circle class="pt" cx="${x}" cy="${y}" r="3" fill="${color}" data-i="${i}" />`;
+        }).join("");
+
+        const xLabels = points.map((p) =>
+            `<text x="${xAt(Number(p.step)).toFixed(1)}" y="${padT + plotH + 15}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`
+        ).join("");
+
+        const first = points[0], last = points[points.length - 1];
+        const delta = Number(last.value) - Number(first.value);
+        const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
+        const kindText = points[0].kind === "weighted" ? "加权分" : (points[0].kind === "merged" ? "merged 分" : "holdout 分");
+
+        return `<div class="eval-block" data-group="${esc(group.name)}">
+            <div class="eval-head">
+                <span class="legend-swatch" style="background:${color}"></span>
+                <span>${esc(group.name)}</span>
+                <span class="badge">${kindText} · ${points.length} 次</span>
+                <span class="muted" style="font-weight:400;">
+                    step ${first.step}→${last.step} · ${fmt(first.value)} → ${fmt(last.value)}
+                    <span style="color:${cls}">（${delta >= 0 ? "+" : ""}${fmt(delta)}）</span>
+                </span>
+            </div>
+            <div class="eval-chart">
+                <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(group.name)} 评测分数">
+                    <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
+                    ${grid}
+                    <line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+                    <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+                    ${xLabels}
+                    <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">training step</text>
+                    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.8"></path>
+                    ${dots}
+                </svg>
+            </div>
+        </div>`;
+    }
+
+    function renderEvalTable(group) {
+        const rounds = group.rounds || [];
+        if (!rounds.length) return "";
+        const rows = rounds.map((r) => {
+            const s = r.scores || {};
+            const score = s.weighted !== null && s.weighted !== undefined ? s.weighted
+                : (s.merged !== null && s.merged !== undefined ? s.merged : s.holdout);
+            const scoreCell = score === null || score === undefined
+                ? `<span class="muted">-</span>`
+                : `<b>${fmt(score)}</b>`;
+            const extra = [];
+            if (s.interval !== null && s.interval !== undefined) extra.push(`±${fmt(s.interval)}`);
+            if (s.holdout !== null && s.holdout !== undefined && s.weighted !== null && s.weighted !== undefined) {
+                extra.push(`holdout ${fmt(s.holdout)}`);
+            }
+            if (s.ungraded) extra.push(`ungraded ${s.ungraded}`);
+            return `<tr>
+                <td class="num">${r.step}</td>
+                <td>${esc(r.round || "-")}</td>
+                <td><span class="eval-status ${esc(r.job_status || "")}">${esc(r.job_status || "-")}</span></td>
+                <td class="num">${scoreCell}</td>
+                <td class="muted">${esc(extra.join(" · "))}</td>
+                <td class="mono muted">${esc(r.job_id || "")}</td>
+            </tr>`;
+        }).join("");
+        return `<table class="evals">
+            <thead><tr>
+                <th class="num">step</th><th>轮次</th><th>状态</th><th class="num">分数</th><th>备注</th><th>作业 ID</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderEvaluations() {
+        const info = (DATA && DATA.evaluations) || {};
+        const section = $("evalSection");
+        if (!info.exists) {
+            section.style.display = "none";
+            return;
+        }
+        section.style.display = "";
+        const groups = info.groups || [];
+        const meta = [];
+        if (info.job_name) meta.push(`评测作业：${info.job_name}`);
+        if (info.updated_at) meta.push(`更新于 ${info.updated_at}`);
+        $("evalMeta").textContent = meta.join(" · ");
+
+        if (!groups.length) {
+            $("evalCharts").innerHTML = `<div class="eval-empty">evaluations.md 里还没有评测记录。</div>`;
+            $("evalTableWrap").innerHTML = "";
+            return;
+        }
+        $("evalCharts").innerHTML = groups.map((g, i) =>
+            renderEvalChart(g, EVAL_COLORS[i % EVAL_COLORS.length])
+        ).join("");
+        $("evalTableWrap").innerHTML = groups.map((g) => `
+            <div style="margin-top:12px;">
+                <div class="eval-head">${esc(g.name)} <span class="badge">逐次记录</span></div>
+                ${renderEvalTable(g)}
+            </div>`).join("");
+    }
+
     // ---------------------------------------------------------------- 保存
     async function save(scope) {
         const keys = Array.from(selected);
@@ -443,6 +604,7 @@
             renderMetricBar();
             renderCustomList();
             renderTagList();
+            renderEvaluations();
             renderViewSwitch();
             renderCurves();
         } catch (e) {
