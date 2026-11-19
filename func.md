@@ -195,6 +195,12 @@
 - `def resolve_metric_tags(key: str, available_tags: Sequence[str]) -> List[str]` — 在可用 tag 里找出命中该指标的所有 tag。
 - `def is_custom_key(key: str) -> bool` — 是否用户自定义指标键。
 
+### `utils/train_curve_epoch.py`
+
+- `def resolve_steps_per_epoch(n_problems: Optional[int], batch_size: Optional[int]) -> Optional[i…` — 算出「一个 epoch 覆盖多少个 rollout step」。
+- `def aggregate_by_epoch(points: Sequence[Dict[str, Any]], steps_per_epoch: Optional[int], *, max…` — 把逐 step 的点按 epoch 聚合（epoch 内所有 step 取平均）。
+- `def epoch_view(points: Sequence[Dict[str, Any]], steps_per_epoch: Optional[int]) -> Dict[str, A…` — 聚合出 epoch 曲线，并附带口径说明。
+
 ## db/ — ORM 模型
 
 | ORM 类 | 文件 | 物理表 |
