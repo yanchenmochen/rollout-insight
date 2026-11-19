@@ -125,6 +125,9 @@ rollout-insight/
 | GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（混合奖励/长度/梯度/entropy_loss/context_exhausted）+ 折线 |
 | GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列 |
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
+| GET  | `/api/cross-task-compare` | 跨任务对比页：选多个任务，比较共同题目的训练过程变化 |
+| GET  | `/api/cross-task-compare.json` | 跨任务对比 JSON（`task_ids=1,2,3`，可选 `instance_id=`） |
+| GET  | `/api/cross-task-compare/instance.json` | 单题在多任务上的逐次出现与通过率 |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
@@ -197,6 +200,16 @@ rollout-insight/
 最终生效的指标 = 用户全局偏好 + 本任务追加项（用户全局偏好一旦保存就完全覆盖内置默认按钮组）。偏好存在 `ri_train_curve_preference_table`。内置指标按正则匹配 TB tag（例如 `rollout/mixed_reward`、`actor/grad_norm` 都能命中），同一指标命中多个 tag 时取第一个作主曲线，其余作为备选。
 
 **数据口径。** 读取时关闭 TensorBoard 的 orphan purge、给足 scalar 水库容量（TB 的 Reservoir 是随机抽样，容量不足会随机丢点、曲线缺段），长序列由本服务做确定性等距抽样并保留首尾。
+
+### 5.5 跨任务对比（多任务）
+
+顶栏「跨任务对比」进入 `/api/cross-task-compare`。它回答：**不同的训练配置下，训练过程中哪些共同的题目变好了，哪些变坏了。**
+
+- **共同题目**：所有选中任务都出现过的 `instance_id`。
+- **epoch 口径**：与问题分析页完全一致——第 k 个 epoch = 该题第 k 次出现（按 `rollout_id` 升序）。
+- **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计，区分「变好 / 不变 / 变坏」三档；另有「相对基线」一列，比较末次通过率与基线任务（列表第一个）之差，回答「哪个配置更强」。
+- **单题下钻**：点某道题只看这一道题在多个任务上的逐次通过率与训练轨迹。
+- **奖励上升指引**：每个任务给出一组杠杆卡片，复用 `service/reward_diagnosis_service.build_reward_levers` 与单任务奖励诊断页同款口径，指明哪条在拖后腿、该做什么。
 
 ---
 

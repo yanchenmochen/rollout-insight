@@ -338,6 +338,15 @@
 - `staticmethod` `def analyze_transcript(path: str) -> Dict[str, Any]`
 - `staticmethod` `def batch_analyze(paths: Iterable[str]) -> List[Dict[str, Any]]`
 
+### `cross_task_compare_service_module` (`service/cross_task_compare_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def list_compareable_tasks() -> List[Dict[str, Any]]`
+- `staticmethod` `def summarize_reward_guidance(task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def build_cross_task_compare(task_ids: Sequence[int], *, instance_id: str='') -> Dict[str, Any]`
+- `staticmethod` `def build_instance_compare(task_ids: Sequence[int], instance_id: str) -> Dict[str, Any]`
+
 ### `failure_analysis_service_module` (`service/failure_analysis_service.py`)
 
 模块级公开函数（不在 class 内）：
@@ -482,6 +491,9 @@
 | `auth_controller` | POST | `/api/auth/register` | `api_register` | 注册端点。 |
 | `auth_controller` | POST | `/api/auth/logout` | `api_logout` | 登出：清 session，返回 /api/tasks。 |
 | `auth_controller` | GET | `/api/auth/me` | `api_me` | 返回当前用户 dict；未登录返回 401 JSON。 |
+| `cross_task_compare_controller` | GET | `/api/cross-task-compare` | `page_cross_task_compare` | 渲染跨任务对比页。 |
+| `cross_task_compare_controller` | GET | `/api/cross-task-compare.json` | `api_cross_task_compare` | 返回跨任务对比数据：共同题目的 epoch 趋势 + 变好/变坏清单 + 奖励指引。 |
+| `cross_task_compare_controller` | GET | `/api/cross-task-compare/instance.json` | `api_cross_task_instance` | 返回某一道题在多个任务上的逐次出现与通过率。 |
 | `failure_controller` | GET | `/api/tasks/{task_id}/failures` | `page_task_failures` | 任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。 |
 | `failure_controller` | GET | `/api/failures` | `page_failure_overview` | 旧地址。有 task_id 时与任务失败分析相同；没有 task_id 时只给回任务列表的说明。 |
 | `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}` | `page_failure_attempt` | 渲染 failure_attempt.html：单 attempt 怎么失败的。 |

@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+
+{% block title %}跨任务对比 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .lead { color: var(--ri-muted); font-size: 14px; margin-bottom: 16px; max-width: 960px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    .task-picker { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+    .task-picker select { min-width: 320px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--ri-border); border-radius: 4px; }
+    .task-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .task-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 14px;
+        font-size: 13px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .task-chip .baseline { font-size: 11px; color: #8a5a00; background: #fff3cd; border-radius: 8px; padding: 1px 7px; }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .chip.up { border-color: #2d6a4f; color: #2d6a4f; }
+    .chip.down { border-color: #c62828; color: #c62828; }
+    .chip.flat { border-color: #8a939c; color: #5c6b7a; }
+    .curve-chart { width: 100%; }
+    .curve-chart svg { width: 100%; height: auto; display: block; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-bottom: 6px; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+    table.cmp { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.cmp th, table.cmp td { padding: 6px 8px; border-bottom: 1px solid #e4e8ec; text-align: left; vertical-align: middle; }
+    table.cmp th { font-size: 11px; color: var(--ri-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .delta-up { color: #2d6a4f; font-weight: 600; }
+    .delta-down { color: #c62828; font-weight: 600; }
+    .delta-flat { color: #5c6b7a; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; font-size: 13px; }
+    .filters button { padding: 4px 10px; border: 1px solid var(--ri-border); background: #fff; border-radius: 12px; cursor: pointer; font-size: 12px; }
+    .filters button.active { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
+    .filters input[type="text"] { padding: 5px 9px; border: 1px solid var(--ri-border); border-radius: 4px; min-width: 260px; }
+    .instance-name { color: var(--ri-accent); text-decoration: none; font-family: ui-monospace, monospace; }
+    .instance-name:hover { text-decoration: underline; }
+    .lever-card { border: 1px solid var(--ri-border); border-left-width: 4px; border-radius: var(--te-radius);
+        padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+    .lever-card.ok { border-left-color: #2d6a4f; }
+    .lever-card.warn { border-left-color: #e0a800; }
+    .lever-card.bad { border-left-color: #c62828; }
+    .lever-card.unknown { border-left-color: #8a939c; }
+    .lever-title { font-size: 14px; font-weight: 600; }
+    .lever-value { float: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .lever-body { font-size: 12px; color: var(--ri-muted); margin-top: 4px; }
+    .lever-body b { color: var(--ri-ink); font-weight: 600; }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>跨任务对比</h1>
+<p class="lead">
+    选择多个任务（不同训练配置），页面只比较它们<strong>共同处理过的题目</strong>：
+    第 k 个 epoch = 该题第 k 次出现。回答的问题是
+    <strong>训练过程中哪些共同的题目变好了，哪些变坏了</strong>。
+    列表第一个任务是<strong>基线</strong>，其余任务与之比较末次通过率之差。
+    也可以只看某一道题，逐次对比它在各任务里的通过率变化。
+</p>
+
+<div class="section">
+    <h2>选择任务 <small>至少 2 个，最多 6 个</small></h2>
+    <div class="task-picker">
+        <select id="taskSelect" size="8" multiple>
+            {% for t in tasks %}
+            <option value="{{ t.task_id }}">#{{ t.task_id }} {{ t.task_name }}（{{ t.status or "—" }} · {{ t.attempt_count }} attempt）</option>
+            {% endfor %}
+        </select>
+        <div>
+            <button type="button" class="btn" id="compareBtn">开始对比</button>
+            <button type="button" class="btn btn-secondary" id="clearBtn">清空选择</button>
+        </div>
+    </div>
+    <div class="task-list" id="taskChips"></div>
+    <div class="muted" id="pickerHint">按住 Ctrl / Cmd 可多选。</div>
+</div>
+
+<div id="errorBox" class="alert alert-warning" style="display:none;"></div>
+<div id="loading" class="loading" style="display:none;">正在对比…</div>
+<div id="body" style="display:none;">
+    <div class="section" id="summarySection">
+        <h2>共同题目概览 <small id="commonMeta"></small></h2>
+        <div class="chip-row" id="summaryChips"></div>
+        <div class="muted" id="summaryNote"></div>
+    </div>
+
+    <div class="section" id="curveSection">
+        <h2>共同题目通过率趋势 <small>按 epoch 汇总 · 横轴 epoch</small></h2>
+        <div class="legend" id="curveLegend"></div>
+        <div class="curve-chart" id="curveChart"></div>
+        <div class="muted" id="curveNote"></div>
+    </div>
+
+    <div class="section" id="instanceSection">
+        <h2>题目级变化 <small>相对基线任务 · 按变化幅度排序</small></h2>
+        <div class="filters" id="filters">
+            <button type="button" data-dir="" class="active">全部</button>
+            <button type="button" data-dir="up">变好</button>
+            <button type="button" data-dir="down">变坏</button>
+            <button type="button" data-dir="flat">基本持平</button>
+            <input type="text" id="instanceSearch" placeholder="按题目名过滤" />
+            <span class="muted" id="filterCount"></span>
+        </div>
+        <table class="cmp">
+            <thead>
+                <tr>
+                    <th>题目</th>
+                    <th id="instHead">各任务末次通过率（相对基线）</th>
+                </tr>
+            </thead>
+            <tbody id="instanceBody"></tbody>
+        </table>
+        <div class="pager">
+            <button type="button" class="btn btn-secondary" id="prevPage">上一页</button>
+            <span id="pageLabel"></span>
+            <button type="button" class="btn btn-secondary" id="nextPage">下一页</button>
+        </div>
+    </div>
+
+    <div class="section" id="focusSection" style="display:none;">
+        <h2>单题明细 <small id="focusTitle"></small></h2>
+        <div id="focusBody"></div>
+    </div>
+
+    <div class="section" id="guidanceSection">
+        <h2>奖励还能怎么涨 <small>各任务的奖励杠杆 · 按严重程度排序</small></h2>
+        <div id="guidanceBody"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const $ = (id) => document.getElementById(id);
+    const PAGE = 30;
+    const PALETTE = ["#2d6a9f", "#c62828", "#2d6a4f", "#8a5a00", "#6a1b9a", "#0f766e"];
+    let DATA = null;
+    let selected = [];
+    let dirFilter = "";
+    let search = "";
+    let page = 0;
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+    function pct(v) {
+        if (v == null || Number.isNaN(v)) return "-";
+        return (Number(v) * 100).toFixed(1) + "%";
+    }
+    // 这些杠杆是「占比」语义，按百分比展示更直观
+    const RATIO_LEVER_KEYS = new Set([
+        "learnable_ratio", "timeout_ratio", "abort_ratio",
+        "saturated_pool_ratio", "hard_pool_ratio",
+    ]);
+    function signedPct(v) {
+        if (v == null || Number.isNaN(v)) return "-";
+        const n = Number(v) * 100;
+        const cls = n > 0.05 ? "delta-up" : (n < -0.05 ? "delta-down" : "delta-flat");
+        return `<span class="${cls}">${n > 0 ? "+" : ""}${n.toFixed(1)} pct</span>`;
+    }
+    function showError(msg) {
+        $("errorBox").style.display = "";
+        $("errorBox").textContent = msg;
+    }
+    function taskIds() {
+        return Array.from($("taskSelect").selectedOptions).map((o) => o.value);
+    }
+    function taskName(id) {
+        const t = (DATA && DATA.tasks || []).find((x) => String(x.task_id) === String(id));
+        return t ? t.task_name : ("#" + id);
+    }
+    function colorOf(id) {
+        const ids = (DATA && DATA.tasks || []).map((t) => String(t.task_id));
+        return PALETTE[Math.max(0, ids.indexOf(String(id))) % PALETTE.length];
+    }
+
+    // ------------------------------------------------------------- 任务选择
+    function renderChips() {
+        selected = taskIds();
+        const base = DATA ? DATA.baseline_task_id : null;
+        $("taskChips").innerHTML = selected.map((id, i) =>
+            `<span class="task-chip">${i === 0 && base == id ? '<span class="baseline">基线</span>' : ""}#${esc(id)} ${esc(taskName(id))}</span>`
+        ).join("") || `<span class="muted">尚未选择任务</span>`;
+    }
+
+    // ------------------------------------------------------------- 概览
+    function renderSummary() {
+        const tasks = DATA.tasks || [];
+        $("commonMeta").textContent = `共同题目 ${DATA.n_common} 道 · 基线 #${DATA.baseline_task_id} ${taskName(DATA.baseline_task_id)}`;
+        const chips = [];
+        (tasks || []).forEach((t) => {
+            const s = (DATA.summaries || {})[String(t.task_id)] || {};
+            const b = (DATA.buckets || {})[String(t.task_id)] || {};
+            chips.push(`<span class="chip">#${t.task_id} ${esc(t.task_name)} · 变好 <strong class="delta-up">${b.improved || 0}</strong> · 变坏 <strong class="delta-down">${b.worsened || 0}</strong></span>`);
+        });
+        $("summaryChips").innerHTML = chips.join("");
+        $("summaryNote").textContent = DATA.page_note || "";
+    }
+
+    // ------------------------------------------------------------- 曲线
+    function renderCurve() {
+        const curve = DATA.epoch_curve || [];
+        const tasks = DATA.tasks || [];
+        $("curveLegend").innerHTML = tasks.map((t) =>
+            `<span><i style="background:${colorOf(t.task_id)}"></i>#${t.task_id} ${esc(t.task_name)}</span>`
+        ).join("");
+        if (!curve.length) {
+            $("curveChart").innerHTML = `<div class="muted">没有可按 epoch 汇总的共同题目。</div>`;
+            $("curveNote").textContent = "";
+            return;
+        }
+
+        const w = 760, h = 230, padL = 52, padR = 14, padT = 12, padB = 32;
+        const plotW = w - padL - padR, plotH = h - padT - padB;
+        const n = curve.length;
+        const allVals = [];
+        curve.forEach((p) => tasks.forEach((t) => {
+            const v = p[String(t.task_id)];
+            if (v != null && !Number.isNaN(v)) allVals.push(Number(v));
+        }));
+        let yMin = Math.min(...allVals), yMax = Math.max(...allVals);
+        if (yMax === yMin) { yMin -= 0.02; yMax += 0.02; }
+        const padY = (yMax - yMin) * 0.15;
+        yMin = Math.max(0, yMin - padY); yMax = Math.min(1, yMax + padY);
+        const xAt = (i) => padL + (n === 1 ? plotW / 2 : i * plotW / (n - 1));
+        const yAt = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+        const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => yMin + t * (yMax - yMin));
+        let grid = "";
+        yTicks.forEach((tick) => {
+            const y = yAt(tick);
+            grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e4e8ec"></line>`;
+            grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${(tick * 100).toFixed(1)}%</text>`;
+        });
+        const labelEvery = n <= 12 ? 1 : Math.ceil(n / 8);
+        let xLabels = "";
+        curve.forEach((p, i) => {
+            if (i !== 0 && i !== n - 1 && i % labelEvery !== 0) return;
+            const x = xAt(i).toFixed(1);
+            xLabels += `<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.epoch}</text>`;
+        });
+
+        let paths = "", dots = "";
+        tasks.forEach((t) => {
+            const color = colorOf(t.task_id);
+            const pts = [];
+            curve.forEach((p, i) => {
+                const v = p[String(t.task_id)];
+                if (v == null || Number.isNaN(v)) return;
+                pts.push(`${xAt(i).toFixed(1)},${yAt(Number(v)).toFixed(1)}`);
+            });
+            if (!pts.length) return;
+            if (pts.length > 1) {
+                paths += `<polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="2"></polyline>`;
+            }
+            pts.forEach((pt) => {
+                const [x, y] = pt.split(",");
+                dots += `<circle cx="${x}" cy="${y}" r="3.4" fill="${color}"></circle>`;
+            });
+        });
+
+        $("curveChart").innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="共同题目通过率趋势">
+            <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
+            ${grid}
+            <line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+            <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+            ${xLabels}
+            <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">epoch</text>
+            ${paths}${dots}
+        </svg>`;
+        $("curveNote").textContent = "每个点 = 该 epoch 下所有共同题目的 attempt 加总通过率；只统计已经出现过该 epoch 的题目。";
+    }
+
+    // ------------------------------------------------------------- 题目表
+    function filteredInstances() {
+        let rows = (DATA && DATA.instances) || [];
+        if (dirFilter) {
+            rows = rows.filter((row) => {
+                const vals = Object.values(row.tasks || {})
+                    .map((t) => t.vs_baseline)
+                    .filter((v) => v != null && !Number.isNaN(v));
+                if (!vals.length) return false;
+                const best = Math.max(...vals), worst = Math.min(...vals);
+                if (dirFilter === "up") return best > 0.005;
+                if (dirFilter === "down") return worst < -0.005;
+                return Math.abs(best) <= 0.005 && Math.abs(worst) <= 0.005;
+            });
+        }
+        if (search) {
+            const kw = search.toLowerCase();
+            rows = rows.filter((row) => String(row.instance_id).toLowerCase().includes(kw));
+        }
+        return rows;
+    }
+
+    function renderInstances() {
+        const rows = filteredInstances();
+        const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+        if (page >= pages) page = pages - 1;
+        if (page < 0) page = 0;
+        const slice = rows.slice(page * PAGE, page * PAGE + PAGE);
+        const tasks = (DATA && DATA.tasks) || [];
+        $("filterCount").textContent = `${rows.length} 题`;
+        $("pageLabel").textContent = `${page + 1} / ${pages}`;
+        $("prevPage").disabled = page <= 0;
+        $("nextPage").disabled = page >= pages - 1;
+
+        $("instHead").innerHTML = tasks.map((t) =>
+            `<span style="color:${colorOf(t.task_id)}">#${t.task_id} ${esc(t.task_name)}</span>`
+        ).join(" &nbsp;·&nbsp; ");
+
+        $("instanceBody").innerHTML = slice.map((row) => {
+            const cells = tasks.map((t) => {
+                const info = (row.tasks || {})[String(t.task_id)] || {};
+                const vs = info.vs_baseline;
+                const vsText = (t.task_id === DATA.baseline_task_id)
+                    ? `<span class="delta-flat">基线</span>`
+                    : signedPct(vs);
+                const spark = (info.rates || []).map((r) => (r == null ? "-" : (r * 100).toFixed(0))).join(" → ");
+                return `<td class="num" title="逐次通过率：${esc(spark)}">
+                    ${pct(info.last_rate)}<br/><span class="muted">${vsText}</span></td>`;
+            }).join("");
+            return `<tr>
+                <td><a class="instance-name" href="#" data-name="${esc(row.instance_id)}">${esc(row.instance_id)}</a></td>
+                <td class="num" style="white-space:normal;">${cells}</td>
+            </tr>`;
+        }).join("") || `<tr><td colspan="2" class="muted">没有符合条件的题目。</td></tr>`;
+
+        $("instanceBody").querySelectorAll("a[data-name]").forEach((a) => {
+            a.addEventListener("click", (ev) => {
+                ev.preventDefault();
+                loadFocus(a.getAttribute("data-name"));
+            });
+        });
+    }
+
+    // ------------------------------------------------------------- 单题明细
+    async function loadFocus(name) {
+        try {
+            const resp = await fetch(`/api/cross-task-compare/instance.json?task_ids=${encodeURIComponent(selected.join(","))}&instance_id=${encodeURIComponent(name)}`);
+            const payload = await resp.json();
+            if (!payload || payload.code !== 0) throw new Error((payload && payload.msg) || resp.status);
+            const rows = (payload.data && payload.data.focus_rows) || [];
+            const tasks = (payload.data && payload.data.tasks) || [];
+            const sec = $("focusSection");
+            sec.style.display = "";
+            $("focusTitle").textContent = name;
+            $("focusBody").innerHTML = `<table class="cmp">
+                <thead><tr><th>任务</th><th>出现次数</th><th>首次通过率</th><th>末次通过率</th><th>首尾差</th><th>逐次通过率</th></tr></thead>
+                <tbody>${tasks.map((t) => {
+                    const info = (rows[0] && rows[0].tasks && rows[0].tasks[String(t.task_id)]) || {};
+                    const delta = info.delta;
+                    const cls = delta == null ? "delta-flat" : (delta > 0.005 ? "delta-up" : (delta < -0.005 ? "delta-down" : "delta-flat"));
+                    return `<tr>
+                        <td><span style="color:${colorOf(t.task_id)}">#${t.task_id} ${esc(t.task_name)}</span></td>
+                        <td class="num">${info.n_visits || 0}</td>
+                        <td class="num">${pct(info.first_rate)}</td>
+                        <td class="num">${pct(info.last_rate)}</td>
+                        <td class="num"><span class="${cls}">${delta == null ? "-" : ((delta > 0 ? "+" : "") + (delta * 100).toFixed(1) + " pct")}</span></td>
+                        <td class="num mono">${(info.rates || []).map((r) => (r == null ? "-" : (r * 100).toFixed(0) + "%")).join(" → ")}</td>
+                    </tr>`;
+                }).join("")}</tbody></table>`;
+            sec.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        } catch (e) {
+            showError("加载单题明细失败：" + (e && e.message ? e.message : e));
+        }
+    }
+
+    // ------------------------------------------------------------- 奖励指引
+    function renderGuidance() {
+        const rows = DATA.reward_guidance || [];
+        if (!rows.length) {
+            $("guidanceBody").innerHTML = `<div class="muted">没有可用的奖励杠杆数据。</div>`;
+            return;
+        }
+        $("guidanceBody").innerHTML = rows.map((g) => {
+            const levers = (g.levers || []).map((l) => {
+                const value = RATIO_LEVER_KEYS.has(l.key)
+                    ? (l.value == null ? "-" : pct(l.value))
+                    : (l.value == null ? "-" : Number(l.value).toFixed(4));
+                return `<div class="lever-card ${esc(l.status)}">
+                    <span class="lever-value">${esc(value)}</span>
+                    <div class="lever-title">${esc(l.title)}</div>
+                    <div class="lever-body"><b>现象：</b>${esc(l.phenomenon)}<br/><b>建议：</b>${esc(l.action)}</div>
+                </div>`;
+            }).join("");
+            return `<h3 style="font-size:14px;margin:10px 0 6px;color:${colorOf(g.task_id)};">
+                    #${g.task_id} ${esc(g.task_name)}</h3>${levers}`;
+        }).join("");
+    }
+
+    // ------------------------------------------------------------- 加载
+    async function load() {
+        if (selected.length < 2) {
+            showError("请至少选择 2 个任务再对比。");
+            return;
+        }
+        $("loading").style.display = "";
+        $("errorBox").style.display = "none";
+        try {
+            const resp = await fetch(`/api/cross-task-compare.json?task_ids=${encodeURIComponent(selected.join(","))}`);
+            const payload = await resp.json();
+            if (!payload || payload.code !== 0) throw new Error((payload && payload.msg) || resp.status);
+            DATA = payload.data || {};
+            $("loading").style.display = "none";
+            $("body").style.display = "";
+            renderChips();
+            renderSummary();
+            renderCurve();
+            renderInstances();
+            renderGuidance();
+        } catch (e) {
+            $("loading").style.display = "none";
+            showError("跨任务对比失败：" + (e && e.message ? e.message : e));
+        }
+    }
+
+    $("compareBtn").addEventListener("click", () => { page = 0; load(); });
+    $("clearBtn").addEventListener("click", () => {
+        Array.from($("taskSelect").options).forEach((o) => { o.selected = false; });
+        renderChips();
+    });
+    $("taskSelect").addEventListener("change", renderChips);
+    document.querySelectorAll("#filters button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            dirFilter = btn.dataset.dir || "";
+            page = 0;
+            document.querySelectorAll("#filters button").forEach((b) => b.classList.toggle("active", b === btn));
+            renderInstances();
+        });
+    });
+    $("instanceSearch").addEventListener("input", (ev) => {
+        search = (ev.target.value || "").trim();
+        page = 0;
+        renderInstances();
+    });
+    $("prevPage").addEventListener("click", () => { page--; renderInstances(); });
+    $("nextPage").addEventListener("click", () => { page++; renderInstances(); });
+
+    renderChips();
+})();
+</script>
+{% endblock %}
