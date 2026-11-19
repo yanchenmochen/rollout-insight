@@ -292,6 +292,23 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
   python scripts/gen_icon_css.py --check   # CI 校验：CSS 与图标目录是否一致
   ```
 
+### 5.7 站点图标（浏览器标签页 / 书签）
+
+浏览器标签页、书签栏与收藏夹里显示的站点图标，由 `static/branding/ri_icon_source.png`（1024×1024 设计稿）派生。
+
+- **真源唯一**：`static/branding/ri_icon_source.png` 是唯一真源，其余尺寸全部由脚本生成，不手改产物。
+- **产物清单**：`static/favicon.ico`（内含 16 / 32 / 48 三档，浏览器自动挑选）、`static/favicon-16x16.png`、`static/favicon-32x32.png`、`static/favicon-48x48.png`、`static/apple-touch-icon.png`（180×180，iOS 添加到主屏）、`static/icon-192.png` 与 `static/icon-512.png`（PWA）。
+- **访问路径**：模板 `base.html` 在 `<head>` 里声明图标；另有根路径端点 `/favicon.ico`、`/apple-touch-icon.png`、`/site.webmanifest`（PWA manifest）——这些端点**不要求登录**，否则未登录时页面被 302 到登录页时标签页会退回默认图标。实现见 `controller/site_controller.py`。
+- **小尺寸优化**：16px 下原图细节会糊，因此生成时统一做饱和度 / 对比度 / 亮度微调 + UnsharpMask 锐化，并叠一层圆角遮罩，让图标在浅色与深色标签页上边缘都干净。
+- **改图标**：替换源图后重跑
+
+  ```bash
+  python scripts/gen_favicon.py          # 重新生成全部图标
+  python scripts/gen_favicon.py --check   # CI 校验：图标是否与源图一致
+  ```
+
+> 依赖 Pillow（`pip install Pillow`）；缺失时脚本会给出明确提示并返回退出码 1。
+
 ---
 
 ## 6. 错误码约定

@@ -549,6 +549,9 @@
 | `segment_controller` | GET | `/api/segments/{segment_id}` | `page_segment_transcript` | 渲染 segment_transcript.html（v0.4.0 T5：注入 turns 列表 + 兄弟 segment 导航）。 |
 | `segment_controller` | GET | `/api/segments/{segment_id}/transcript.json` | `api_segment_transcript_json` | 调 SegmentService.ensure_transcript 后返回 JSON。 |
 | `segment_controller` | GET | `/api/segments/{segment_id}/turns.json` | `api_segment_turns_json` | 按需返回某个 segment 的 turn 列表（供 rollout 详情页懒加载）。 |
+| `site_controller` | GET | `/favicon.ico` | `get_favicon` | 返回多尺寸 favicon.ico（浏览器标签页 / 书签栏图标）。 |
+| `site_controller` | GET | `/apple-touch-icon.png` | `get_apple_touch_icon` | 返回 180×180 apple-touch-icon.png（iOS 添加到主屏幕）。 |
+| `site_controller` | GET | `/site.webmanifest` | `get_site_manifest` | 返回 PWA manifest（声明名称、主题色与各尺寸图标）。 |
 | `task_controller` | GET | `/` | `page_task_list` | 根路径 → task_list.html（直接注入任务列表到模板上下文）。 |
 | `task_controller` | GET | `/api/tasks` | `api_list_tasks` | 任务列表端点。 |
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
