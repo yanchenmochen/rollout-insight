@@ -227,7 +227,6 @@ def _build_instance_rows(
     rows: List[Dict[str, Any]] = []
     for instance_id in common:
         entry: Dict[str, Any] = {"instance_id": instance_id, "tasks": {}}
-        baseline_delta: Optional[float] = None
         for task_id in task_ids:
             visits = per_task_visits.get(task_id, {}).get(instance_id) or []
             first, last = _first_last_rate(visits)
@@ -242,13 +241,6 @@ def _build_instance_rows(
                 ),
                 "rates": [v.get("rate") for v in visits],
             }
-            if task_id == baseline_id:
-                baseline_delta = (
-                    (last - first)
-                    if (first is not None and last is not None and len(visits) >= 2)
-                    else None
-                )
-        entry["baseline_delta"] = baseline_delta
         # 相对基线的差值：各任务末次通过率 减 基线末次通过率
         base_last = (entry["tasks"].get(str(baseline_id)) or {}).get("last_rate")
         for task_id in task_ids:
@@ -345,12 +337,15 @@ def build_cross_task_compare(
     task_ids: Sequence[int],
     *,
     instance_id: str = "",
+    baseline_task_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """构建跨任务对比视图。
 
     Args:
         task_ids: 参与对比的任务（至少 2 个）。
         instance_id: 只看某一道题时传入；为空则看全部共同题目。
+        baseline_task_id: 用户主动选择的**基线任务**；为空时取第一个任务。
+            基线决定「相对基线」这一列的参照对象。
     """
     from data.rollout_insight_exception import RolloutInsightException
 
@@ -394,7 +389,16 @@ def build_cross_task_compare(
     if len(common) > _MAX_COMMON_INSTANCES:
         common = common[:_MAX_COMMON_INSTANCES]
 
+    # 基线任务：用户显式指定优先；指定的不在参与对比的任务里则退回第一个
     baseline_id = cleaned[0]
+    if baseline_task_id is not None:
+        try:
+            wanted = int(baseline_task_id)
+        except (TypeError, ValueError):
+            wanted = 0
+        if wanted in cleaned:
+            baseline_id = wanted
+
     focus = str(instance_id or "").strip()
     focus_rows: List[Dict[str, Any]] = []
     if focus:
@@ -438,9 +442,11 @@ def build_cross_task_compare(
         len(common),
         baseline_id,
     )
+    baseline_name = (task_meta.get(baseline_id) or {}).get("task_name") or ""
     return {
         "tasks": [task_meta[task_id] for task_id in cleaned],
         "baseline_task_id": baseline_id,
+        "baseline_task_name": baseline_name,
         "n_common": len(common),
         "common_instances": common,
         "summaries": summaries,
@@ -457,12 +463,16 @@ def build_cross_task_compare(
         "page_note": (
             "共同题目 = 所有选中任务都出现过的题目；第 k 个 epoch = 该题第 k 次出现。"
             "「变好 / 变坏」按各任务自身训练轨迹（首末通过率之差）统计；"
-            "「相对基线」列比较末次通过率与基线任务（列表第一个）之差。"
+            "「相对基线」列比较末次通过率与基线任务（页面顶部可切换）之差。"
         ),
     }
 
 
-def build_instance_compare(task_ids: Sequence[int], instance_id: str) -> Dict[str, Any]:
+def build_instance_compare(
+    task_ids: Sequence[int],
+    instance_id: str,
+    baseline_task_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """只看一道题在多个任务上的训练过程变化。"""
     name = str(instance_id or "").strip()
     if not name:
@@ -471,4 +481,8 @@ def build_instance_compare(task_ids: Sequence[int], instance_id: str) -> Dict[st
         raise RolloutInsightException(
             RolloutInsightException.INVALID_ARGUMENT, "instance_id 不能为空"
         )
-    return build_cross_task_compare(task_ids, instance_id=name)
+    return build_cross_task_compare(
+        task_ids,
+        instance_id=name,
+        baseline_task_id=baseline_task_id,
+    )

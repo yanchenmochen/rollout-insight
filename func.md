@@ -356,8 +356,8 @@
 
 - `staticmethod` `def list_compareable_tasks() -> List[Dict[str, Any]]`
 - `staticmethod` `def summarize_reward_guidance(task_id: int) -> Dict[str, Any]`
-- `staticmethod` `def build_cross_task_compare(task_ids: Sequence[int], *, instance_id: str='') -> Dict[str, Any]`
-- `staticmethod` `def build_instance_compare(task_ids: Sequence[int], instance_id: str) -> Dict[str, Any]`
+- `staticmethod` `def build_cross_task_compare(task_ids: Sequence[int], *, instance_id: str='', baseline_task_id:…`
+- `staticmethod` `def build_instance_compare(task_ids: Sequence[int], instance_id: str, baseline_task_id: Optiona…`
 
 ### `failure_analysis_service_module` (`service/failure_analysis_service.py`)
 

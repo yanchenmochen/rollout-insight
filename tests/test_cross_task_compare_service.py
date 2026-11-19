@@ -228,6 +228,44 @@ class TestBuildCrossTaskCompare(unittest.TestCase):
         self.assertEqual(len(data["focus_rows"]), 1)
         self.assertEqual(data["focus_rows"][0]["instance_id"], "a")
 
+    def test_explicit_baseline_is_used(self):
+        """用户主动指定的基线任务要生效。"""
+        rows = {
+            1: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+            2: [_row(1, 0, "pass", "a"), _row(2, 0, "fail", "a")],
+        }
+        patches = self._patch_db(rows)
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1, 2], baseline_task_id=2)
+        self.assertEqual(data["baseline_task_id"], 2)
+        self.assertEqual(data["baseline_task_name"], "task-2")
+        # 基线是任务 2（末次通过率 0），任务 1 末次通过率 1 → 相对基线 +1
+        row = data["instances"][0]
+        self.assertAlmostEqual(row["tasks"]["1"]["vs_baseline"], 1.0)
+        self.assertAlmostEqual(row["tasks"]["2"]["vs_baseline"], 0.0)
+
+    def test_invalid_baseline_falls_back_to_first(self):
+        """非法基线 id 回退到第一个任务。"""
+        rows = {
+            1: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+            2: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+        }
+        patches = self._patch_db(rows)
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1, 2], baseline_task_id=999)
+        self.assertEqual(data["baseline_task_id"], 1)
+
+    def test_baseline_outside_task_list_falls_back_to_first(self):
+        """基线不在参与对比的任务里时回退到第一个任务。"""
+        rows = {
+            1: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+            2: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+        }
+        patches = self._patch_db(rows)
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1, 2], baseline_task_id=7)
+        self.assertEqual(data["baseline_task_id"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

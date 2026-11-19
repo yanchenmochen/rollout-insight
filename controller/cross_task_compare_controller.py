@@ -61,13 +61,26 @@ async def api_cross_task_compare(
     request: Request,
     task_ids: str = Query("", description="参与对比的任务 id，逗号分隔"),
     instance_id: str = Query("", description="只看某一道题时传入"),
+    baseline_task_id: Optional[int] = Query(
+        None, description="用户主动选择的基线任务 id；为空取第一个任务"
+    ),
 ) -> Response:
     """返回跨任务对比数据：共同题目的 epoch 趋势 + 变好/变坏清单 + 奖励指引。"""
     from service.cross_task_compare_service import build_cross_task_compare
 
     ids = _parse_task_ids(task_ids)
-    logger.info("跨任务对比 task_ids={} instance_id={}", ids, instance_id)
-    data = await asyncio.to_thread(build_cross_task_compare, ids, instance_id=instance_id)
+    logger.info(
+        "跨任务对比 task_ids={} instance_id={} baseline={}",
+        ids,
+        instance_id,
+        baseline_task_id,
+    )
+    data = await asyncio.to_thread(
+        build_cross_task_compare,
+        ids,
+        instance_id=instance_id,
+        baseline_task_id=baseline_task_id,
+    )
     return Response.success(msg="ok", data=data)
 
 
@@ -76,11 +89,24 @@ async def api_cross_task_instance(
     request: Request,
     task_ids: str = Query("", description="参与对比的任务 id，逗号分隔"),
     instance_id: str = Query("", description="题目名（instance_id）"),
+    baseline_task_id: Optional[int] = Query(
+        None, description="用户主动选择的基线任务 id；为空取第一个任务"
+    ),
 ) -> Response:
     """返回某一道题在多个任务上的逐次出现与通过率。"""
     from service.cross_task_compare_service import build_instance_compare
 
     ids = _parse_task_ids(task_ids)
-    logger.info("跨任务单题对比 task_ids={} instance_id={}", ids, instance_id)
-    data = await asyncio.to_thread(build_instance_compare, ids, instance_id)
+    logger.info(
+        "跨任务单题对比 task_ids={} instance_id={} baseline={}",
+        ids,
+        instance_id,
+        baseline_task_id,
+    )
+    data = await asyncio.to_thread(
+        build_instance_compare,
+        ids,
+        instance_id,
+        baseline_task_id=baseline_task_id,
+    )
     return Response.success(msg="ok", data=data)
