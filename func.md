@@ -192,7 +192,7 @@
 - `def available_curve_metrics() -> List[Dict[str, Any]]` — 列出内置指标，供页面渲染勾选框。
 - `def normalize_curve_keys(keys: Optional[Sequence[str]]) -> List[str]` — 规整指标 key 列表：去空白、去重、保持顺序、过滤未知内置键。
 - `def match_tag(key: str, tag: str) -> bool` — 判断某个 TB tag 是否命中指标 key 的匹配规则。
-- `def resolve_metric_tags(key: str, available_tags: Sequence[str]) -> List[str]` — 在可用 tag 里找出命中该指标的所有 tag（按 prefer 顺序优先）。
+- `def resolve_metric_tags(key: str, available_tags: Sequence[str]) -> List[str]` — 在可用 tag 里找出命中该指标的所有 tag。
 - `def is_custom_key(key: str) -> bool` — 是否用户自定义指标键。
 
 ## db/ — ORM 模型

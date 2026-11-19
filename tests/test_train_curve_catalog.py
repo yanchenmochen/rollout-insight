@@ -20,22 +20,30 @@ from utils.train_curve_catalog import (
 
 class TestCurveCatalog(unittest.TestCase):
     def test_default_keys_cover_requested_buttons(self):
-        # 用户要求的默认按钮组：混合奖励 / 长度 / 梯度 / entropy_loss / context_exhausted
+        # 用户要求的默认按钮组：奖励 / 长度 / 梯度 / entropy_loss /
+        # context_exhausted / max_fake_responses / rollout_time
         self.assertEqual(
             DEFAULT_CURVE_KEYS,
             [
-                "mixed_reward",
+                "raw_reward",
                 "response_length",
                 "grad_norm",
                 "entropy_loss",
                 "context_exhausted",
+                "max_fake_responses",
+                "rollout_time",
             ],
         )
 
     def test_labels(self):
-        self.assertEqual(curve_metric("mixed_reward")["label"], "混合奖励")
+        self.assertEqual(curve_metric("raw_reward")["label"], "奖励")
         self.assertEqual(curve_metric("response_length")["label"], "长度")
         self.assertEqual(curve_metric("grad_norm")["label"], "梯度")
+
+    def test_mixed_reward_is_removed(self):
+        # 混合奖励已被「奖励」三合一取代
+        self.assertIsNone(curve_metric("mixed_reward"))
+        self.assertNotIn("mixed_reward", DEFAULT_CURVE_KEYS)
 
     def test_unknown_metric_returns_none(self):
         self.assertIsNone(curve_metric("nope"))
@@ -51,28 +59,62 @@ class TestCurveCatalog(unittest.TestCase):
 
 class TestMatchTag(unittest.TestCase):
     def test_matches_prefixed_tags(self):
-        self.assertTrue(match_tag("mixed_reward", "rollout/mixed_reward"))
-        self.assertTrue(match_tag("response_length", "actor/response_length"))
+        self.assertTrue(match_tag("raw_reward", "rollout/generated/raw_reward"))
+        self.assertTrue(match_tag("response_length", "actor/response_len/mean"))
         self.assertTrue(match_tag("grad_norm", "optimizer/grad_norm"))
         self.assertTrue(match_tag("entropy_loss", "actor/entropy_loss"))
-        self.assertTrue(match_tag("context_exhausted", "rollout/context_exhausted"))
+        self.assertTrue(match_tag("context_exhausted", "rollout/outcome/context_exhausted"))
+        self.assertTrue(match_tag("max_fake_responses", "rollout/outcome/max_fake_responses"))
+        self.assertTrue(match_tag("rollout_time", "perf/rollout_time"))
+
+    def test_does_not_match_derived_metrics(self):
+        # 派生指标（coverage / count）不应被当成奖励曲线
+        self.assertFalse(match_tag("raw_reward", "rollout/generated/raw_reward_coverage"))
+        self.assertFalse(match_tag("raw_reward", "rollout/filtered/raw_reward_measured_attempt_count"))
+        # rollout_time 的 attempt 级分解不是主曲线
+        self.assertFalse(match_tag("rollout_time", "perf/rollout_time/attempt/agent_run"))
 
     def test_non_matching_tag(self):
-        self.assertFalse(match_tag("mixed_reward", "actor/loss"))
+        self.assertFalse(match_tag("raw_reward", "actor/loss"))
         self.assertFalse(match_tag("grad_norm", ""))
 
     def test_custom_key_requires_exact_tag(self):
         self.assertTrue(is_custom_key("custom:my_metric"))
-        self.assertFalse(is_custom_key("mixed_reward"))
+        self.assertFalse(is_custom_key("raw_reward"))
         self.assertTrue(match_tag("custom:my_metric", "my_metric"))
         self.assertFalse(match_tag("custom:my_metric", "prefix/my_metric"))
 
 
 class TestResolveMetricTags(unittest.TestCase):
     def test_prefers_configured_tag_order(self):
-        tags = ["critic/mixed_reward", "rollout/mixed_reward", "other/mixed_reward"]
-        resolved = resolve_metric_tags("mixed_reward", tags)
-        self.assertEqual(resolved[0], "rollout/mixed_reward")
+        tags = ["critic/grad_norm", "train/grad_norm", "other/grad_norm"]
+        resolved = resolve_metric_tags("grad_norm", tags)
+        self.assertEqual(resolved[0], "train/grad_norm")
+
+    def test_reward_resolves_to_three_standard_tags(self):
+        tags = [
+            "rollout/generated/raw_reward",
+            "rollout/generated/paired_raw_reward",
+            "rollout/filtered/raw_reward",
+            "rollout/generated/raw_reward_coverage",
+            "rollout/population/raw_reward",
+        ]
+        resolved = resolve_metric_tags("raw_reward", tags)
+        self.assertEqual(
+            resolved,
+            [
+                "rollout/generated/raw_reward",
+                "rollout/generated/paired_raw_reward",
+                "rollout/filtered/raw_reward",
+            ],
+        )
+
+    def test_falls_back_to_regex_when_standard_tags_missing(self):
+        tags = ["custom_ns/raw_reward", "custom_ns/paired_raw_reward"]
+        resolved = resolve_metric_tags("raw_reward", tags)
+        self.assertEqual(
+            resolved, ["custom_ns/raw_reward", "custom_ns/paired_raw_reward"]
+        )
 
     def test_returns_empty_when_no_match(self):
         self.assertEqual(resolve_metric_tags("grad_norm", ["actor/loss"]), [])
@@ -89,8 +131,8 @@ class TestResolveMetricTags(unittest.TestCase):
 class TestNormalizeCurveKeys(unittest.TestCase):
     def test_filters_unknown_and_dedupes(self):
         self.assertEqual(
-            normalize_curve_keys(["mixed_reward", "mixed_reward", "nope", "  "]),
-            ["mixed_reward"],
+            normalize_curve_keys(["raw_reward", "raw_reward", "nope", "  "]),
+            ["raw_reward"],
         )
 
     def test_keeps_custom_keys(self):
