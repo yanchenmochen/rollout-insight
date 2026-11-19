@@ -58,6 +58,37 @@
     .lever-body b { color: var(--ri-ink); font-weight: 600; }
     .loading { color: var(--ri-muted); padding: 12px 0; }
     .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+    /* 基线任务选择 */
+    .baseline-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px;
+        padding: 8px 10px; background: #f8fafb; border: 1px solid var(--ri-border); border-radius: var(--te-radius); }
+    .baseline-picker label { font-size: 13px; font-weight: 600; }
+    .baseline-picker select { padding: 5px 8px; border: 1px solid var(--ri-border); border-radius: 4px; min-width: 280px; max-width: 100%; }
+    .baseline-picker .muted { font-weight: 400; }
+    /* 题目行可展开 */
+    tr.instance-row > td { vertical-align: top; }
+    .instance-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: none;
+        padding: 0; cursor: pointer; color: var(--ri-accent); font-family: ui-monospace, monospace;
+        font-size: 12px; text-align: left; }
+    .instance-toggle:hover { text-decoration: underline; }
+    .instance-toggle .ri-icon { width: 12px; height: 12px; transition: transform 0.15s ease; }
+    tr.instance-row.open .instance-toggle .ri-icon { transform: rotate(90deg); }
+    /* 展开后的抽屉 */
+    .instance-detail { background: #fafbfc; }
+    .instance-detail-inner { padding: 10px 12px; }
+    .detail-tasks { display: flex; gap: 16px; flex-wrap: wrap; }
+    .detail-task { min-width: 230px; flex: 1 1 230px; border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 8px 10px; background: #fff; }
+    .detail-task-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+    .detail-task-head .swatch { width: 12px; height: 3px; border-radius: 2px; flex: 0 0 auto; }
+    .detail-spark { width: 100%; }
+    .detail-spark svg { width: 100%; height: auto; display: block; }
+    .detail-visits { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+    .visit-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #f3f5f8;
+        border: 1px solid var(--ri-border); font-variant-numeric: tabular-nums; }
+    .visit-badge .ep { color: var(--ri-muted); margin-right: 3px; }
+    .detail-rate { font-size: 12px; color: var(--ri-muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .detail-rate b { color: var(--ri-ink); }
+    .instance-name { color: var(--ri-accent); text-decoration: none; font-family: ui-monospace, monospace; }
 </style>
 {% endblock %}
 
@@ -67,8 +98,9 @@
     选择多个任务（不同训练配置），页面只比较它们<strong>共同处理过的题目</strong>：
     第 k 个 epoch = 该题第 k 次出现。回答的问题是
     <strong>训练过程中哪些共同的题目变好了，哪些变坏了</strong>。
-    列表第一个任务是<strong>基线</strong>，其余任务与之比较末次通过率之差。
-    也可以只看某一道题，逐次对比它在各任务里的通过率变化。
+    在任务选择下方<strong>主动指定一个基线任务</strong>，其余任务都与它比较末次通过率之差
+    （<span class="delta-up">变好绿色</span> / <span class="delta-down">变差红色</span>）。
+    每道题都可以展开，看到各任务的通过率折线与每次通过的题数。
 </p>
 
 <div class="section">
@@ -83,6 +115,11 @@
             <button type="button" class="btn" id="compareBtn">开始对比</button>
             <button type="button" class="btn btn-secondary" id="clearBtn">清空选择</button>
         </div>
+    </div>
+    <div class="baseline-picker" id="baselinePicker" style="display:none;">
+        <label for="baselineSelect"><span class="ri-icon ri-icon-scale"></span> 基线任务</label>
+        <select id="baselineSelect"></select>
+        <span class="muted">其余任务都与它比较末次通过率之差；变好用绿色、变差用红色。</span>
     </div>
     <div class="task-list" id="taskChips"></div>
     <div class="muted" id="pickerHint">按住 Ctrl / Cmd 可多选。</div>
@@ -150,9 +187,11 @@
     const PALETTE = ["#2d6a9f", "#c62828", "#2d6a4f", "#8a5a00", "#6a1b9a", "#0f766e"];
     let DATA = null;
     let selected = [];
+    let baselineId = null;     // 用户主动选择的基线任务
     let dirFilter = "";
     let search = "";
     let page = 0;
+    const expanded = new Set();  // 已展开的题目
 
     function esc(s) {
         return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -181,6 +220,8 @@
     function taskIds() {
         return Array.from($("taskSelect").selectedOptions).map((o) => o.value);
     }
+
+    // ------------------------------------------------------------- 任务选择
     function taskName(id) {
         const t = (DATA && DATA.tasks || []).find((x) => String(x.task_id) === String(id));
         return t ? t.task_name : ("#" + id);
@@ -190,12 +231,34 @@
         return PALETTE[Math.max(0, ids.indexOf(String(id))) % PALETTE.length];
     }
 
-    // ------------------------------------------------------------- 任务选择
+    // 基线下拉：只列出参与对比的任务
+    function renderBaselinePicker() {
+        const picker = $("baselinePicker");
+        const select = $("baselineSelect");
+        const ids = selected.slice();
+        if (ids.length < 2) {
+            picker.style.display = "none";
+            return;
+        }
+        picker.style.display = "";
+        // 基线必须是被选中的任务之一；否则回退到第一个
+        if (baselineId == null || ids.indexOf(String(baselineId)) < 0) {
+            baselineId = ids[0];
+        }
+        select.innerHTML = ids.map((id) => {
+            const name = taskName(id);
+            return `<option value="${esc(id)}" ${String(id) === String(baselineId) ? "selected" : ""}>#${esc(id)} ${esc(name)}</option>`;
+        }).join("");
+    }
+
     function renderChips() {
         selected = taskIds();
-        const base = DATA ? DATA.baseline_task_id : null;
-        $("taskChips").innerHTML = selected.map((id, i) =>
-            `<span class="task-chip">${i === 0 && base == id ? '<span class="baseline">基线</span>' : ""}#${esc(id)} ${esc(taskName(id))}</span>`
+        if (baselineId != null && selected.indexOf(String(baselineId)) < 0) {
+            baselineId = selected.length ? selected[0] : null;
+        }
+        renderBaselinePicker();
+        $("taskChips").innerHTML = selected.map((id) =>
+            `<span class="task-chip">${String(id) === String(baselineId) ? '<span class="baseline">基线</span>' : ""}#${esc(id)} ${esc(taskName(id))}</span>`
         ).join("") || `<span class="muted">尚未选择任务</span>`;
     }
 
@@ -207,7 +270,8 @@
         (tasks || []).forEach((t) => {
             const s = (DATA.summaries || {})[String(t.task_id)] || {};
             const b = (DATA.buckets || {})[String(t.task_id)] || {};
-            chips.push(`<span class="chip">#${t.task_id} ${esc(t.task_name)} · 变好 <strong class="delta-up">${b.improved || 0}</strong> · 变坏 <strong class="delta-down">${b.worsened || 0}</strong></span>`);
+            const isBase = String(t.task_id) === String(DATA.baseline_task_id);
+            chips.push(`<span class="chip">#${t.task_id} ${esc(t.task_name)}${isBase ? ' <strong style="font-size:11px;color:#8a5a00;">基线</strong>' : ""} · 变好 <strong class="delta-up">${b.improved || 0}</strong> · 变坏 <strong class="delta-down">${b.worsened || 0}</strong></span>`);
         });
         $("summaryChips").innerHTML = chips.join("");
         $("summaryNote").textContent = DATA.page_note || "";
@@ -309,6 +373,76 @@
         return rows;
     }
 
+    // 单条任务的通过率折线（sparkline）
+    function sparkline(rates, color) {
+        const vals = (rates || []).filter((r) => r != null && !Number.isNaN(r));
+        if (!vals.length) {
+            return `<div class="muted" style="font-size:11px;">无通过率数据</div>`;
+        }
+        const w = 210, h = 46, pad = 4;
+        const plotW = w - pad * 2, plotH = h - pad * 2;
+        let yMin = Math.min(...vals), yMax = Math.max(...vals);
+        if (yMax === yMin) { yMin = Math.max(0, yMin - 0.02); yMax = Math.min(1, yMax + 0.02); }
+        if (yMax === yMin) { yMax = yMin + 0.02; }
+        const n = vals.length;
+        const xAt = (i) => pad + (n === 1 ? plotW / 2 : i * plotW / (n - 1));
+        const yAt = (v) => pad + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+        const pts = vals.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`);
+        const dots = vals.map((v, i) =>
+            `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(v).toFixed(1)}" r="2.2" fill="${color}"></circle>`
+        ).join("");
+        // 0% 参考线
+        const zeroY = yAt(Math.max(yMin, 0));
+        return `<div class="detail-spark"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="通过率折线">
+            <line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${w - pad}" y2="${zeroY.toFixed(1)}" stroke="#e4e8ec"></line>
+            <polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6"></polyline>
+            ${dots}
+        </svg></div>`;
+    }
+
+    // 每个任务的通过数量徽章（n_pass / n_attempts）
+    function visitBadges(visits) {
+        if (!visits || !visits.length) return "";
+        return `<div class="detail-visits">${visits.map((v) =>
+            `<span class="visit-badge" title="epoch ${v.epoch}（rollout ${v.rollout_id}）通过 ${v.n_pass}/${v.n_attempts}">
+                <span class="ep">E${v.epoch}</span>${v.n_pass}/${v.n_attempts}</span>`
+        ).join("")}</div>`;
+    }
+
+    function renderInstanceDetail(row) {
+        const tasks = (DATA && DATA.tasks) || [];
+        const cards = tasks.map((t) => {
+            const info = (row.tasks || {})[String(t.task_id)] || {};
+            const color = colorOf(t.task_id);
+            const delta = info.delta;
+            const cls = delta == null ? "delta-flat" : (delta > 0.005 ? "delta-up" : (delta < -0.005 ? "delta-down" : "delta-flat"));
+            const vs = info.vs_baseline;
+            const vsCls = vs == null ? "delta-flat" : (vs > 0.005 ? "delta-up" : (vs < -0.005 ? "delta-down" : "delta-flat"));
+            const isBase = String(t.task_id) === String(DATA.baseline_task_id);
+            return `<div class="detail-task">
+                <div class="detail-task-head">
+                    <span class="swatch" style="background:${color}"></span>
+                    <span>#${t.task_id} ${esc(t.task_name)}</span>
+                    ${isBase ? '<span class="baseline" style="font-size:10px;color:#8a5a00;background:#fff3cd;border-radius:8px;padding:0 6px;">基线</span>' : ""}
+                </div>
+                ${sparkline(info.rates || [], color)}
+                <div class="detail-rate">
+                    出现 <b>${info.n_visits || 0}</b> 次 ·
+                    末次 <b>${pct(info.last_rate)}</b> ·
+                    首尾差 <span class="${cls}">${delta == null ? "-" : ((delta > 0 ? "+" : "") + (delta * 100).toFixed(1) + " pct")}</span>
+                    ${isBase ? "" : ` · 相对基线 <span class="${vsCls}">${vs == null ? "-" : ((vs > 0 ? "+" : "") + (vs * 100).toFixed(1) + " pct")}</span>`}
+                </div>
+                ${visitBadges(info.visits || [])}
+            </div>`;
+        }).join("");
+        return `<div class="instance-detail"><div class="instance-detail-inner">
+            <div class="detail-tasks">${cards}</div>
+            <div style="margin-top:8px;">
+                <a class="instance-name" href="#" data-focus="${esc(row.instance_id)}">查看单题明细（attempt 级别）</a>
+            </div>
+        </div></div>`;
+    }
+
     function renderInstances() {
         const rows = filteredInstances();
         const pages = Math.max(1, Math.ceil(rows.length / PAGE));
@@ -329,23 +463,46 @@
             const cells = tasks.map((t) => {
                 const info = (row.tasks || {})[String(t.task_id)] || {};
                 const vs = info.vs_baseline;
-                const vsText = (t.task_id === DATA.baseline_task_id)
+                const isBase = String(t.task_id) === String(DATA.baseline_task_id);
+                const vsText = isBase
                     ? `<span class="delta-flat">基线</span>`
                     : signedPct(vs);
+                // 最近一次的通过数量（n_pass / n_attempts）
+                const visits = info.visits || [];
+                const lastVisit = visits.length ? visits[visits.length - 1] : null;
+                const passText = lastVisit
+                    ? `<span class="muted">${lastVisit.n_pass}/${lastVisit.n_attempts} 通过</span>`
+                    : "";
                 const spark = (info.rates || []).map((r) => (r == null ? "-" : (r * 100).toFixed(0))).join(" → ");
                 return `<td class="num" title="逐次通过率：${esc(spark)}">
-                    ${pct(info.last_rate)}<br/><span class="muted">${vsText}</span></td>`;
+                    ${pct(info.last_rate)}<br/><span class="muted">${vsText}</span>${passText ? "<br/>" + passText : ""}</td>`;
             }).join("");
-            return `<tr>
-                <td><a class="instance-name" href="#" data-name="${esc(row.instance_id)}">${esc(row.instance_id)}</a></td>
+            const isOpen = expanded.has(row.instance_id);
+            return `<tr class="instance-row ${isOpen ? "open" : ""}" data-name="${esc(row.instance_id)}">
+                <td>
+                    <button type="button" class="instance-toggle" data-toggle="${esc(row.instance_id)}">
+                        <span class="ri-icon ri-icon-chevron-right"></span>
+                        <span>${esc(row.instance_id)}</span>
+                    </button>
+                </td>
                 <td class="num" style="white-space:normal;">${cells}</td>
-            </tr>`;
+            </tr>
+            ${isOpen ? `<tr class="instance-detail-row"><td class="instance-detail" colspan="2">${renderInstanceDetail(row)}</td></tr>` : ""}`;
         }).join("") || `<tr><td colspan="2" class="muted">没有符合条件的题目。</td></tr>`;
 
-        $("instanceBody").querySelectorAll("a[data-name]").forEach((a) => {
+        $("instanceBody").querySelectorAll("button[data-toggle]").forEach((btn) => {
+            btn.addEventListener("click", (ev) => {
+                ev.preventDefault();
+                const name = btn.getAttribute("data-toggle");
+                if (expanded.has(name)) expanded.delete(name);
+                else expanded.add(name);
+                renderInstances();
+            });
+        });
+        $("instanceBody").querySelectorAll("a[data-focus]").forEach((a) => {
             a.addEventListener("click", (ev) => {
                 ev.preventDefault();
-                loadFocus(a.getAttribute("data-name"));
+                loadFocus(a.getAttribute("data-focus"));
             });
         });
     }
@@ -353,7 +510,7 @@
     // ------------------------------------------------------------- 单题明细
     async function loadFocus(name) {
         try {
-            const resp = await fetch(`/api/cross-task-compare/instance.json?task_ids=${encodeURIComponent(selected.join(","))}&instance_id=${encodeURIComponent(name)}`);
+            const resp = await fetch(`/api/cross-task-compare/instance.json?${queryString({ instance_id: name })}`);
             const payload = await resp.json();
             if (!payload || payload.code !== 0) throw new Error((payload && payload.msg) || resp.status);
             const rows = (payload.data && payload.data.focus_rows) || [];
@@ -406,6 +563,18 @@
     }
 
     // ------------------------------------------------------------- 加载
+    function queryString(extra) {
+        const params = new URLSearchParams();
+        params.set("task_ids", selected.join(","));
+        if (baselineId != null) params.set("baseline_task_id", String(baselineId));
+        if (extra) {
+            Object.keys(extra).forEach((k) => {
+                if (extra[k] != null && extra[k] !== "") params.set(k, String(extra[k]));
+            });
+        }
+        return params.toString();
+    }
+
     async function load() {
         if (selected.length < 2) {
             showError("请至少选择 2 个任务再对比。");
@@ -414,12 +583,15 @@
         $("loading").style.display = "";
         $("errorBox").style.display = "none";
         try {
-            const resp = await fetch(`/api/cross-task-compare.json?task_ids=${encodeURIComponent(selected.join(","))}`);
+            const resp = await fetch(`/api/cross-task-compare.json?${queryString()}`);
             const payload = await resp.json();
             if (!payload || payload.code !== 0) throw new Error((payload && payload.msg) || resp.status);
             DATA = payload.data || {};
+            // 服务端确认了最终生效的基线（可能因参数非法而回退）
+            if (DATA.baseline_task_id != null) baselineId = String(DATA.baseline_task_id);
             $("loading").style.display = "none";
             $("body").style.display = "";
+            renderBaselinePicker();
             renderChips();
             renderSummary();
             renderCurve();
@@ -431,12 +603,20 @@
         }
     }
 
-    $("compareBtn").addEventListener("click", () => { page = 0; load(); });
+    $("compareBtn").addEventListener("click", () => { page = 0; expanded.clear(); load(); });
     $("clearBtn").addEventListener("click", () => {
         Array.from($("taskSelect").options).forEach((o) => { o.selected = false; });
+        baselineId = null;
         renderChips();
     });
     $("taskSelect").addEventListener("change", renderChips);
+    $("baselineSelect").addEventListener("change", (ev) => {
+        baselineId = ev.target.value;
+        expanded.clear();
+        page = 0;
+        renderChips();
+        load();
+    });
     document.querySelectorAll("#filters button").forEach((btn) => {
         btn.addEventListener("click", () => {
             dirFilter = btn.dataset.dir || "";

@@ -266,6 +266,31 @@ class TestBuildCrossTaskCompare(unittest.TestCase):
             data = build_cross_task_compare([1, 2], baseline_task_id=7)
         self.assertEqual(data["baseline_task_id"], 1)
 
+    def test_instance_rows_include_pass_counts(self):
+        """逐次出现的通过数量（n_pass / n_attempts）要带给前端。"""
+        rows = {
+            1: [
+                _row(1, 0, "pass", "a"),
+                _row(1, 1, "fail", "a"),
+                _row(2, 0, "pass", "a"),
+            ],
+            2: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+        }
+        patches = self._patch_db(rows)
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1, 2])
+        row = data["instances"][0]
+        visits = row["tasks"]["1"]["visits"]
+        self.assertEqual(len(visits), 2)
+        # 第一次出现：1 次通过 / 2 次尝试
+        self.assertEqual(visits[0]["n_pass"], 1)
+        self.assertEqual(visits[0]["n_attempts"], 2)
+        self.assertEqual(visits[0]["epoch"], 1)
+        # 第二次出现：1 次通过 / 1 次尝试
+        self.assertEqual(visits[1]["n_pass"], 1)
+        self.assertEqual(visits[1]["n_attempts"], 1)
+        self.assertEqual(visits[1]["epoch"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

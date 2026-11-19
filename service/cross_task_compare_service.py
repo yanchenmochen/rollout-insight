@@ -223,7 +223,7 @@ def _build_instance_rows(
     common: Sequence[str],
     baseline_id: int,
 ) -> List[Dict[str, Any]]:
-    """逐题给出各任务的首尾通过率与相对基线的差值。"""
+    """逐题给出各任务的首尾通过率、每次出现的通过数量与相对基线的差值。"""
     rows: List[Dict[str, Any]] = []
     for instance_id in common:
         entry: Dict[str, Any] = {"instance_id": instance_id, "tasks": {}}
@@ -240,6 +240,17 @@ def _build_instance_rows(
                     else None
                 ),
                 "rates": [v.get("rate") for v in visits],
+                # 每次出现（epoch）的通过数量，供前端展示「n_pass / n_attempts」
+                "visits": [
+                    {
+                        "epoch": int(v.get("epoch") or 0),
+                        "rollout_id": v.get("rollout_id"),
+                        "n_pass": int(v.get("n_pass") or 0),
+                        "n_attempts": int(v.get("n_attempts") or 0),
+                        "rate": v.get("rate"),
+                    }
+                    for v in visits
+                ],
             }
         # 相对基线的差值：各任务末次通过率 减 基线末次通过率
         base_last = (entry["tasks"].get(str(baseline_id)) or {}).get("last_rate")
