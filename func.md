@@ -100,6 +100,13 @@
 
 - `def load_config(config_path: Optional[str]=None) -> Dict` — 加载配置文件，并基于 program_root 计算其他路径。
 
+### `utils/eval_report_md.py`
+
+- `def extract_scores(result_text: Any) -> Dict[str, Any]` — 从 ``Result`` 单元格里抽出各个分数。
+- `def parse_evaluations_md(text: Optional[str]) -> Dict[str, Any]` — 解析 ``evaluations.md`` 全文。
+- `def read_evaluations_md(path: Optional[Path | str]) -> Dict[str, Any]` — 读取并解析指定的 ``evaluations.md``；文件不存在返回 ``exists=False``。
+- `def read_evaluations_for_rollout_root(rollout_root: Optional[str]) -> Dict[str, Any]` — 从 ``task.rollout_root`` 解析 run 目录并读取其 ``evaluations.md``。
+
 ### `utils/eval_tb_scores.py`
 
 - `def is_primary_eval_tag(tag: str) -> bool` — 是否为评测主分数 tag（排除子指标与 truncated_ratio 等）。
@@ -359,6 +366,14 @@
 - `staticmethod` `def build_cross_task_compare(task_ids: Sequence[int], *, instance_id: str='', baseline_task_id:…`
 - `staticmethod` `def build_instance_compare(task_ids: Sequence[int], instance_id: str, baseline_task_id: Optiona…`
 
+### `curve_compare_service_module` (`service/curve_compare_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def list_comparable_tasks() -> List[Dict[str, Any]]`
+- `staticmethod` `def list_curve_compare_brief() -> Dict[str, Any]`
+- `staticmethod` `def build_curve_compare(task_ids: Optional[Sequence[int]]=None, keys: Optional[Sequence[str]]=N…`
+
 ### `failure_analysis_service_module` (`service/failure_analysis_service.py`)
 
 模块级公开函数（不在 class 内）：
@@ -543,7 +558,8 @@
 | `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
-| `tensorboard_controller` | GET | `/api/tensorboard` | `page_tensorboard_compare` | 渲染多任务曲线对比页。 |
+| `tensorboard_controller` | GET | `/api/tensorboard` | `page_tensorboard_compare` | 渲染多任务曲线对比页（勾选任务 + 指标，叠图）。 |
+| `tensorboard_controller` | GET | `/api/tensorboard/curve-compare.json` | `api_curve_compare` | 返回多任务曲线叠加数据：勾选的任务 × 勾选的指标。 |
 | `tensorboard_controller` | POST | `/api/tensorboard/start` | `api_tensorboard_start` | 启动或复用 TensorBoard，返回可新标签打开的 URL。 |
 | `tensorboard_controller` | GET | `/api/tensorboard/status` | `api_tensorboard_status` | — |
 | `tensorboard_controller` | POST | `/api/tensorboard/stop` | `api_tensorboard_stop` | — |

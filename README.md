@@ -54,7 +54,7 @@ bash scripts/restart_server.sh status       # 查看谁占用 39998
 ### 训练曲线（TensorBoard）
 
 - 任务详情「训练曲线」可启动本机 TensorBoard，**新标签**打开（不嵌入 iframe）。
-- 顶栏「曲线对比」→ `/api/tensorboard`：一键对比库内全部含 `tbs/` 或 `tf_logs/` 的任务。TensorBoard 左侧 Run 名即任务名（符号链接目录），可按任务名筛选对照。若默认端口上已有其他 TensorBoard，启动时会先停掉再绑定。启动参数含 `--load_fast=false` 与 `--purge_orphaned_data=false`：同一目录里后写入的短事件文件不会把更长的历史 step 截掉。
+- 顶栏「曲线对比」→ `/api/tensorboard`：**多任务曲线对比页**。勾选任意多个任务 + 任意多个指标，即可把它们叠在同一张图里对比，与「单任务训练曲线」完全同款（同一套指标目录、同一套 SVG 折线、逐 step / 按 epoch 两种视图）。页面下方仍保留一键拉起本机 TensorBoard 的入口。
 - TB 端口默认 `6006`，配置项 `tensorboard_port` 或环境变量 `ROLLOUT_INSIGHT_TENSORBOARD_PORT`。
 - 需本机已安装 `tensorboard`（见 `requirements.txt`）；无事件目录的任务会被跳过。
 - 顶栏「洞察」→ `/api/insights`：先选一个任务，列出该任务当前 TensorBoard scalar、已知评测指标说明、尚未收录的 tag，以及建议的分析流程，并可跳转到 TensorBoard（本机 2.20.0 用查询参数 `?tagFilter=`）。
@@ -76,6 +76,7 @@ rollout-insight/
 │   ├── tb_series_reader.py    # 读 TB 事件目录的完整 scalar 序列（多 tag）
 │   ├── train_curve_catalog.py # 训练曲线指标目录：默认按钮组 + tag 匹配规则
 │   ├── train_curve_epoch.py   # 训练曲线 epoch 聚合（steps_per_epoch / 分箱均值）
+│   ├── eval_report_md.py      # 解析 run 目录的 evaluations.md（外部评测台账 + 分数）
 │   └── icon_catalog.py        # 菜单图标清单：路由/动作 → Lucide 图标名 + tooltip
 ├── data/                      # 数据层
 │   ├── response.py            # 统一 JSON 响应（code/msg/data）
@@ -97,7 +98,8 @@ rollout-insight/
 ├── static/                    # 静态资源
 │   ├── icons/                 # 离线内置 Lucide SVG 图标（MIT，见 static/icons/LICENSE）
 │   ├── ri_icons.css           # 图标 CSS mask（由 scripts/gen_icon_css.py 生成）
-│   └── ri_epoch_chart.js      # 共享 epoch 折线渲染（window.RiEpochChart.render）
+│   ├── ri_epoch_chart.js      # 共享 epoch 折线渲染（window.RiEpochChart.render）
+│   └── ri_multi_chart.js      # 共享多序列折线渲染（window.RiMultiChart.renderLineChart）
 ├── templates/                 # Jinja2 模板（base.html）
 ├── tests/                     # 单元测试
 └── log/                       # 运行日志（默认被 .gitignore）
@@ -127,9 +129,11 @@ rollout-insight/
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
 | GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
-| GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（奖励/长度/梯度/entropy_loss/context_exhausted/max_fake_responses/rollout_time）+ 折线（逐 step / 按 epoch 聚合） |
-| GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列（含 epoch 聚合序列） |
+| GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（奖励/长度/梯度/entropy_loss/context_exhausted/max_fake_responses/rollout_time）+ 折线（逐 step / 按 epoch 聚合）+ 外部评测分数（`evaluations.md`） |
+| GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列（含 epoch 聚合序列）+ `evaluations` 评测台账 |
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
+| GET  | `/api/tensorboard` | 多任务曲线对比页：勾选多个任务 + 指标，叠图对比 |
+| GET  | `/api/tensorboard/curve-compare.json` | 多任务曲线叠加数据（`task_ids=1,2,3` / `keys=` / `view=step\|epoch`；`brief=true` 只回任务清单与指标目录） |
 | GET  | `/api/cross-task-compare` | 跨任务对比页：选多个任务 + 选基线，比较共同题目的训练过程变化 |
 | GET  | `/api/cross-task-compare.json` | 跨任务对比 JSON（`task_ids=1,2,3`，可选 `baseline_task_id=` / `instance_id=`） |
 | GET  | `/api/cross-task-compare/instance.json` | 单题在多任务上的逐次出现与通过率 |
@@ -172,6 +176,14 @@ rollout-insight/
 **任务通过分析。** 一道题的一次出现是同一个 `rollout_id` 下的同一个 `instance_id`（通常约 8 条 attempt）。按 `rollout_id` 升序，第 k 次出现就是第 k 个 epoch。通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数；abort 与 timeout 计入分母、不计入分子。变好或变坏只看该题最后一次减第一次：大于 0 为绿，小于 0 为红，相等为灰。只出现一次的题单独计数，不进直方图。筛选里另有「太容易」（每一次出现都全通过，常见是每次 8/8）和「太难」（每一次出现都是 0 通过，常见是每次 0/8）。题目名可点进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，按出现次序看每次所在的 rollout，以及该次每条 attempt 的 sglang 轨迹。总览有两条：一是按 epoch 把全部题目合在一起的通过率曲线，第 k 个点是各题第 k 次出现的 attempt 加总（分子、分母跨题相加）。单步 raw_reward 只覆盖当步抽到的题目，所以会上下跳；这条曲线按 epoch 看全量题目。该次还没再次出现的题不计入，覆盖不足全部题目时用空心点标出。二是首尾差值直方图，每格 1/8。`ROLLOUT_BATCH_SIZE` 来自 run 目录环境变量，读不到时用每个 rollout 的 group 数众数，只用来核对「每个 epoch 窗口里一题是否只出现一次」，不用来重画曲线。
 
 **响应 fake_response。** 统计 sglang 序列里的 assistant 回复：有 tool_call、无 tool_call、工具名（其中 finish 单独列出）。「最后一条是不是 finish」看该 attempt 最后一条 assistant 回复的最后一个工具名。attempt 维度分开报告「出现过无 tool_call」和「最后一条不是 finish」，并给出两者的并集。合法工具名是 `execute_bash`、`str_replace_editor`、`think`、`finish`；有标签但名字不在其中仍算有 tool_call，另外单列。turn 已全部落库时直接用标记，不读正文。覆盖不全时，页面上的「统计全部响应」按 rollout 从 `.pt` 只累计计数，不把正文写入 turn 表，结果缓存在 `rollout_root/.ri_response_stats.json`，按 pt 的路径、大小和 mtime 失效。
+
+**单题明细（题目为中心）。** 点题目名进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，页面围绕**这一道题**组织：
+
+- **本题趋势**：三张折线图，横轴是该题第几次出现（epoch），分别是**通过率**、**响应长度**（该次各 attempt 均值）、**agent 轮数**（均值）。三者量纲不同，分开绘制避免互相压扁。回答"这个题目在训练过程中是变好还是变坏、伴随的响应是变长还是变短"。
+- **逐次明细表**：每次出现一张表，逐条 attempt 列出 group、attempt id、结局、reward、**响应长度**、**轮数**与轨迹入口（sglang 轨迹 / 正文）。
+- 响应长度与轮数取自 `ri_attempt_table` 的 `response_length` / `agent_turns` 字段。
+
+趋势与折线渲染复用共享模块 `static/ri_multi_chart.js`（与多任务曲线对比同款 SVG）。
 
 ### 5.3 奖励诊断（任务级）
 
@@ -232,6 +244,25 @@ rollout-insight/
 epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` / `aggregate_by_epoch` / `epoch_view`），epoch 边界复用 `service.problem_analysis_service.build_pass_trend` 返回的 `steps_per_epoch`，避免两页口径漂移。
 
 **数据口径。** 读取时关闭 TensorBoard 的 orphan purge、给足 scalar 水库容量（TB 的 Reservoir 是随机抽样，容量不足会随机丢点、曲线缺段），长序列由本服务做确定性等距抽样并保留首尾。
+
+**外部评测分数（evaluations.md）。** 训练 run 根目录下若存在 `evaluations.md`，说明这个任务的检查点在持续做外部评测。该文件是评测台账：每行一次评测，记录 training step、评测名、轮次、南湖作业、作业状态与结果。训练曲线页在曲线**上方**渲染「外部评测分数」区块：
+
+- **按评测名分组**（例如 `panel`、`v500`），每组一张折线图，横轴是 training step，纵轴是评测分数；图例标出首尾值与变化量（变绿 / 变红）。
+- **分数口径**：优先取 `weighted score on N tasks`（加权分），其次 `merged M/N = x`，最后 `holdout score`；`95% selection interval ±x`、`ungraded N` 一并展示。
+- **逐次记录表**：列出每次评测的 step、轮次、作业状态（finished / running / scheduling / error）、分数、备注与作业 ID，便于回查南湖作业。
+
+解析逻辑在 `utils/eval_report_md.py`（`parse_evaluations_md` / `extract_scores` / `read_evaluations_for_rollout_root`），run 目录解析复用 `utils/tb_run_paths.resolve_run_dir`。文件不存在时该区块整体隐藏，不影响曲线。
+
+### 5.4.1 多任务曲线对比（顶栏）
+
+顶栏「曲线对比」进入 `/api/tensorboard`。它把**多个任务**的训练曲线叠在同一张图里，与单任务训练曲线**同款**：同一套指标目录（`utils/train_curve_catalog.py`）、同一套 epoch 聚合口径、同一套 SVG 折线渲染。
+
+- **勾选任务**：页面上方列出所有含 `tbs/` 或 `tf_logs/` 的任务，带名称筛选、全选 / 清空 / 最近 5 个快捷操作；默认勾选最近 3 个。
+- **勾选指标**：与单任务训练曲线共用 7 个内置指标（奖励 / 长度 / 梯度 / entropy_loss / context_exhausted / max_fake_responses / rollout_time），按钮组可多选。
+- **叠加规则**：同一指标下，**每个任务 × 每条子曲线**各占一条线（例如「奖励」× 3 个任务 = 9 条线），同 tag 同色、不同 tag 换色，图例标出任务名、曲线名与首尾变化量。
+- **逐 step / 按 epoch 两种视图**：与单任务训练曲线一致，可直接横向比较不同任务的收敛节奏。
+
+数据接口 `GET /api/tensorboard/curve-compare.json?task_ids=1,2&keys=raw_reward&view=step`；`brief=true` 时只回任务清单与指标目录（页面首屏用，不读事件文件，避免一次加载十几个事件目录）。SVG 折线渲染抽到共享模块 `static/ri_multi_chart.js`（暴露 `window.RiMultiChart.renderLineChart` / `renderSparkline`），与问题分析页的单题趋势图共用。
 
 ### 5.5 跨任务对比（多任务）
 

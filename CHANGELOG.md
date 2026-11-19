@@ -1,5 +1,45 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 外部评测分数 / 单题趋势 / 多任务曲线对比
+
+### 概述
+
+本批次把**曲线对比**从「只能拉起 TensorBoard」升级为页内直接对比，并补齐两条
+「以题目 / 以评测为单位」的观察视角：
+
+- **外部评测分数（evaluations.md）** —— 训练 run 目录下的 `evaluations.md` 是「检查点
+  持续做外部评测」的台账。训练曲线页在曲线**上方**渲染该台账：按评测名分组
+  （`panel` / `v500` 等）画分数折线，并给出逐次记录表（step / 轮次 / 作业状态 /
+  分数 / ±区间 / holdout / ungraded / 作业 ID）。
+- **单题趋势（题目为中心）** —— 单题明细页新增「本题趋势」三张图（通过率 / 响应长度 /
+  agent 轮数）与逐条 attempt 的**响应长度**、**轮数**两列，观察一道题在训练过程中的
+  变化趋势。
+- **多任务曲线对比** —— 顶栏「曲线对比」重做为与单任务训练曲线**同款**的页内叠图：
+  勾选多个任务 + 多个指标，直接叠在同一张图里比较。
+
+### 关键实现要点
+
+| 变更 | 说明 |
+| --- | --- |
+| 新增 `utils/eval_report_md.py` | 解析 `evaluations.md`：`parse_evaluations_md` 拆表格行，`extract_scores` 从 `Result` 单元格抽分数（`weighted score on N tasks` / `merged M/N = x` / `holdout score` / `95% selection interval` / `ungraded N`），`read_evaluations_for_rollout_root` 按 `rollout_root` → run 目录定位文件 |
+| 训练曲线页 | 新增「外部评测分数」区块（曲线之上）：按评测名分组的分数折线 + 逐次记录表；文件不存在时整体隐藏 |
+| `service/problem_analysis_service.py` | `group_instance_appearances` 的 attempt 行补 `response_length` / `agent_turns` / `tool_calls`；新增 `_visit_metrics`（每次出现的均值汇总）与 `_instance_trend`（单题趋势点） |
+| `db/db_attempt_service.py` | `list_outcome_rows_by_task` 的 SELECT 补 `response_length` 字段 |
+| 单题明细页 | 新增「本题趋势」三张折线图（通过率 / 响应长度 / agent 轮数，量纲不同分开绘制）+ 表格新增「响应长度」「轮数」两列 |
+| 新增 `static/ri_multi_chart.js` | 共享多序列折线渲染（`window.RiMultiChart.renderLineChart` / `renderSparkline`），单题趋势与多任务对比共用同一份 SVG 实现 |
+| 新增 `service/curve_compare_service.py` | `list_comparable_tasks`（只解析 run 目录，不读事件文件）/ `list_curve_compare_brief`（任务清单 + 指标目录）/ `build_curve_compare`（任务 × 指标 → 多序列曲线） |
+| `controller/tensorboard_controller.py` | 新增 `GET /api/tensorboard/curve-compare.json`（`task_ids=` / `keys=` / `view=step\|epoch` / `brief=true`）；`/api/tensorboard` 改渲染 `templates/curve_compare.html` |
+| 新增 `templates/curve_compare.html` | 多任务曲线对比页：任务勾选（含名称筛选 / 全选 / 清空 / 最近 5 个）、指标按钮组（与单任务共用 7 个内置指标）、逐 step / 按 epoch 视图切换、每条曲线的首尾变化量（变绿 / 变红） |
+| `templates/base.html` | 引入 `static/ri_multi_chart.js`（需早于子页 inline script） |
+
+### 测试
+
+- `tests/test_eval_report_md.py`（11）
+- `tests/test_curve_compare_service.py`（9）
+- `tests/test_problem_analysis_service.py`（新增 4 个用例：attempt 字段、访问指标均值、趋势点、空趋势）
+
+`python scripts/scan_func_md.py --check` 通过，`func.md` 已同步。
+
 ## 未发布 — 训练曲线 / 跨任务对比 / 奖励杠杆 / 离线图标
 
 ### 概述
