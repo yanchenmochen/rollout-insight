@@ -72,7 +72,9 @@ rollout-insight/
 ├── utils/                     # 工具：配置、日志、解析辅助
 │   ├── config_loader.py
 │   ├── log_setup.py
-│   └── analyze_dump.py        # .pt dump 元数据/摘要/transcript（无依赖外部 skill）
+│   ├── analyze_dump.py        # .pt dump 元数据/摘要/transcript（无依赖外部 skill）
+│   ├── tb_series_reader.py    # 读 TB 事件目录的完整 scalar 序列（多 tag）
+│   └── train_curve_catalog.py # 训练曲线指标目录：默认按钮组 + tag 匹配规则
 ├── data/                      # 数据层
 │   ├── response.py            # 统一 JSON 响应（code/msg/data）
 │   └── rollout_insight_exception.py   # 业务异常（50xxx/51xxx/52xxx/53xxx/54xxx）
@@ -120,6 +122,9 @@ rollout-insight/
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
 | GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
+| GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（混合奖励/长度/梯度/entropy_loss/context_exhausted）+ 折线 |
+| GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列 |
+| POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
@@ -163,6 +168,19 @@ rollout-insight/
 **奖励分解。** 同一 rollout 轴叠四条线：有数值 reward 的原始均值、可测通过率（abort/timeout 不进分母）、超时占比、abort 占比。用来区分能力掉分与基建噪声。
 
 **行为失败卡片。** 对非通过 attempt 按优先级打主类：abort → timeout → 无 tool_call → 最后不是 finish → 过早 finish（已 finish 但工具步很少且 diff 很小）。每张卡片给出现象、占失败 attempt 比例、与可测通过率是否同向、建议杠杆，以及跳到失败详情的样例链接。后三类依赖已落库的 assistant turn 标记。
+
+### 5.4 训练曲线（任务级）
+
+训练曲线从任务进入：任务详情页顶「训练曲线」进入 `/api/tasks/{task_id}/train-curve`。它把该任务 `rollout_root` 下 `tbs/` 或 `tf_logs/` 的 TensorBoard scalar 画成折线。
+
+**指标按钮组。** 默认展示 5 个内置指标：混合奖励、长度、梯度、entropy_loss、context_exhausted。用户可以勾选任意内置指标、追加自定义指标（写 TB tag 名，形如 `custom:my_metric`），并选择保存范围：
+
+- **保存为默认**（`scope=global`）：该用户的全局按钮组，长期生效，之后打开任何任务都按这套配置。
+- **保存为本任务**（`scope=task`）：在该任务的按钮组上追加展示项，不影响其它任务。
+
+最终生效的指标 = 用户全局偏好 + 本任务追加项（用户全局偏好一旦保存就完全覆盖内置默认按钮组）。偏好存在 `ri_train_curve_preference_table`。内置指标按正则匹配 TB tag（例如 `rollout/mixed_reward`、`actor/grad_norm` 都能命中），同一指标命中多个 tag 时取第一个作主曲线，其余作为备选。
+
+**数据口径。** 读取时关闭 TensorBoard 的 orphan purge、给足 scalar 水库容量（TB 的 Reservoir 是随机抽样，容量不足会随机丢点、曲线缺段），长序列由本服务做确定性等距抽样并保留首尾。
 
 ---
 

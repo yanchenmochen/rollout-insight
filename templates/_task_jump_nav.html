@@ -1,7 +1,7 @@
 {# 任务内右上角跳转。
    调用方在包一层 .action-bar 之前设置：
    task_nav_id       任务主键
-   task_nav_current  detail | failures | problems | reward | 空（子页）
+   task_nav_current  detail | failures | problems | reward | curves | 空（子页）
    task_nav_actions  是否附带重扫 / 删除
 #}
 {% set nav_current = task_nav_current if task_nav_current is defined else '' %}
@@ -10,6 +10,7 @@
 {% if nav_current != 'detail' %}
 <a class="btn btn-secondary" href="/api/tasks/{{ task_nav_id }}">任务详情</a>
 {% endif %}
+<a class="btn {% if nav_current == 'curves' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/train-curve"{% if nav_current == 'curves' %} aria-current="page"{% endif %}>训练曲线</a>
 <a class="btn {% if nav_current == 'failures' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/failures"{% if nav_current == 'failures' %} aria-current="page"{% endif %}>失败分析</a>
 <a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>问题分析</a>
 <a class="btn {% if nav_current == 'reward' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/reward-diagnosis"{% if nav_current == 'reward' %} aria-current="page"{% endif %}>奖励诊断</a>

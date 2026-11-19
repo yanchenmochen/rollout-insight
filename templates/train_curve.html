@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+
+{% block title %}训练曲线{% if task_id %} - 任务 #{{ task_id }}{% endif %} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 22px; border-bottom: none; padding-bottom: 0; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; max-width: 860px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    /* 指标按钮组 */
+    .metric-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .metric-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 14px;
+        font-size: 13px; border: 1px solid var(--ri-border); background: #f8fafb; cursor: pointer; user-select: none; }
+    .metric-toggle input { margin: 0; cursor: pointer; }
+    .metric-toggle.on { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
+    .metric-toggle.custom { border-style: dashed; }
+    .metric-toggle .tag { font-size: 11px; opacity: 0.85; font-family: ui-monospace, monospace; }
+    .metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    /* 曲线 */
+    .curve-row { border: 1px solid var(--ri-border); border-radius: var(--te-radius); padding: 10px 12px; margin-bottom: 12px; }
+    .curve-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+    .curve-title { font-size: 14px; font-weight: 600; }
+    .curve-title .tag { font-size: 11px; color: var(--ri-muted); font-family: ui-monospace, monospace; margin-left: 8px; font-weight: 400; }
+    .curve-readout { font-size: 12px; color: var(--ri-muted); font-variant-numeric: tabular-nums; }
+    .curve-chart { width: 100%; }
+    .curve-chart svg { width: 100%; height: auto; display: block; }
+    .curve-empty { font-size: 12px; color: var(--ri-muted); padding: 10px 0; }
+    .custom-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    .custom-row input[type="text"] { padding: 5px 8px; border: 1px solid var(--ri-border); border-radius: 4px; min-width: 260px; }
+    .tag-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .tag-list span { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #f3f5f8;
+        border: 1px solid var(--ri-border); font-family: ui-monospace, monospace; }
+    .tag-list button { cursor: pointer; }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 训练曲线{% endif %}
+</div>
+<div class="page-header">
+    <div>
+        <h1 id="pageTitle">训练曲线</h1>
+        <div class="page-subtitle" id="pageNote">按指标按钮组展示训练过程曲线；勾选后保存，长期生效。</div>
+    </div>
+    {% if task_id %}
+    <div class="action-bar">
+        {% set task_nav_id = task_id %}
+        {% set task_nav_current = 'curves' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
+    </div>
+    {% endif %}
+</div>
+
+<div id="errorBox" class="alert alert-warning" style="display:none;"></div>
+<div id="loading" class="loading">正在加载训练曲线…</div>
+<div id="body" style="display:none;">
+    <div class="section">
+        <h2>指标按钮组 <small>默认：混合奖励 / 长度 / 梯度 / entropy_loss / context_exhausted</small></h2>
+        <div class="metric-bar" id="metricBar"></div>
+        <div class="muted" id="metricHint">勾选指标后可保存。保存为「默认」对所有任务生效；保存为「本任务」只对当前任务追加展示项。</div>
+        <div class="metric-actions">
+            <button type="button" class="btn" id="saveGlobalBtn">保存为默认（全部任务）</button>
+            <button type="button" class="btn btn-secondary" id="saveTaskBtn">保存为本任务</button>
+            <button type="button" class="btn btn-secondary" id="resetBtn">恢复内置默认</button>
+            <span class="muted" id="saveMsg"></span>
+        </div>
+        <div class="custom-row">
+            <input type="text" id="customTag" placeholder="输入 TB tag 名，新增自定义指标，例如 rollout/kl_loss" />
+            <button type="button" class="btn btn-secondary" id="addCustomBtn">新增自定义指标</button>
+            <span class="muted">自定义指标按 tag 名精确匹配。</span>
+        </div>
+        <div class="tag-list" id="customList"></div>
+    </div>
+
+    <div class="section">
+        <h2>曲线 <small>每个指标一张折线 · 横轴 step</small></h2>
+        <div id="curveBody"></div>
+    </div>
+
+    <div class="section">
+        <h2>事件目录 scalar tag <small>可用于新增自定义指标</small></h2>
+        <div class="tag-list" id="tagList"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const TASK_ID = {{ task_id if task_id is not none else "null" }};
+    const $ = (id) => document.getElementById(id);
+    let DATA = null;
+    let selected = new Set();      // 选中的内置指标 key
+    let customKeys = new Set();     // 选中的自定义指标 key
+    const DEFAULT_KEYS = {{ (default_keys or []) | tojson }};
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+    function fmt(v) {
+        if (v == null || Number.isNaN(v)) return "-";
+        const n = Number(v);
+        if (Math.abs(n) >= 1000 || (Math.abs(n) < 0.001 && n !== 0)) return n.toExponential(3);
+        return n.toFixed(4);
+    }
+    function showError(msg) {
+        $("errorBox").style.display = "";
+        $("errorBox").textContent = msg;
+    }
+    function showMsg(msg, isError) {
+        const el = $("saveMsg");
+        el.textContent = msg || "";
+        el.style.color = isError ? "#9b2c2c" : "#2d6a4f";
+    }
+
+    // ---------------------------------------------------------------- 按钮组
+    function renderMetricBar() {
+        const metrics = (DATA && DATA.available_metrics) || [];
+        const html = metrics.map((m) => {
+            const on = selected.has(m.key);
+            return `<label class="metric-toggle ${on ? "on" : ""}" data-key="${esc(m.key)}" title="${esc(m.desc)}">
+                <input type="checkbox" ${on ? "checked" : ""} />
+                <span>${esc(m.label)}</span>
+            </label>`;
+        }).join("");
+        $("metricBar").innerHTML = html;
+        $("metricBar").querySelectorAll(".metric-toggle").forEach((node) => {
+            node.addEventListener("click", (ev) => {
+                if (ev.target.tagName === "INPUT") return;
+                ev.preventDefault();
+                toggleMetric(node.dataset.key);
+            });
+            const box = node.querySelector("input");
+            box.addEventListener("change", () => {
+                toggleMetric(node.dataset.key);
+            });
+        });
+    }
+
+    function toggleMetric(key) {
+        if (selected.has(key)) selected.delete(key);
+        else selected.add(key);
+        renderMetricBar();
+    }
+
+    function renderCustomList() {
+        const items = Array.from(customKeys);
+        $("customList").innerHTML = items.map((key) => {
+            const tag = key.replace(/^custom:/, "");
+            return `<span>${esc(tag)} <button type="button" class="btn btn-secondary btn-xs" data-key="${esc(key)}" style="padding:0 6px;">×</button></span>`;
+        }).join("") || `<span class="muted">尚未新增自定义指标</span>`;
+        $("customList").querySelectorAll("button[data-key]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                customKeys.delete(btn.dataset.key);
+                renderCustomList();
+            });
+        });
+    }
+
+    function renderTagList() {
+        const tags = (DATA && DATA.tags) || [];
+        $("tagList").innerHTML = tags.map((tag) =>
+            `<span>${esc(tag)}</span>`
+        ).join("") || `<span class="muted">事件目录里没有 scalar tag</span>`;
+    }
+
+    // ---------------------------------------------------------------- 曲线
+    function renderCurve(metric) {
+        const points = metric.points || [];
+        const head = `<div class="curve-head">
+            <div class="curve-title">${esc(metric.label)}
+                <span class="tag">${esc(metric.primary_tag || "无匹配 tag")}</span>
+            </div>
+            <div class="curve-readout" id="readout-${esc(metric.key)}"></div>
+        </div>`;
+        if (!points.length) {
+            const hint = (metric.tags || []).length
+                ? `命中的 tag：${metric.tags.map(esc).join("、")}`
+                : "该指标没有匹配到事件目录里的 tag";
+            return `<div class="curve-row">${head}<div class="curve-empty">暂无数据。${esc(hint)}</div></div>`;
+        }
+
+        const w = 760, h = 190, padL = 56, padR = 14, padT = 12, padB = 30;
+        const plotW = w - padL - padR, plotH = h - padT - padB;
+        const values = points.map((p) => Number(p.value));
+        let yMin = Math.min(...values), yMax = Math.max(...values);
+        if (yMax === yMin) { yMin -= 0.5; yMax += 0.5; }
+        const padY = (yMax - yMin) * 0.12;
+        yMin -= padY; yMax += padY;
+        const steps = points.map((p) => Number(p.step));
+        const xMin = Math.min(...steps), xMax = Math.max(...steps);
+        const xAt = (s) => xMax === xMin ? padL + plotW / 2 : padL + (s - xMin) * plotW / (xMax - xMin);
+        const yAt = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+        const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => yMin + t * (yMax - yMin));
+        let grid = "";
+        yTicks.forEach((tick) => {
+            const y = yAt(tick);
+            grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e4e8ec"></line>`;
+            grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${fmt(tick)}</text>`;
+        });
+
+        const path = points.map((p, i) =>
+            `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
+        ).join(" ");
+
+        const dots = points.map((p, i) => {
+            const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
+            return `<circle class="pt" cx="${x}" cy="${y}" r="2.6" fill="#2d6a9f" data-i="${i}" />`;
+        }).join("");
+
+        const xLabelEvery = points.length <= 8 ? 1 : Math.ceil(points.length / 8);
+        let xLabels = "";
+        points.forEach((p, i) => {
+            if (i !== 0 && i !== points.length - 1 && i % xLabelEvery !== 0) return;
+            const x = xAt(Number(p.step)).toFixed(1);
+            xLabels += `<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`;
+        });
+
+        const first = points[0], last = points[points.length - 1];
+        const delta = Number(last.value) - Number(first.value);
+        const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
+
+        const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(metric.label)} 曲线">
+            <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
+            ${grid}
+            <line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+            <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
+            ${xLabels}
+            <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">step</text>
+            <path d="${path}" fill="none" stroke="#2d6a9f" stroke-width="1.8"></path>
+            ${dots}
+        </svg>`;
+
+        const summary = `${points.length} 个点 · step ${first.step}→${last.step} · `
+            + `${fmt(first.value)} → ${fmt(last.value)} `
+            + `<span style="color:${cls}">（${delta >= 0 ? "+" : ""}${fmt(delta)}）</span>`;
+
+        return `<div class="curve-row">${head}
+            <div class="curve-chart">${svg}</div>
+            <div class="curve-readout" data-summary="${esc(summary)}"></div>
+        </div>`;
+    }
+
+    function renderCurves() {
+        const metrics = (DATA && DATA.metrics) || [];
+        const shown = metrics.filter((m) => selected.has(m.key) || customKeys.has(m.key));
+        const host = $("curveBody");
+        if (!shown.length) {
+            host.innerHTML = `<div class="muted">没有选中的指标。请在上方勾选要展示的指标。</div>`;
+            return;
+        }
+        host.innerHTML = shown.map(renderCurve).join("");
+
+        shown.forEach((metric) => {
+            const row = host.querySelectorAll(".curve-row");
+            const index = shown.indexOf(metric);
+            const box = row[index];
+            if (!box) return;
+            const readout = box.querySelector(".curve-readout");
+            const summary = readout.getAttribute("data-summary");
+            if (readout && summary) readout.innerHTML = summary;
+            const svg = box.querySelector("svg");
+            const dots = box.querySelectorAll("circle.pt");
+            if (!svg || !dots.length) return;
+            dots.forEach((dot) => {
+                const point = metric.points[Number(dot.getAttribute("data-i"))];
+                dot.addEventListener("mouseenter", () => {
+                    readout.innerHTML = `step ${point.step} · ${fmt(point.value)}`;
+                });
+                dot.addEventListener("mouseleave", () => {
+                    readout.innerHTML = summary;
+                });
+            });
+        });
+    }
+
+    // ---------------------------------------------------------------- 保存
+    async function save(scope) {
+        const keys = Array.from(selected);
+        const customs = Array.from(customKeys);
+        try {
+            const resp = await fetch(`/api/tasks/${TASK_ID}/train-curve/preference`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ keys: keys, custom_keys: customs, scope: scope }),
+            });
+            const payload = await resp.json();
+            if (!payload || payload.code !== 0) {
+                throw new Error((payload && payload.msg) || ("HTTP " + resp.status));
+            }
+            showMsg(scope === "task" ? "已保存为本任务的展示项。" : "已保存为默认展示项（全部任务生效）。", false);
+            await load();
+        } catch (e) {
+            showMsg("保存失败：" + (e && e.message ? e.message : e), true);
+        }
+    }
+
+    // ---------------------------------------------------------------- 加载
+    async function load() {
+        if (TASK_ID == null) {
+            $("loading").textContent = "缺少任务。";
+            return;
+        }
+        try {
+            const resp = await fetch(`/api/tasks/${TASK_ID}/train-curve.json`);
+            const payload = await resp.json();
+            if (!payload || payload.code !== 0) {
+                throw new Error((payload && payload.msg) || resp.status);
+            }
+            DATA = payload.data || {};
+            const pref = DATA.preference || {};
+            selected = new Set((pref.global_keys || []).concat(pref.task_keys || []));
+            customKeys = new Set((pref.global_custom || []).concat(pref.task_custom || []));
+            $("loading").style.display = "none";
+            $("body").style.display = "";
+            const name = {{ task_name | tojson }};
+            if (name) $("pageTitle").textContent = name + " · 训练曲线";
+            if (DATA.notice) {
+                $("errorBox").style.display = "";
+                $("errorBox").textContent = DATA.notice;
+            }
+            renderMetricBar();
+            renderCustomList();
+            renderTagList();
+            renderCurves();
+        } catch (e) {
+            $("loading").style.display = "none";
+            showError("加载训练曲线失败：" + (e && e.message ? e.message : e));
+        }
+    }
+
+    $("saveGlobalBtn").addEventListener("click", () => save("global"));
+    $("saveTaskBtn").addEventListener("click", () => save("task"));
+    $("resetBtn").addEventListener("click", () => {
+        selected = new Set(DEFAULT_KEYS);
+        customKeys = new Set();
+        renderMetricBar();
+        renderCustomList();
+        renderCurves();
+        showMsg("已恢复内置默认（尚未保存，点保存生效）。", false);
+    });
+    $("addCustomBtn").addEventListener("click", () => {
+        const tag = ($("customTag").value || "").trim();
+        if (!tag) {
+            showMsg("请先输入 TB tag 名。", true);
+            return;
+        }
+        const key = "custom:" + tag;
+        customKeys.add(key);
+        $("customTag").value = "";
+        renderCustomList();
+        renderCurves();
+    });
+    $("customTag").addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); $("addCustomBtn").click(); }
+    });
+
+    load();
+})();
+</script>
+{% endblock %}

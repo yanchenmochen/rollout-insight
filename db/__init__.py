@@ -18,6 +18,8 @@ from db.db_nanhu_restart import DBNanhuRestart
 # v0.5.0 新增 ORM（service / auth 由 Worker B 在 v0.5.1 实现）
 from db.db_user import DBUser
 from db.db_user_cluster_config import DBUserClusterConfig
+# v0.5.3 新增 ORM：训练曲线指标偏好（用户默认 + 任务级追加）
+from db.db_train_curve_preference import DBTrainCurvePreference
 
 # 别名：让 controller 通过 db.models.Task / db.Task 也能找到（兼容 v0.2 阶段 2C 的延迟导入）
 Task = DBTask
@@ -31,6 +33,8 @@ NanhuRestart = DBNanhuRestart
 # v0.5.0 别名
 User = DBUser
 ClusterConfig = DBUserClusterConfig
+# v0.5.3 别名
+TrainCurvePreference = DBTrainCurvePreference
 
 __all__ = [
     "Base",
@@ -47,6 +51,7 @@ __all__ = [
     "DBNanhuRestart",
     "DBUser",
     "DBUserClusterConfig",
+    "DBTrainCurvePreference",
     # 兼容别名
     "Task",
     "Rollout",

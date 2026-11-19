@@ -179,6 +179,16 @@
 - `def read_scalar_series(event_dir: Optional[Path | str], *, tags: Optional[Sequence[str]]=None, …` — 读取事件目录下若干 tag 的完整 scalar 序列。
 - `def series_points(series: Dict[str, List[Dict[str, Any]]], tag: str) -> List[Dict[str, Any]]` — 从序列字典里取某个 tag 的点列表（不存在返回空 list）。
 
+### `utils/train_curve_catalog.py`
+
+- `def curve_metric_keys() -> List[str]` — 返回全部内置指标键。
+- `def curve_metric(key: str) -> Optional[Dict[str, Any]]` — 按 key 取指标元信息；未知返回 None。
+- `def available_curve_metrics() -> List[Dict[str, Any]]` — 列出内置指标，供页面渲染勾选框。
+- `def normalize_curve_keys(keys: Optional[Sequence[str]]) -> List[str]` — 规整指标 key 列表：去空白、去重、保持顺序、过滤未知内置键。
+- `def match_tag(key: str, tag: str) -> bool` — 判断某个 TB tag 是否命中指标 key 的匹配规则。
+- `def resolve_metric_tags(key: str, available_tags: Sequence[str]) -> List[str]` — 在可用 tag 里找出命中该指标的所有 tag（按 prefer 顺序优先）。
+- `def is_custom_key(key: str) -> bool` — 是否用户自定义指标键。
+
 ## db/ — ORM 模型
 
 | ORM 类 | 文件 | 物理表 |
@@ -191,6 +201,7 @@
 | `DBSegmentTranscript` | `db/db_segment_transcript.py` | `ri_segment_transcript_table` |
 | `DBSegmentTurn` | `db/db_segment_turn.py` | `ri_segment_turn_table` |
 | `DBTask` | `db/db_task.py` | `ri_task_table` |
+| `DBTrainCurvePreference` | `db/db_train_curve_preference.py` | `ri_train_curve_preference_table` |
 | `DBUser` | `db/db_user.py` | `ri_user_table` |
 | `DBUserClusterConfig` | `db/db_user_cluster_config.py` | `ri_user_cluster_config_table` |
 
@@ -273,6 +284,16 @@
 - `staticmethod` `def update_status(status: str) -> bool`
 - `staticmethod` `def update_fields(**fields: Any) -> bool`
 - `staticmethod` `def delete_task() -> bool`
+
+#### `DBTrainCurvePreferenceService` (`db/db_train_curve_preference_service.py`)
+
+- `staticmethod` `def get_global() -> Optional[DBTrainCurvePreference]`
+- `staticmethod` `def get_for_task(task_id: int) -> Optional[DBTrainCurvePreference]`
+- `staticmethod` `def upsert_global(*, keys: Optional[List[str]]=None, custom_keys: Optional[List[str]]=None) -> …`
+- `staticmethod` `def upsert_for_task(task_id: int, *, keys: Optional[List[str]]=None, custom_keys: Optional[List…`
+- `staticmethod` `def delete_global() -> bool`
+- `staticmethod` `def delete_for_task(task_id: int) -> bool`
+- `staticmethod` `def list_all_for_user() -> List[Dict[str, Any]]`
 
 #### `DBUserClusterConfigService` (`db/db_user_cluster_config_service.py`)
 
@@ -437,6 +458,15 @@
 - `staticmethod` `def start_tensorboard(runs: Sequence[TensorBoardRun], *, request_host: Optional[str]=None, port…`
 - `staticmethod` `def collect_tasks_for_scope(scope: str, task_id: Optional[int]=None) -> Tuple[List[Any], List[D…`
 
+### `train_curve_service_module` (`service/train_curve_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def resolve_event_dir(rollout_root: Optional[str]) -> Optional[str]`
+- `staticmethod` `def resolve_curve_keys(user_id: Optional[int], task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def build_train_curve(task_id: int, user_id: Optional[int]=None) -> Dict[str, Any]`
+- `staticmethod` `def save_curve_preference(task_id: int, user_id: Optional[int], *, keys: Optional[List[str]]=No…`
+
 ## controller/ — REST 路由（新增接口前对照）
 
 | 模块 | Method | Path | Function | 用途 |
@@ -491,6 +521,9 @@
 | `tensorboard_controller` | POST | `/api/tensorboard/start` | `api_tensorboard_start` | 启动或复用 TensorBoard，返回可新标签打开的 URL。 |
 | `tensorboard_controller` | GET | `/api/tensorboard/status` | `api_tensorboard_status` | — |
 | `tensorboard_controller` | POST | `/api/tensorboard/stop` | `api_tensorboard_stop` | — |
+| `train_curve_controller` | GET | `/api/tasks/{task_id}/train-curve` | `page_train_curve` | 渲染训练曲线页：指标按钮组 + 折线，可保存指标配置。 |
+| `train_curve_controller` | GET | `/api/tasks/{task_id}/train-curve.json` | `api_train_curve` | 返回训练曲线数据：指标按钮组 + 每个指标的折线点。 |
+| `train_curve_controller` | POST | `/api/tasks/{task_id}/train-curve/preference` | `api_save_train_curve_preference` | 保存指标偏好。scope=global 写用户默认，scope=task 写该任务追加项。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/new` | `page_cluster_config_new` | 渲染新建表单（cluster_key 为空 → 新建模式）。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/{cluster_key}/edit` | `page_cluster_config_edit` | 渲染编辑表单（带预填数据）。 |
