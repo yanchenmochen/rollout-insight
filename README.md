@@ -74,7 +74,9 @@ rollout-insight/
 │   ├── log_setup.py
 │   ├── analyze_dump.py        # .pt dump 元数据/摘要/transcript（无依赖外部 skill）
 │   ├── tb_series_reader.py    # 读 TB 事件目录的完整 scalar 序列（多 tag）
-│   └── train_curve_catalog.py # 训练曲线指标目录：默认按钮组 + tag 匹配规则
+│   ├── train_curve_catalog.py # 训练曲线指标目录：默认按钮组 + tag 匹配规则
+│   ├── train_curve_epoch.py   # 训练曲线 epoch 聚合（steps_per_epoch / 分箱均值）
+│   └── icon_catalog.py        # 菜单图标清单：路由/动作 → Lucide 图标名 + tooltip
 ├── data/                      # 数据层
 │   ├── response.py            # 统一 JSON 响应（code/msg/data）
 │   └── rollout_insight_exception.py   # 业务异常（50xxx/51xxx/52xxx/53xxx/54xxx）
@@ -92,7 +94,10 @@ rollout-insight/
 │   ├── install.sh             # 把 skill 软链到 ~/.cursor/skills/rollout-insight
 │   └── recipes.md             # 按场景的速查手册
 ├── schedule/                  # 定时任务占位
-├── static/                    # 静态资源（.gitkeep）
+├── static/                    # 静态资源
+│   ├── icons/                 # 离线内置 Lucide SVG 图标（MIT，见 static/icons/LICENSE）
+│   ├── ri_icons.css           # 图标 CSS mask（由 scripts/gen_icon_css.py 生成）
+│   └── ri_epoch_chart.js      # 共享 epoch 折线渲染（window.RiEpochChart.render）
 ├── templates/                 # Jinja2 模板（base.html）
 ├── tests/                     # 单元测试
 └── log/                       # 运行日志（默认被 .gitignore）
@@ -122,11 +127,11 @@ rollout-insight/
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
 | GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
-| GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（混合奖励/长度/梯度/entropy_loss/context_exhausted）+ 折线 |
-| GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列 |
+| GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（奖励/长度/梯度/entropy_loss/context_exhausted/max_fake_responses/rollout_time）+ 折线（逐 step / 按 epoch 聚合） |
+| GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列（含 epoch 聚合序列） |
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
-| GET  | `/api/cross-task-compare` | 跨任务对比页：选多个任务，比较共同题目的训练过程变化 |
-| GET  | `/api/cross-task-compare.json` | 跨任务对比 JSON（`task_ids=1,2,3`，可选 `instance_id=`） |
+| GET  | `/api/cross-task-compare` | 跨任务对比页：选多个任务 + 选基线，比较共同题目的训练过程变化 |
+| GET  | `/api/cross-task-compare.json` | 跨任务对比 JSON（`task_ids=1,2,3`，可选 `baseline_task_id=` / `instance_id=`） |
 | GET  | `/api/cross-task-compare/instance.json` | 单题在多任务上的逐次出现与通过率 |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
@@ -198,12 +203,33 @@ rollout-insight/
 
 训练曲线从任务进入：任务详情页顶「训练曲线」进入 `/api/tasks/{task_id}/train-curve`。它把该任务 `rollout_root` 下 `tbs/` 或 `tf_logs/` 的 TensorBoard scalar 画成折线。
 
-**指标按钮组。** 默认展示 5 个内置指标：混合奖励、长度、梯度、entropy_loss、context_exhausted。用户可以勾选任意内置指标、追加自定义指标（写 TB tag 名，形如 `custom:my_metric`），并选择保存范围：
+**指标按钮组。** 默认展示 7 个内置指标：奖励、长度、梯度、entropy_loss、context_exhausted、max_fake_responses、rollout_time。用户可以勾选任意内置指标、追加自定义指标（写 TB tag 名，形如 `custom:my_metric`），并选择保存范围：
 
 - **保存为默认**（`scope=global`）：该用户的全局按钮组，长期生效，之后打开任何任务都按这套配置。
 - **保存为本任务**（`scope=task`）：在该任务的按钮组上追加展示项，不影响其它任务。
 
-最终生效的指标 = 用户全局偏好 + 本任务追加项（用户全局偏好一旦保存就完全覆盖内置默认按钮组）。偏好存在 `ri_train_curve_preference_table`。内置指标按正则匹配 TB tag（例如 `rollout/mixed_reward`、`actor/grad_norm` 都能命中），同一指标命中多个 tag 时取第一个作主曲线，其余作为备选。
+最终生效的指标 = 用户全局偏好 + 本任务追加项（用户全局偏好一旦保存就完全覆盖内置默认按钮组）。偏好存在 `ri_train_curve_preference_table`。
+
+**一个指标 = 一张图，多条子曲线叠画。** 内置指标先按**标准 tag** 命中（`utils/train_curve_catalog.CURVE_METRICS[key]["series"]`），命中不到才退回锚定到路径段的正则兜底。这样：
+
+| 指标 | 画的曲线 |
+| --- | --- |
+| 奖励 | `rollout/generated/raw_reward`、`rollout/generated/paired_raw_reward`、`rollout/filtered/raw_reward`（三条同图，不同颜色 + 图例） |
+| 长度 | `rollout/response_len/mean` |
+| 梯度 | `train/grad_norm` |
+| entropy_loss | `train/entropy_loss` |
+| context_exhausted | `rollout/outcome/context_exhausted` |
+| max_fake_responses | `rollout/outcome/max_fake_responses` |
+| rollout_time | `perf/rollout_time` |
+
+正则兜底用 `(^|/)raw_reward$` 这类锚定写法，避免把 `raw_reward_coverage`、`raw_reward_measured_attempt_count` 等派生指标误当成奖励曲线；`rollout_time` 同理排除 `perf/rollout_time/attempt/*` 的分解项。
+
+**逐 step / 按 epoch 两种视图。** 右上角可切换：
+
+- **逐 step**：横轴是 TensorBoard 的 step（一次 rollout 采样 + 一次训练更新），粒度细、抖动大。
+- **按 epoch 聚合**：每个 epoch 内所有 step 取平均，看整体趋势。epoch 边界与问题分析页同口径——一个 epoch 覆盖 `题目池大小 ÷ 每轮抽样题数` 个 rollout step（例如 64 题 ÷ 16 = 4）。边界算不出来时该按钮置灰，只保留逐 step 视图。
+
+epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` / `aggregate_by_epoch` / `epoch_view`），epoch 边界复用 `service.problem_analysis_service.build_pass_trend` 返回的 `steps_per_epoch`，避免两页口径漂移。
 
 **数据口径。** 读取时关闭 TensorBoard 的 orphan purge、给足 scalar 水库容量（TB 的 Reservoir 是随机抽样，容量不足会随机丢点、曲线缺段），长序列由本服务做确定性等距抽样并保留首尾。
 
@@ -213,9 +239,25 @@ rollout-insight/
 
 - **共同题目**：所有选中任务都出现过的 `instance_id`。
 - **epoch 口径**：与问题分析页完全一致——第 k 个 epoch = 该题第 k 次出现（按 `rollout_id` 升序）。
-- **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计，区分「变好 / 不变 / 变坏」三档；另有「相对基线」一列，比较末次通过率与基线任务（列表第一个）之差，回答「哪个配置更强」。
-- **单题下钻**：点某道题只看这一道题在多个任务上的逐次通过率与训练轨迹。
+- **基线任务由用户主动选择**：任务选择框下方有「基线任务」下拉，只列出参与对比的任务。切换基线会重新计算「相对基线」列并按变化幅度重新排序。请求参数 `baseline_task_id=`（非法或未指定时退回第一个任务）。
+- **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计，区分「变好 / 不变 / 变坏」三档；另有「相对基线」一列，比较末次通过率与基线任务之差，回答「哪个配置更强」。**变好用绿色、变差用红色**。
+- **每题可展开**：题目列表每行可展开，抽屉里给出各任务的通过率折线（sparkline）、每次出现（epoch）的**通过数量**（`n_pass / n_attempts`，如 `3/8`）、末次通过率与首尾差。
+- **单题下钻**：抽屉底部可跳「查看单题明细」，看这一道题在多个任务上的 attempt 级别明细。
 - **奖励上升指引**：每个任务给出一组杠杆卡片，复用 `service/reward_diagnosis_service.build_reward_levers` 与单任务奖励诊断页同款口径，指明哪条在拖后腿、该做什么。
+
+### 5.6 界面图标（离线 Lucide）
+
+顶栏、任务内跳转栏、页面按钮都配了图标，用来一眼区分各入口的职责（任务列表 / 曲线对比 / 跨任务对比 / 洞察 / 系统设置 / 登录 / 注册 / 设置 / 退出，以及任务详情 / 训练曲线 / 失败分析 / 问题分析 / 奖励诊断）。悬停时还会显示一句话说明。
+
+- **图标本体**：Lucide SVG（MIT License），已 vendor 到 `static/icons/`，许可声明见 `static/icons/LICENSE`。部署环境是离线内网，CDN 不可达，因此**不走外链**。
+- **上色方式**：`static/ri_icons.css` 用 CSS `mask-image` + `currentColor` 实现，图标颜色随所在导航栏 / 按钮的文字色自适应，无需为深色、浅色各存一份资源。
+- **清单集中管理**：图标名与提示语统一写在 `utils/icon_catalog.py`（`NAV_ICONS`），模板里只写 `class="ri-icon ri-icon-<name>"`，避免图标语义散落在各个模板里。
+- **新增图标**：把 Lucide 的 SVG 放进 `static/icons/`，然后重跑
+
+  ```bash
+  python scripts/gen_icon_css.py          # 重新生成 static/ri_icons.css
+  python scripts/gen_icon_css.py --check   # CI 校验：CSS 与图标目录是否一致
+  ```
 
 ---
 
