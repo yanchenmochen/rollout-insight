@@ -7,7 +7,9 @@
 2. 按用户配置（全局默认 + 任务级追加）解析出要展示的指标；
 3. 每个指标可以命中多个 tag（例如「奖励」= generated / paired / filtered 三条
    raw_reward），这些 tag **画在同一张图**里，用不同颜色区分；
-4. 输出可直接画折线的 ``series``，以及未命中任何 tag 的指标（前端提示"无数据"）。
+4. 除逐 step 曲线外，还给出 epoch 聚合曲线（epoch 内所有 step 取平均），
+   口径与「问题分析」页一致（题目池大小 ÷ 每轮抽样题数 = 每 epoch 的 step 数）；
+5. 输出可直接画折线的 ``series``，以及未命中任何 tag 的指标（前端提示"无数据"）。
 
 偏好读取与写入都走 ``DBTrainCurvePreferenceService``（用户默认 + 任务级追加）。
 """
@@ -25,6 +27,7 @@ from utils.train_curve_catalog import (
     normalize_curve_keys,
     resolve_metric_tags,
 )
+from utils.train_curve_epoch import epoch_view, resolve_steps_per_epoch
 
 __all__ = [
     "resolve_event_dir",
@@ -106,17 +109,24 @@ def resolve_curve_keys(
     }
 
 
-def _series_view(tag: str, points: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """单条子曲线：逐 step 点。"""
+def _series_view(
+    tag: str,
+    points: Sequence[Dict[str, Any]],
+    steps_per_epoch: Optional[int],
+) -> Dict[str, Any]:
+    """单条子曲线：逐 step 点 + epoch 聚合点。"""
     step_points = [
         {"step": int(item.get("step", 0) or 0), "value": float(item.get("value", 0.0) or 0.0)}
         for item in points or []
     ]
+    epoch = epoch_view(step_points, steps_per_epoch)
     return {
         "tag": tag,
         "label": _series_label(tag),
         "points": step_points,
         "n_points": len(step_points),
+        "epoch_points": epoch["points"],
+        "n_epoch_points": len(epoch["points"]),
     }
 
 
@@ -133,6 +143,7 @@ def _metric_view(
     key: str,
     tags: Sequence[str],
     series: Dict[str, List[Dict[str, Any]]],
+    steps_per_epoch: Optional[int] = None,
 ) -> Dict[str, Any]:
     """把一个指标 key 组装成前端可用的视图对象。
 
@@ -146,8 +157,8 @@ def _metric_view(
 
     sub_series: List[Dict[str, Any]] = []
     for tag in matched:
-        view = _series_view(tag, series.get(tag) or [])
-        if view["n_points"]:
+        view = _series_view(tag, series.get(tag) or [], steps_per_epoch)
+        if view["n_points"] or view["n_epoch_points"]:
             sub_series.append(view)
 
     primary_tag = matched[0] if matched else ""
@@ -168,6 +179,29 @@ def _metric_view(
         "n_series": len(sub_series),
         "has_data": bool(sub_series),
     }
+
+
+def _resolve_steps_per_epoch(task_id: int) -> Optional[int]:
+    """算出一个 epoch 覆盖多少个 rollout step（口径与问题分析页一致）。
+
+    复用 ``service.problem_analysis_service.build_pass_trend``：它已经按
+    「题目池大小 ÷ 每轮抽样题数」算好了 ``steps_per_epoch``，并标注了是否整除。
+    拿不到（缺题目池大小或每轮抽样题数）就返回 None，页面退化成只展示逐 step 曲线。
+    """
+    from service.problem_analysis_service import build_pass_trend
+
+    try:
+        trend = build_pass_trend(int(task_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("计算 epoch 边界失败 task_id={} err={}", task_id, exc)
+        return None
+
+    if not trend.get("steps_per_epoch_exact"):
+        return None
+    span = trend.get("steps_per_epoch")
+    if not span:
+        return None
+    return resolve_steps_per_epoch(trend.get("n_problems"), trend.get("batch_size"))
 
 
 def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
@@ -200,14 +234,18 @@ def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, 
             "因此没有可画的训练曲线。"
         )
 
-    metrics = [_metric_view(key, tags, series) for key in keys]
+    steps_per_epoch = _resolve_steps_per_epoch(int(task_id))
+    metrics = [
+        _metric_view(key, tags, series, steps_per_epoch) for key in keys
+    ]
 
     logger.info(
-        "训练曲线 task_id={} event_dir={} tags={} metrics={}",
+        "训练曲线 task_id={} event_dir={} tags={} metrics={} steps_per_epoch={}",
         task_id,
         event_dir,
         len(tags),
         len(metrics),
+        steps_per_epoch,
     )
     return {
         "task": {
@@ -223,6 +261,17 @@ def build_train_curve(task_id: int, user_id: Optional[int] = None) -> Dict[str, 
         "preference": preference,
         "available_metrics": available_curve_metrics(),
         "default_keys": list(DEFAULT_CURVE_KEYS),
+        "epoch": {
+            "steps_per_epoch": steps_per_epoch,
+            "available": bool(steps_per_epoch),
+            "note": (
+                "epoch 视图 = 每个 epoch 内所有 step 取平均；"
+                "一个 epoch 覆盖 %s 个 rollout step。"
+                % (steps_per_epoch if steps_per_epoch else "?")
+                if steps_per_epoch
+                else "无法确定 epoch 边界（缺题目池大小或每轮抽样题数），只展示逐 step 曲线。"
+            ),
+        },
         "page_note": (
             "指标按钮组来自「用户默认 + 本任务追加」，保存后长期生效；"
             "同一指标命中多个 tag 时会在同一张图里画多条子曲线。"

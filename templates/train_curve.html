@@ -38,6 +38,13 @@
     .curve-chart { width: 100%; }
     .curve-chart svg { width: 100%; height: auto; display: block; }
     .curve-empty { font-size: 12px; color: var(--ri-muted); padding: 10px 0; }
+    /* 视图切换（step / epoch） */
+    .view-switch { display: inline-flex; gap: 0; border: 1px solid var(--ri-border); border-radius: 4px; overflow: hidden; }
+    .view-switch button { border: none; background: #f8fafb; color: var(--ri-muted); font-size: 12px;
+        padding: 4px 12px; cursor: pointer; font-weight: 500; }
+    .view-switch button + button { border-left: 1px solid var(--ri-border); }
+    .view-switch button.on { background: var(--ri-accent); color: #fff; }
+    .view-switch button:disabled { opacity: 0.45; cursor: not-allowed; }
     /* 曲线图例 */
     .curve-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 2px 0 6px 0; }
     .legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ri-muted); }
@@ -97,7 +104,14 @@
     </div>
 
     <div class="section">
-        <h2>曲线 <small>每个指标一张折线图 · 同一指标的多条子曲线叠在同一张图</small></h2>
+        <h2>曲线
+            <small>每个指标一张折线图 · 同一指标的多条子曲线叠在同一张图</small>
+            <span class="view-switch" id="viewSwitch" style="float:right; margin-top:-4px;">
+                <button type="button" data-view="step" class="on">逐 step</button>
+                <button type="button" data-view="epoch" id="epochBtn">按 epoch 聚合</button>
+            </span>
+        </h2>
+        <div class="muted" id="epochNote" style="margin-bottom:10px;"></div>
         <div id="curveBody"></div>
     </div>
 
@@ -116,6 +130,7 @@
     let DATA = null;
     let selected = new Set();      // 选中的内置指标 key
     let customKeys = new Set();     // 选中的自定义指标 key
+    let viewMode = "step";         // step | epoch（epoch = epoch 内所有 step 取平均）
     const DEFAULT_KEYS = {{ (default_keys or []) | tojson }};
 
     function esc(s) {
@@ -195,6 +210,20 @@
     // 它们画在**同一张图**里，用不同颜色 + 图例区分。
     const SERIES_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2"];
 
+    function currentView() {
+        return viewMode === "epoch" ? "epoch" : "step";
+    }
+
+    function seriesPoints(series) {
+        return currentView() === "epoch"
+            ? (series.epoch_points || [])
+            : (series.points || []);
+    }
+
+    function seriesXKey(point) {
+        return currentView() === "epoch" ? Number(point.epoch) : Number(point.step);
+    }
+
     function renderCurve(metric) {
         const subSeries = metric.sub_series || [];
         const head = `<div class="curve-head">
@@ -207,7 +236,7 @@
         </div>`;
 
         const drawn = subSeries
-            .map((s) => ({ series: s, points: s.points || [] }))
+            .map((s) => ({ series: s, points: seriesPoints(s) }))
             .filter((item) => item.points.length > 0);
 
         if (!drawn.length) {
@@ -225,7 +254,7 @@
         const allX = [];
         drawn.forEach((item) => item.points.forEach((p) => {
             allValues.push(Number(p.value));
-            allX.push(Number(p.step));
+            allX.push(seriesXKey(p));
         }));
         let yMin = Math.min(...allValues), yMax = Math.max(...allValues);
         if (yMax === yMin) { yMin -= 0.5; yMax += 0.5; }
@@ -251,11 +280,11 @@
             const color = SERIES_COLORS[idx % SERIES_COLORS.length];
             const pts = item.points;
             const path = pts.map((p, i) =>
-                `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
+                `${i === 0 ? "M" : "L"}${xAt(seriesXKey(p)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
             ).join(" ");
             paths += `<path d="${path}" fill="none" stroke="${color}" stroke-width="1.8"></path>`;
             dots += pts.map((p, i) => {
-                const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
+                const x = xAt(seriesXKey(p)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
                 return `<circle class="pt" cx="${x}" cy="${y}" r="2.6" fill="${color}" data-i="${i}" data-s="${idx}" />`;
             }).join("");
 
@@ -279,17 +308,18 @@
         const xLabelEvery = refPoints.length <= 8 ? 1 : Math.ceil(refPoints.length / 8);
         refPoints.forEach((p, i) => {
             if (i !== 0 && i !== refPoints.length - 1 && i % xLabelEvery !== 0) return;
-            const x = xAt(Number(p.step)).toFixed(1);
-            xLabels.push(`<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`;
+            const x = xAt(seriesXKey(p)).toFixed(1);
+            xLabels.push(`<text x="${x}" y="${padT + plotH + 16}" text-anchor="middle" font-size="10" fill="#5c6b7a">${seriesXKey(p)}</text>`);
         });
 
+        const xAxisTitle = currentView() === "epoch" ? "epoch" : "step";
         const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(metric.label)} 曲线">
             <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
             ${grid}
             <line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
             <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
             ${xLabels.join("")}
-            <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">step</text>
+            <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">${xAxisTitle}</text>
             ${paths}
             ${dots}
         </svg>`;
@@ -305,7 +335,7 @@
 
         const primary = legend[0];
         const summary = primary
-            ? `${primary.n} 个点 · step ${primary.first.step}→${primary.last.step} · `
+            ? `${primary.n} 个点 · ${xAxisTitle} ${primary.first.step !== undefined && currentView() === "step" ? primary.first.step : primary.first.epoch}→${currentView() === "step" ? primary.last.step : primary.last.epoch} · `
                 + `${fmt(primary.first.value)} → ${fmt(primary.last.value)} `
                 + `<span style="color:${primary.deltaCls}">（${primary.delta >= 0 ? "+" : ""}${fmt(primary.delta)}）</span>`
             : "";
@@ -344,10 +374,13 @@
                 const pIdx = Number(dot.getAttribute("data-i"));
                 const series = subSeries[sIdx];
                 if (!series) return;
-                const point = (series.points || [])[pIdx];
+                const points = seriesPoints(series);
+                const point = points[pIdx];
                 if (!point) return;
                 dot.addEventListener("mouseenter", () => {
-                    readout.innerHTML = `${esc(series.label || series.tag)} · step ${point.step} · ${fmt(point.value)}`;
+                    const xName = currentView() === "epoch" ? "epoch" : "step";
+                    const xVal = currentView() === "epoch" ? point.epoch : point.step;
+                    readout.innerHTML = `${esc(series.label || series.tag)} · ${xName} ${xVal} · ${fmt(point.value)}`;
                 });
                 dot.addEventListener("mouseleave", () => {
                     readout.innerHTML = summary;
@@ -359,7 +392,6 @@
     function cssEscape(text) {
         if (window.CSS && CSS.escape) return CSS.escape(String(text));
         return String(text).replace(/["\\]/g, "\\$&");
-    }
     }
 
     // ---------------------------------------------------------------- 保存
@@ -411,6 +443,7 @@
             renderMetricBar();
             renderCustomList();
             renderTagList();
+            renderViewSwitch();
             renderCurves();
         } catch (e) {
             $("loading").style.display = "none";
@@ -428,6 +461,35 @@
         renderCurves();
         showMsg("已恢复内置默认（尚未保存，点保存生效）。", false);
     });
+
+    // 视图切换：逐 step / 按 epoch 聚合
+    function renderViewSwitch() {
+        const epochInfo = (DATA && DATA.epoch) || {};
+        const btn = $("epochBtn");
+        const available = !!epochInfo.available;
+        if (btn) {
+            btn.disabled = !available;
+            btn.title = available
+                ? (epochInfo.note || "")
+                : "当前任务无法确定 epoch 边界（缺题目池大小或每轮抽样题数）";
+        }
+        $("viewSwitch").querySelectorAll("button[data-view]").forEach((node) => {
+            node.classList.toggle("on", node.dataset.view === viewMode);
+        });
+        $("epochNote").textContent = currentView() === "epoch"
+            ? (epochInfo.note || "")
+            : (available ? "当前按逐 step 展示；点右上「按 epoch 聚合」看整体趋势。" : (epochInfo.note || ""));
+    }
+
+    $("viewSwitch").querySelectorAll("button[data-view]").forEach((node) => {
+        node.addEventListener("click", () => {
+            if (node.disabled) return;
+            viewMode = node.dataset.view === "epoch" ? "epoch" : "step";
+            renderViewSwitch();
+            renderCurves();
+        });
+    });
+
     $("addCustomBtn").addEventListener("click", () => {
         const tag = ($("customTag").value || "").trim();
         if (!tag) {
