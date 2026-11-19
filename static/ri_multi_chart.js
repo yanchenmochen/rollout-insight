@@ -155,8 +155,14 @@
                 return (pi === 0 ? "M" : "L") + xAt(Number(p.x)).toFixed(1) + ","
                     + yAt(Number(p.y)).toFixed(1);
             }).join(" ");
+            // dash 支持三种写法：true（默认虚线）/ null（实线）/ 自定义 dasharray 字符串
+            var dashAttr = "";
+            if (s.dash === true) dashAttr = ' stroke-dasharray="5 4"';
+            else if (typeof s.dash === "string" && s.dash) {
+                dashAttr = ' stroke-dasharray="' + esc(s.dash) + '"';
+            } else if (s.dashed) dashAttr = ' stroke-dasharray="5 4"';
             body += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.9"'
-                + (s.dashed ? ' stroke-dasharray="5 4"' : "") + '></path>';
+                + dashAttr + "></path>";
             var dots = pts.map(function (p, pi) {
                 var x = xAt(Number(p.x)).toFixed(1);
                 var y = yAt(Number(p.y)).toFixed(1);

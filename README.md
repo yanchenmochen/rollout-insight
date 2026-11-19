@@ -259,7 +259,7 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
 
 - **勾选任务**：页面上方列出所有含 `tbs/` 或 `tf_logs/` 的任务，带名称筛选、全选 / 清空 / 最近 5 个快捷操作；默认勾选最近 3 个。
 - **勾选指标**：与单任务训练曲线共用 7 个内置指标（奖励 / 长度 / 梯度 / entropy_loss / context_exhausted / max_fake_responses / rollout_time），按钮组可多选。
-- **叠加规则**：同一指标下，**每个任务 × 每条子曲线**各占一条线（例如「奖励」× 3 个任务 = 9 条线），同 tag 同色、不同 tag 换色，图例标出任务名、曲线名与首尾变化量。
+- **叠加规则**：同一指标下，**每个任务 × 每条子曲线**各占一条线（例如「奖励」× 3 个任务 = 9 条线）。配色以**任务**为主轴（每个任务一种颜色），同一任务的多个子指标改用**线型**区分（实线 / 虚线 / 点线），一眼能看出某条线属于哪个任务；图例标出任务名、曲线名与首尾变化量。
 - **逐 step / 按 epoch 两种视图**：与单任务训练曲线一致，可直接横向比较不同任务的收敛节奏。
 
 数据接口 `GET /api/tensorboard/curve-compare.json?task_ids=1,2&keys=raw_reward&view=step`；`brief=true` 时只回任务清单与指标目录（页面首屏用，不读事件文件，避免一次加载十几个事件目录）。SVG 折线渲染抽到共享模块 `static/ri_multi_chart.js`（暴露 `window.RiMultiChart.renderLineChart` / `renderSparkline`），与问题分析页的单题趋势图共用。

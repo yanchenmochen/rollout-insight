@@ -127,6 +127,8 @@
 (function () {
     const $ = (id) => document.getElementById(id);
     const SERIES_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2", "#be185d", "#4d7c0f"];
+    // 同一任务的多个子指标用不同线型区分（颜色留给任务）
+    const TAG_DASHES = [null, "6 4", "2 3", "9 4 2 4"];
 
     let ALL_TASKS = [];
     let selectedTasks = new Set();
@@ -277,18 +279,25 @@
         const drawn = (metric.series || []).filter(function (s) {
             return (s.points || []).length;
         });
-        // 同 tag 的多任务曲线用同色系区分：先按 tag 分组，再按任务分色
+        // 跨任务对比页：**任务**是主色轴（每个任务一种颜色），子指标用线型区分。
+        // 这样一眼能看出「哪条线属于哪个任务」，同任务的多个 tag 仍是同色系。
+        const taskOrder = [];
+        drawn.forEach(function (s) {
+            const tid = Number(s.task_id);
+            if (taskOrder.indexOf(tid) < 0) taskOrder.push(tid);
+        });
         const tagOrder = [];
         drawn.forEach(function (s) {
             if (tagOrder.indexOf(s.tag) < 0) tagOrder.push(s.tag);
         });
         const series = drawn.map(function (s) {
+            const taskIdx = taskOrder.indexOf(Number(s.task_id));
             const tagIdx = tagOrder.indexOf(s.tag);
-            const color = SERIES_COLORS[tagIdx % SERIES_COLORS.length];
             return {
                 label: (s.task_name || ("任务 #" + s.task_id)) + " · " + (s.label || s.tag),
-                color: color,
-                dashed: tagOrder.length > 1,
+                color: SERIES_COLORS[taskIdx % SERIES_COLORS.length],
+                // 子指标用实线 / 虚线 / 点线区分：同色但线型不同，仍能分辨
+                dash: TAG_DASHES[tagIdx % TAG_DASHES.length],
                 points: s.points.map(function (p) {
                     return { x: Number(p.step), y: Number(p.value), meta: s };
                 }),
@@ -302,8 +311,11 @@
                 const delta = Number(last.y) - Number(first.y);
                 const cls = delta > 1e-9 ? "delta-up" : (delta < -1e-9 ? "delta-down" : "delta-flat");
                 const sign = delta > 1e-9 ? "+" : "";
+                const dashStyle = s.dash
+                    ? `background:repeating-linear-gradient(90deg, ${s.color} 0 6px, transparent 6px 10px);`
+                    : `background:${s.color}`;
                 return `<span class="legend-item">
-                    <span class="legend-swatch" style="background:${s.color}"></span>
+                    <span class="legend-swatch" style="${dashStyle}"></span>
                     <span>${esc(s.label)}</span>
                     <span class="delta ${cls}">${sign}${fmt(delta)}</span>
                 </span>`;

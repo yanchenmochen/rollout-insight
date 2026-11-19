@@ -30,6 +30,8 @@
 | 新增 `service/curve_compare_service.py` | `list_comparable_tasks`（只解析 run 目录，不读事件文件）/ `list_curve_compare_brief`（任务清单 + 指标目录）/ `build_curve_compare`（任务 × 指标 → 多序列曲线） |
 | `controller/tensorboard_controller.py` | 新增 `GET /api/tensorboard/curve-compare.json`（`task_ids=` / `keys=` / `view=step\|epoch` / `brief=true`）；`/api/tensorboard` 改渲染 `templates/curve_compare.html` |
 | 新增 `templates/curve_compare.html` | 多任务曲线对比页：任务勾选（含名称筛选 / 全选 / 清空 / 最近 5 个）、指标按钮组（与单任务共用 7 个内置指标）、逐 step / 按 epoch 视图切换、每条曲线的首尾变化量（变绿 / 变红） |
+| 曲线配色口径 | **任务**为主色轴（每个任务一种颜色），同一任务的多个子指标改用**线型**区分（实线 / 虚线 / 点线），避免不同任务同色导致无法分辨归属 |
+| `static/ri_multi_chart.js` | `renderLineChart` 的序列项支持 `dash`：`true` = 默认虚线 / `null` = 实线 / 字符串 = 自定义 dasharray |
 | `templates/base.html` | 引入 `static/ri_multi_chart.js`（需早于子页 inline script） |
 
 ### 测试
