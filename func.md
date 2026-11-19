@@ -113,6 +113,12 @@
 - `def extract_sample_failure_detail(sample: Dict[str, Any], *, sample_index: int=0) -> Optional[D…` — 抽取单条非通过 sample 的深挖细节；通过样本返回 None。
 - `def cluster_failure_insights(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败深挖聚类。
 
+### `utils/icon_catalog.py`
+
+- `def icon_path(name: str) -> str` — 返回图标在 static 下的访问路径。
+- `def nav_icon(key: str) -> Dict[str, str]` — 按 key 取图标信息；未知返回空 dict。
+- `def icon_svg(name: str, size: int=16) -> str` — 读出图标 SVG 文本，内联到 HTML（可随 ``currentColor`` 变色）。
+
 ### `utils/log_setup.py`
 
 - `def setup_rollout_insight_logging(log_base: str='') -> None` — 配置 rollout-insight 的 loguru 输出。

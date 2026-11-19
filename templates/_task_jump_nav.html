@@ -8,12 +8,17 @@
 {% set nav_actions = task_nav_actions if task_nav_actions is defined else false %}
 <a class="btn btn-secondary" href="/api/tasks">返回列表</a>
 {% if nav_current != 'detail' %}
-<a class="btn btn-secondary" href="/api/tasks/{{ task_nav_id }}">任务详情</a>
+<a class="btn btn-secondary" href="/api/tasks/{{ task_nav_id }}" title="任务详情：概览与全量通过率">
+    <span class="ri-icon ri-icon-list-checks"></span>任务详情</a>
 {% endif %}
-<a class="btn {% if nav_current == 'curves' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/train-curve"{% if nav_current == 'curves' %} aria-current="page"{% endif %}>训练曲线</a>
-<a class="btn {% if nav_current == 'failures' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/failures"{% if nav_current == 'failures' %} aria-current="page"{% endif %}>失败分析</a>
-<a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>问题分析</a>
-<a class="btn {% if nav_current == 'reward' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/reward-diagnosis"{% if nav_current == 'reward' %} aria-current="page"{% endif %}>奖励诊断</a>
+<a class="btn {% if nav_current == 'curves' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/train-curve" title="训练曲线：按指标按钮组看训练过程"{% if nav_current == 'curves' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-chart-spline"></span>训练曲线</a>
+<a class="btn {% if nav_current == 'failures' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/failures" title="失败分析：每个 attempt 怎么失败的"{% if nav_current == 'failures' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-triangle-alert"></span>失败分析</a>
+<a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis" title="问题分析：逐题看通过率与变好变坏"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-scan-search"></span>问题分析</a>
+<a class="btn {% if nav_current == 'reward' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/reward-diagnosis" title="奖励诊断：奖励为什么不涨"{% if nav_current == 'reward' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-gauge"></span>奖励诊断</a>
 {% if nav_actions %}
 <button type="button" class="btn" id="rescanBtn">重扫</button>
 <button type="button" class="btn btn-secondary" id="deleteBtn">删除</button>

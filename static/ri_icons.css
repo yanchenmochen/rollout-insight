@@ -1,0 +1,177 @@
+/* 自动生成，请勿手改 —— 由 python scripts/gen_icon_css.py 生成。
+ *
+ * 图标来源：Lucide（MIT License），见 static/icons/LICENSE。
+ * 用法：<span class="ri-icon ri-icon-list-checks"></span>
+ * 尺寸由 .ri-icon 的 width/height 控制，颜色跟随 currentColor。
+ */
+
+
+.ri-icon {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    background-color: currentColor;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    vertical-align: -2px;
+}
+
+.ri-icon-activity {
+    -webkit-mask-image: url("/static/icons/activity.svg");
+    mask-image: url("/static/icons/activity.svg");
+}
+
+.ri-icon-arrow-left-right {
+    -webkit-mask-image: url("/static/icons/arrow-left-right.svg");
+    mask-image: url("/static/icons/arrow-left-right.svg");
+}
+
+.ri-icon-chart-line {
+    -webkit-mask-image: url("/static/icons/chart-line.svg");
+    mask-image: url("/static/icons/chart-line.svg");
+}
+
+.ri-icon-chart-spline {
+    -webkit-mask-image: url("/static/icons/chart-spline.svg");
+    mask-image: url("/static/icons/chart-spline.svg");
+}
+
+.ri-icon-chevron-down {
+    -webkit-mask-image: url("/static/icons/chevron-down.svg");
+    mask-image: url("/static/icons/chevron-down.svg");
+}
+
+.ri-icon-chevron-right {
+    -webkit-mask-image: url("/static/icons/chevron-right.svg");
+    mask-image: url("/static/icons/chevron-right.svg");
+}
+
+.ri-icon-clock-alert {
+    -webkit-mask-image: url("/static/icons/clock-alert.svg");
+    mask-image: url("/static/icons/clock-alert.svg");
+}
+
+.ri-icon-coins {
+    -webkit-mask-image: url("/static/icons/coins.svg");
+    mask-image: url("/static/icons/coins.svg");
+}
+
+.ri-icon-gauge {
+    -webkit-mask-image: url("/static/icons/gauge.svg");
+    mask-image: url("/static/icons/gauge.svg");
+}
+
+.ri-icon-git-compare {
+    -webkit-mask-image: url("/static/icons/git-compare.svg");
+    mask-image: url("/static/icons/git-compare.svg");
+}
+
+.ri-icon-git-compare-arrows {
+    -webkit-mask-image: url("/static/icons/git-compare-arrows.svg");
+    mask-image: url("/static/icons/git-compare-arrows.svg");
+}
+
+.ri-icon-graduation-cap {
+    -webkit-mask-image: url("/static/icons/graduation-cap.svg");
+    mask-image: url("/static/icons/graduation-cap.svg");
+}
+
+.ri-icon-lightbulb {
+    -webkit-mask-image: url("/static/icons/lightbulb.svg");
+    mask-image: url("/static/icons/lightbulb.svg");
+}
+
+.ri-icon-list-checks {
+    -webkit-mask-image: url("/static/icons/list-checks.svg");
+    mask-image: url("/static/icons/list-checks.svg");
+}
+
+.ri-icon-log-in {
+    -webkit-mask-image: url("/static/icons/log-in.svg");
+    mask-image: url("/static/icons/log-in.svg");
+}
+
+.ri-icon-log-out {
+    -webkit-mask-image: url("/static/icons/log-out.svg");
+    mask-image: url("/static/icons/log-out.svg");
+}
+
+.ri-icon-maximize-2 {
+    -webkit-mask-image: url("/static/icons/maximize-2.svg");
+    mask-image: url("/static/icons/maximize-2.svg");
+}
+
+.ri-icon-minimize-2 {
+    -webkit-mask-image: url("/static/icons/minimize-2.svg");
+    mask-image: url("/static/icons/minimize-2.svg");
+}
+
+.ri-icon-repeat {
+    -webkit-mask-image: url("/static/icons/repeat.svg");
+    mask-image: url("/static/icons/repeat.svg");
+}
+
+.ri-icon-ruler {
+    -webkit-mask-image: url("/static/icons/ruler.svg");
+    mask-image: url("/static/icons/ruler.svg");
+}
+
+.ri-icon-scale {
+    -webkit-mask-image: url("/static/icons/scale.svg");
+    mask-image: url("/static/icons/scale.svg");
+}
+
+.ri-icon-scan-search {
+    -webkit-mask-image: url("/static/icons/scan-search.svg");
+    mask-image: url("/static/icons/scan-search.svg");
+}
+
+.ri-icon-settings {
+    -webkit-mask-image: url("/static/icons/settings.svg");
+    mask-image: url("/static/icons/settings.svg");
+}
+
+.ri-icon-sigma {
+    -webkit-mask-image: url("/static/icons/sigma.svg");
+    mask-image: url("/static/icons/sigma.svg");
+}
+
+.ri-icon-timer {
+    -webkit-mask-image: url("/static/icons/timer.svg");
+    mask-image: url("/static/icons/timer.svg");
+}
+
+.ri-icon-trending-down {
+    -webkit-mask-image: url("/static/icons/trending-down.svg");
+    mask-image: url("/static/icons/trending-down.svg");
+}
+
+.ri-icon-trending-up {
+    -webkit-mask-image: url("/static/icons/trending-up.svg");
+    mask-image: url("/static/icons/trending-up.svg");
+}
+
+.ri-icon-triangle-alert {
+    -webkit-mask-image: url("/static/icons/triangle-alert.svg");
+    mask-image: url("/static/icons/triangle-alert.svg");
+}
+
+.ri-icon-trophy {
+    -webkit-mask-image: url("/static/icons/trophy.svg");
+    mask-image: url("/static/icons/trophy.svg");
+}
+
+.ri-icon-user-round {
+    -webkit-mask-image: url("/static/icons/user-round.svg");
+    mask-image: url("/static/icons/user-round.svg");
+}
+
+.ri-icon-wand-sparkles {
+    -webkit-mask-image: url("/static/icons/wand-sparkles.svg");
+    mask-image: url("/static/icons/wand-sparkles.svg");
+}
