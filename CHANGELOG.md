@@ -1,5 +1,44 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 训练曲线 / 跨任务对比 / 奖励杠杆
+
+### 概述
+
+本批次围绕**训练进程可观测**与**奖励上升指引**两条主线展开，全部按功能独立
+拆分为原子提交：
+
+- **训练曲线（任务级）** —— 任务详情页顶「训练曲线」进入，可勾选内置指标
+  （混合奖励 / 长度 / 梯度 / entropy_loss / context_exhausted）并追加自定义指标，
+  按钮组支持保存为用户全局默认或任务级追加。
+- **跨任务对比（多任务）** —— 顶栏替换原「Rollout 落盘」死链，回答「不同训练配置
+  下哪些共同的题目变好了、哪些变坏了」，支持单题下钻。
+- **奖励上升杠杆** —— 把「奖励为什么不涨」拆成 7 条可执行杠杆，单任务奖励诊断页与
+  跨任务对比页共用同一份口径。
+- **任务详情页前置全量通过率** —— 该指标表征任务训练进程，提到训练指标之前。
+
+### 关键实现要点
+
+| 变更 | 说明 |
+| --- | --- |
+| 新增 `utils/tb_series_reader.py` | 读 TB 事件目录的完整 scalar 序列；关闭 orphan purge、给足 Reservoir 容量（TB 的 Reservoir 是随机抽样，容量不足会随机丢点导致曲线缺段），长序列改由本模块做确定性等距抽样并保留首尾 |
+| 新增 `utils/train_curve_catalog.py` | 内置指标的 TB tag 正则匹配规则；同一指标命中多个 tag 时取第一个作主曲线 |
+| 新增 `ri_train_curve_preference_table` | 用户全局默认按钮组与任务级追加展示项分开存储，互不干扰 |
+| 新增 `service/train_curve_service.py` + `controller/train_curve_controller.py` | 解析 TB 事件目录、组装曲线数据、保存指标偏好 |
+| 新增 `service/cross_task_compare_service.py` + `controller/cross_task_compare_controller.py` | 共同 `instance_id` 求交、按「第 k 次出现 = 第 k 个 epoch」对齐各任务轨迹 |
+| 新增 `service/reward_diagnosis_service.build_reward_levers` | 7 条奖励杠杆（有效梯度组 / 可测通过率 / timeout / abort / 原始奖励 / 题目池饱和度 / 难度天花板） |
+| 新增 `service/reward_diagnosis_service.summarize_pool_health` | 题目池健康度取每道题**最好一次**的通过率，避免「早期没学会、后来学会了」的题被误判成太难 |
+| 新增 `static/ri_epoch_chart.js` | 抽取共享折线图模块（`window.RiEpochChart.render`），任务详情页与问题分析页共用同一份 SVG 渲染 |
+| 任务详情页 | 新增「全量通过率」区块并置于「训练指标」之前 |
+
+### 测试
+
+- `tests/test_tb_series_reader.py`（12）
+- `tests/test_train_curve_catalog.py`（22）
+- `tests/test_reward_levers.py`（17）
+- `tests/test_cross_task_compare_service.py`（11）
+
+`python scripts/scan_func_md.py --check` 通过，`func.md` 已同步。
+
 ## v0.5.1 — 用户登录 / 注册 / per-user 集群配置
 
 发布日期：2026-10-15
