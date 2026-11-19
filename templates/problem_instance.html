@@ -30,6 +30,16 @@
     .tag-timeout { background: #fb8c00; }
     .tag-abort { background: #c62828; }
     .tag-other { background: #78909c; }
+    /* 单题趋势 */
+    .trend-box { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 12px 16px; margin-bottom: 14px; }
+    .trend-box h2 { margin: 0 0 4px 0; font-size: 15px; border-bottom: none; padding: 0; }
+    .trend-readout { font-size: 12px; color: var(--ri-muted); margin: 4px 0 8px 0; min-height: 18px; }
+    .ri-mc-legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin: 0 0 4px 0; }
+    .ri-mc-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ri-muted); }
+    .ri-mc-swatch { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+    .trend-box svg { width: 100%; height: auto; display: block; }
+    .trend-box .ri-multi-chart svg { width: 100%; height: auto; display: block; }
 </style>
 {% endblock %}
 
@@ -57,7 +67,23 @@
 </div>
 
 {% if not view.visits %}
-<p class="muted">没有找到这道题的 attempt。</p>
+    <p class="muted">没有找到这道题的 attempt。</p>
+{% endif %}
+
+{% if view.trend and view.trend.points %}
+<div class="trend-box">
+    <h2>本题趋势
+        <small class="muted" style="font-weight:400;">整体观察每个题目在训练过程中的变化趋势 · 以题目为中心</small>
+    </h2>
+    <div class="trend-readout" id="trendReadout"></div>
+    <div id="trendChartRate"></div>
+    <div id="trendChartLen"></div>
+    <div id="trendChartTurns"></div>
+    <div class="muted" style="font-size:11px; margin-top:4px;">
+        横轴为该题第几次出现（epoch，按 rollout_id 升序）。三张图量纲不同，分别绘制：
+        通过率、响应长度（该次各 attempt 均值）、agent 轮数（均值）。
+    </div>
+</div>
 {% endif %}
 
 {% for visit in view.visits %}
@@ -78,6 +104,8 @@
                 <th>attempt</th>
                 <th>结局</th>
                 <th class="num">reward</th>
+                <th class="num">响应长度</th>
+                <th class="num">轮数</th>
                 <th>轨迹</th>
             </tr>
         </thead>
@@ -94,6 +122,8 @@
                     {% else %}<span class="tag tag-other">其它</span>{% endif %}
                 </td>
                 <td class="num">{% if a.reward is not none %}{{ "%.3f"|format(a.reward) }}{% else %}-{% endif %}</td>
+                <td class="num">{% if a.response_length %}{{ "{:,}".format(a.response_length) }}{% else %}-{% endif %}</td>
+                <td class="num">{% if a.agent_turns %}{{ a.agent_turns }}{% else %}-{% endif %}</td>
                 <td>
                     {% if visit.rollout_pk and a.attempt_pk %}
                     <a href="/api/tasks/{{ task_id }}/rollouts/{{ visit.rollout_pk }}{% if a.group_index is not none %}?group={{ a.group_index }}{% endif %}#attempt-{{ a.attempt_pk }}">sglang 轨迹</a>
@@ -110,4 +140,92 @@
     </table>
 </div>
 {% endfor %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const TREND = {{ view.trend | tojson }};
+    const $ = (id) => document.getElementById(id);
+
+    function renderTrend() {
+        if (!TREND || !TREND.points || !TREND.points.length) return;
+        if (!window.RiMultiChart) return;
+
+        const points = TREND.points;
+        const readout = $("trendReadout");
+
+        // 每个指标量纲不同，分开绘制，避免互相压扁。
+        const specs = [
+            {
+                id: "trendChartRate",
+                show: TREND.has_rate,
+                label: "通过率",
+                color: RiMultiChart.colorAt(0),
+                yFormat: RiMultiChart.fmtPct,
+                yMin: 0, yMax: 1,
+                pick: (p) => (p.rate == null ? null : { x: p.epoch, y: Number(p.rate), meta: p }),
+                detail: (m) => "通过 " + m.n_pass + "/" + m.n_attempts,
+            },
+            {
+                id: "trendChartLen",
+                show: TREND.has_response_length,
+                label: "响应长度（均值）",
+                color: RiMultiChart.colorAt(1),
+                yFormat: RiMultiChart.fmtNum,
+                pick: (p) => (p.response_length == null ? null : { x: p.epoch, y: Number(p.response_length), meta: p }),
+                detail: (m) => "响应长度 " + Math.round(m.response_length)
+                    + (m.response_length_total ? "（合计 " + m.response_length_total + "）" : ""),
+            },
+            {
+                id: "trendChartTurns",
+                show: TREND.has_agent_turns,
+                label: "agent 轮数（均值）",
+                color: RiMultiChart.colorAt(2),
+                yFormat: RiMultiChart.fmtNum,
+                pick: (p) => (p.agent_turns == null ? null : { x: p.epoch, y: Number(p.agent_turns), meta: p }),
+                detail: (m) => "轮数 " + Math.round(m.agent_turns),
+            },
+        ];
+
+        specs.forEach(function (spec) {
+            if (!spec.show) return;
+            const host = $(spec.id);
+            if (!host) return;
+            const series = [{
+                label: spec.label,
+                color: spec.color,
+                points: points.map(spec.pick).filter(Boolean),
+            }];
+            if (!series[0].points.length) return;
+            RiMultiChart.renderLineChart({
+                host: host,
+                readout: readout,
+                series: series,
+                xLabel: "出现次序（epoch）",
+                ariaLabel: spec.label + "趋势",
+                yFormat: spec.yFormat,
+                yMin: spec.yMin,
+                yMax: spec.yMax,
+                tipFormat: function (s, p) {
+                    const m = p.meta || {};
+                    return s.label + " · 第 " + p.x + " 次 · " + spec.detail(m);
+                },
+            });
+        });
+
+        // 首次读数：显示最后一次出现的明细
+        if (readout) {
+            const last = points[points.length - 1];
+            const bits = ["第 " + last.epoch + " 次"];
+            if (last.rate != null) bits.push("通过 " + last.n_pass + "/" + last.n_attempts);
+            if (last.response_length != null) bits.push("响应长度 " + Math.round(last.response_length));
+            if (last.agent_turns != null) bits.push("轮数 " + Math.round(last.agent_turns));
+            readout.textContent = bits.join(" · ");
+        }
+    }
+
+    renderTrend();
+})();
+</script>
 {% endblock %}

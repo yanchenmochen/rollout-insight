@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from service.problem_analysis_service import (
+    _instance_trend,
     _match_cache,
     group_instance_appearances,
     merge_response_stats,
@@ -138,6 +139,70 @@ class TestInstanceAppearances(unittest.TestCase):
         self.assertEqual(view["visits"][1]["attempts"][0]["attempt_id"], 1)
         self.assertEqual(view["visits"][1]["attempts"][1]["segment_id"], 500)
         self.assertIsNone(view["visits"][0]["attempts"][0]["segment_id"])
+
+    def test_attempt_carries_length_and_turns(self):
+        """attempt 行带上响应长度与轮数，供表格列与趋势图使用。"""
+        rows = [
+            {"rollout_id": 0, "group_index": 0, "instance_id": "repo_pr1", "category": "pass",
+             "attempt_pk": 1, "attempt_id": 0, "reward": 1.0,
+             "response_length": 1200, "agent_turns": 12, "tool_calls": 10, "diff_line_count": 5},
+        ]
+        view = group_instance_appearances("repo_pr1", rows)
+        attempt = view["visits"][0]["attempts"][0]
+        self.assertEqual(attempt["response_length"], 1200)
+        self.assertEqual(attempt["agent_turns"], 12)
+        self.assertEqual(attempt["tool_calls"], 10)
+
+    def test_visit_metrics_averages(self):
+        rows = [
+            {"rollout_id": 0, "group_index": 0, "instance_id": "repo_pr1", "category": "pass",
+             "attempt_pk": 1, "attempt_id": 0, "reward": 1.0,
+             "response_length": 100, "agent_turns": 10, "tool_calls": 8},
+            {"rollout_id": 0, "group_index": 0, "instance_id": "repo_pr1", "category": "fail",
+             "attempt_pk": 2, "attempt_id": 1, "reward": 0.0,
+             "response_length": 300, "agent_turns": 20, "tool_calls": 12},
+        ]
+        view = group_instance_appearances("repo_pr1", rows)
+        metrics = view["visits"][0]["metrics"]
+        self.assertEqual(metrics["response_length_mean"], 200.0)
+        self.assertEqual(metrics["response_length_total"], 400)
+        self.assertEqual(metrics["agent_turns_mean"], 15.0)
+        self.assertEqual(metrics["tool_calls_mean"], 10.0)
+
+
+class TestInstanceTrend(unittest.TestCase):
+    def test_trend_points_follow_visits(self):
+        rows = [
+            {"rollout_id": 0, "group_index": 0, "instance_id": "repo_pr1", "category": "pass",
+             "attempt_pk": 1, "attempt_id": 0, "reward": 1.0,
+             "response_length": 100, "agent_turns": 10},
+            {"rollout_id": 0, "group_index": 0, "instance_id": "repo_pr1", "category": "fail",
+             "attempt_pk": 2, "attempt_id": 1, "reward": 0.0,
+             "response_length": 300, "agent_turns": 20},
+            {"rollout_id": 5, "group_index": 0, "instance_id": "repo_pr1", "category": "pass",
+             "attempt_pk": 3, "attempt_id": 0, "reward": 1.0,
+             "response_length": 200, "agent_turns": 15},
+        ]
+        view = group_instance_appearances("repo_pr1", rows)
+        trend = _instance_trend(view["visits"])
+        self.assertEqual(trend["n_visits"], 2)
+        self.assertTrue(trend["has_rate"])
+        self.assertTrue(trend["has_response_length"])
+        self.assertTrue(trend["has_agent_turns"])
+        first, second = trend["points"]
+        self.assertEqual(first["epoch"], 1)
+        self.assertEqual(first["n_pass"], 1)
+        self.assertEqual(first["n_attempts"], 2)
+        self.assertAlmostEqual(first["rate"], 0.5)
+        self.assertEqual(first["response_length"], 200.0)
+        self.assertEqual(second["epoch"], 2)
+        self.assertAlmostEqual(second["rate"], 1.0)
+
+    def test_trend_empty(self):
+        trend = _instance_trend([])
+        self.assertEqual(trend["n_visits"], 0)
+        self.assertFalse(trend["has_rate"])
+        self.assertFalse(trend["has_response_length"])
 
 
 class TestResponseStats(unittest.TestCase):

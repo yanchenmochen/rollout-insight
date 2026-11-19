@@ -229,6 +229,7 @@ class DBAttemptService:
                 DBAttempt.agent_turns,
                 DBAttempt.tool_calls,
                 DBAttempt.diff_line_count,
+                DBAttempt.response_length,
             ).filter(DBAttempt.task_id == int(task_id))
             if rollout_id is not None:
                 query = query.filter(DBAttempt.rollout_id == int(rollout_id))
@@ -250,6 +251,7 @@ class DBAttemptService:
                 "agent_turns": r.agent_turns,
                 "tool_calls": r.tool_calls,
                 "diff_line_count": int(r.diff_line_count or 0),
+                "response_length": int(r.response_length or 0),
                 "category": cls._classify_attempt_row(r.status, r.reward),
             }
             for r in rows

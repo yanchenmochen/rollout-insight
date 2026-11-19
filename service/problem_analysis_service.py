@@ -219,6 +219,10 @@ def group_instance_appearances(
                 "group_index": gi,
                 "reward": row.get("reward"),
                 "category": row.get("category") or "other",
+                "response_length": int(row.get("response_length") or 0),
+                "agent_turns": int(row.get("agent_turns") or 0),
+                "tool_calls": int(row.get("tool_calls") or 0),
+                "diff_line_count": int(row.get("diff_line_count") or 0),
                 "segment_id": segments.get(int(attempt_pk)) if attempt_pk is not None else None,
             }
         )
@@ -237,11 +241,38 @@ def group_instance_appearances(
                 item.get("attempt_pk") or 0,
             )
         )
+        visit["metrics"] = _visit_metrics(visit["attempts"])
         visits.append(visit)
     return {
         "instance_id": name,
         "n_visits": len(visits),
         "visits": visits,
+    }
+
+
+def _visit_metrics(attempts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """汇总一次出现里各 attempt 的响应长度 / 轮数等指标。
+
+    - ``response_length``：响应长度均值与总和
+    - ``agent_turns``：agent 轮数均值
+    - ``tool_calls``：工具调用数均值
+    """
+    lengths = [int(a.get("response_length") or 0) for a in attempts]
+    turns = [int(a.get("agent_turns") or 0) for a in attempts]
+    tools = [int(a.get("tool_calls") or 0) for a in attempts]
+    n = len(attempts)
+    if not n:
+        return {
+            "response_length_mean": None,
+            "response_length_total": 0,
+            "agent_turns_mean": None,
+            "tool_calls_mean": None,
+        }
+    return {
+        "response_length_mean": sum(lengths) / n,
+        "response_length_total": sum(lengths),
+        "agent_turns_mean": sum(turns) / n,
+        "tool_calls_mean": sum(tools) / n,
     }
 
 
@@ -276,6 +307,7 @@ def build_instance_appearances(task_id: int, instance_id: str) -> Dict[str, Any]
     ]
     segment_ids = DBSegmentService.map_first_segment_id(attempt_pks)
     view = group_instance_appearances(name, matched, rollout_pks, segment_ids)
+    view["trend"] = _instance_trend(view["visits"])
     logger.info(
         "题目出现 task_id={} instance_id={} visits={}",
         task_id,
@@ -283,6 +315,39 @@ def build_instance_appearances(task_id: int, instance_id: str) -> Dict[str, Any]
         view["n_visits"],
     )
     return view
+
+
+def _instance_trend(visits: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """一道题历次出现的通过率 / 响应长度 / 轮数趋势。
+
+    每个点对应一次出现（epoch），``rate`` 为该次通过率，
+    ``response_length`` / ``agent_turns`` 为该次各 attempt 的均值。
+    """
+    points: List[Dict[str, Any]] = []
+    for visit in visits:
+        metrics = visit.get("metrics") or {}
+        points.append(
+            {
+                "epoch": int(visit.get("epoch") or 0),
+                "rollout_id": visit.get("rollout_id"),
+                "rate": visit.get("rate"),
+                "n_pass": int(visit.get("n_pass") or 0),
+                "n_attempts": int(visit.get("n_attempts") or 0),
+                "response_length": metrics.get("response_length_mean"),
+                "response_length_total": metrics.get("response_length_total"),
+                "agent_turns": metrics.get("agent_turns_mean"),
+                "tool_calls": metrics.get("tool_calls_mean"),
+            }
+        )
+    return {
+        "points": points,
+        "n_visits": len(points),
+        "has_rate": any(p.get("rate") is not None for p in points),
+        "has_response_length": any(
+            p.get("response_length") is not None for p in points
+        ),
+        "has_agent_turns": any(p.get("agent_turns") is not None for p in points),
+    }
 
 
 def build_pass_trend(task_id: int) -> Dict[str, Any]:
