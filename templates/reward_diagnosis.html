@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block title %}奖励诊断{% if task_id %} - 任务 #{{ task_id }}{% endif %} - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 22px; border-bottom: none; padding-bottom: 0; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; max-width: 900px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .line-chart { width: 100%; margin: 6px 0 8px; }
+    .line-chart svg { width: 100%; height: auto; display: block; }
+    .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin: 4px 0 8px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 14px; height: 3px; display: inline-block; border-radius: 2px; }
+    .readout { font-size: 13px; font-variant-numeric: tabular-nums; margin: 4px 0; }
+    .dip-list { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .card { border: 1px solid var(--ri-border); border-radius: var(--te-radius); padding: 12px 14px; background: #fff; }
+    .card h3 { margin: 0 0 8px; font-size: 15px; }
+    .card .grid4 { display: grid; gap: 6px; font-size: 12px; }
+    .card .label { color: var(--ri-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .card .value { color: var(--ri-ink); line-height: 1.45; }
+    .card .examples { margin-top: 8px; font-size: 12px; }
+    .card .examples a { color: var(--ri-accent); text-decoration: none; margin-right: 8px; }
+    .card .examples a:hover { text-decoration: underline; }
+    .rel-explains_drop { color: #c62828; font-weight: 600; }
+    .rel-improving_together { color: #2d6a4f; font-weight: 600; }
+    .rel-unclear { color: #5c6b7a; }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+    table.dips { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+    table.dips th, table.dips td { padding: 6px 8px; border-bottom: 1px solid #e4e8ec; text-align: left; }
+    table.dips td.num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 奖励诊断{% endif %}
+</div>
+<div class="page-header">
+    <div>
+        <h1 id="pageTitle">奖励诊断</h1>
+        <div class="page-subtitle" id="pageNote">解释奖励为何停滞：可学习组是否消失、掉分是能力还是基建、失败行为对应哪条杠杆。</div>
+    </div>
+    {% if task_id %}
+    <div class="action-bar">
+        {% set task_nav_id = task_id %}
+        {% set task_nav_current = 'reward' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
+    </div>
+    {% endif %}
+</div>
+<div id="errorBox" class="alert alert-warning" style="display:none;"></div>
+<div id="loading" class="loading">正在加载奖励诊断…</div>
+<div id="body" style="display:none;">
+    <div class="section" id="gradientSection">
+        <h2>有效梯度组 <small id="gradMeta"></small></h2>
+        <div class="chip-row" id="gradChips"></div>
+        <div class="legend">
+            <span><i style="background:#2d6a4f;"></i>可学习占比</span>
+            <span><i style="background:#2d6a9f;"></i>混合组数</span>
+            <span><i style="background:#8a939c;"></i>全过</span>
+            <span><i style="background:#c62828;"></i>全挂</span>
+            <span><i style="background:#ef6c00;"></i>只剩基建</span>
+        </div>
+        <div class="readout" id="gradReadout"></div>
+        <div class="line-chart" id="gradChart"></div>
+        <div class="muted" id="gradNote"></div>
+        <div id="dipBox"></div>
+    </div>
+
+    <div class="section" id="splitSection">
+        <h2>奖励分解 <small>同一 rollout 轴</small></h2>
+        <div class="legend">
+            <span><i style="background:#1565c0;"></i>原始平均奖励</span>
+            <span><i style="background:#2d6a4f;"></i>可测通过率</span>
+            <span><i style="background:#ef6c00;"></i>超时占比</span>
+            <span><i style="background:#c62828;"></i>abort 占比</span>
+        </div>
+        <div class="readout" id="splitReadout"></div>
+        <div class="line-chart" id="splitChart"></div>
+        <div class="muted" id="splitNote"></div>
+    </div>
+
+    <div class="section" id="behaviorSection">
+        <h2>行为失败卡片 <small id="behMeta"></small></h2>
+        <div class="muted" id="behNote" style="margin-bottom:10px;"></div>
+        <div class="cards" id="behCards"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const TASK_ID = {{ task_id if task_id is not none else "null" }};
+    const $ = (id) => document.getElementById(id);
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+    function pct(v) {
+        if (v == null || Number.isNaN(v)) return "-";
+        return (v * 100).toFixed(1) + "%";
+    }
+    function num(v, digits) {
+        if (v == null || Number.isNaN(v)) return "-";
+        return Number(v).toFixed(digits == null ? 3 : digits);
+    }
+    function showError(msg) {
+        $("errorBox").style.display = "";
+        $("errorBox").textContent = msg;
+    }
+
+    function multiLineChart(series, specs, yMaxHint) {
+        const w = 720, h = 180, padL = 36, padR = 12, padT = 12, padB = 28;
+        if (!series.length) {
+            return `<svg viewBox="0 0 ${w} ${h}" role="img"><text x="12" y="24" fill="#8a939c" font-size="13">暂无数据</text></svg>`;
+        }
+        let yMax = yMaxHint != null ? yMaxHint : 1;
+        specs.forEach((spec) => {
+            series.forEach((row) => {
+                const v = row[spec.key];
+                if (v != null && !Number.isNaN(v)) yMax = Math.max(yMax, Number(v));
+            });
+        });
+        if (yMax <= 0) yMax = 1;
+        const n = series.length;
+        const xAt = (i) => padL + (n === 1 ? (w - padL - padR) / 2 : i * (w - padL - padR) / (n - 1));
+        const yAt = (v) => padT + (1 - Number(v) / yMax) * (h - padT - padB);
+        const paths = specs.map((spec) => {
+            const pts = [];
+            series.forEach((row, i) => {
+                const v = row[spec.key];
+                if (v == null || Number.isNaN(v)) return;
+                pts.push(`${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`);
+            });
+            if (pts.length < 2) {
+                if (pts.length === 1) {
+                    const [x, y] = pts[0].split(",");
+                    return `<circle cx="${x}" cy="${y}" r="3.5" fill="${spec.color}"></circle>`;
+                }
+                return "";
+            }
+            return `<polyline points="${pts.join(" ")}" fill="none" stroke="${spec.color}" stroke-width="2"></polyline>`;
+        }).join("");
+        const labels = [];
+        const step = Math.max(1, Math.floor(n / 8));
+        for (let i = 0; i < n; i += step) {
+            labels.push(`<text x="${xAt(i).toFixed(1)}" y="${h - 8}" text-anchor="middle" fill="#8a939c" font-size="10">${esc(series[i].rollout_id)}</text>`);
+        }
+        if (n > 1 && (n - 1) % step !== 0) {
+            labels.push(`<text x="${xAt(n - 1).toFixed(1)}" y="${h - 8}" text-anchor="middle" fill="#8a939c" font-size="10">${esc(series[n - 1].rollout_id)}</text>`);
+        }
+        return `<svg viewBox="0 0 ${w} ${h}" role="img">${paths}${labels.join("")}</svg>`;
+    }
+
+    function stackCountsChart(series) {
+        const w = 720, h = 180, padL = 36, padR = 12, padT = 12, padB = 28;
+        if (!series.length) {
+            return `<svg viewBox="0 0 ${w} ${h}" role="img"><text x="12" y="24" fill="#8a939c" font-size="13">暂无数据</text></svg>`;
+        }
+        const keys = [
+            { key: "n_mixed", color: "#2d6a9f" },
+            { key: "n_all_pass", color: "#8a939c" },
+            { key: "n_all_fail", color: "#c62828" },
+            { key: "n_infra_only", color: "#ef6c00" },
+        ];
+        let yMax = 1;
+        series.forEach((row) => { yMax = Math.max(yMax, Number(row.n_groups || 0)); });
+        const n = series.length;
+        const gap = 4;
+        const inner = w - padL - padR;
+        const barW = Math.max(2, (inner / n) - gap);
+        const bars = series.map((row, i) => {
+            const x = padL + i * (inner / n) + gap / 2;
+            let y = padT + (h - padT - padB);
+            const parts = [];
+            keys.forEach((spec) => {
+                const val = Number(row[spec.key] || 0);
+                if (val <= 0) return;
+                const bh = val / yMax * (h - padT - padB);
+                y -= bh;
+                parts.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${spec.color}"></rect>`);
+            });
+            return parts.join("");
+        }).join("");
+        const ratioPts = [];
+        series.forEach((row, i) => {
+            const v = row.learnable_ratio;
+            if (v == null || Number.isNaN(v)) return;
+            const x = padL + i * (inner / n) + barW / 2;
+            const y = padT + (1 - Number(v)) * (h - padT - padB);
+            ratioPts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+        });
+        const ratioLine = ratioPts.length >= 2
+            ? `<polyline points="${ratioPts.join(" ")}" fill="none" stroke="#2d6a4f" stroke-width="2.2"></polyline>`
+            : (ratioPts.length === 1 ? (() => {
+                const [x, y] = ratioPts[0].split(",");
+                return `<circle cx="${x}" cy="${y}" r="3.5" fill="#2d6a4f"></circle>`;
+            })() : "");
+        return `<svg viewBox="0 0 ${w} ${h}" role="img">${bars}${ratioLine}</svg>`;
+    }
+
+    function relationText(rel) {
+        if (rel === "explains_drop") return `<span class="rel-explains_drop">与通过率下降同向（该类上升）</span>`;
+        if (rel === "improving_together") return `<span class="rel-improving_together">与通过率上升同向（该类下降）</span>`;
+        if (rel === "unclear") return `<span class="rel-unclear">与通过率关系不明</span>`;
+        return `<span class="rel-unclear">样本不足</span>`;
+    }
+
+    function renderGradient(grad) {
+        const series = (grad && grad.series) || [];
+        const latest = grad && grad.latest;
+        $("gradMeta").textContent = series.length ? `${series.length} 个 rollout` : "无数据";
+        $("gradNote").textContent = (grad && grad.note) || "";
+        let chips = "";
+        if (latest) {
+            chips += `<span class="chip">可学习 <strong>${pct(latest.learnable_ratio)}</strong></span>`;
+            chips += `<span class="chip">混合 <strong>${latest.n_mixed}</strong></span>`;
+            chips += `<span class="chip">全过 <strong>${latest.n_all_pass}</strong></span>`;
+            chips += `<span class="chip">全挂 <strong>${latest.n_all_fail}</strong></span>`;
+            chips += `<span class="chip">基建 <strong>${latest.n_infra_only}</strong></span>`;
+        }
+        $("gradChips").innerHTML = chips || `<span class="muted">尚无组统计</span>`;
+        $("gradChart").innerHTML = stackCountsChart(series);
+        if (series.length) {
+            const last = series[series.length - 1];
+            $("gradReadout").textContent = `最近 rollout ${last.rollout_id}：可学习 ${pct(last.learnable_ratio)}（混合 ${last.n_mixed}/${last.n_groups}）`;
+        } else {
+            $("gradReadout").textContent = "";
+        }
+        const dips = (grad && grad.dips) || [];
+        if (!dips.length) {
+            $("dipBox").innerHTML = `<div class="muted">未检测到可学习占比骤降（阈值 15 pct）。</div>`;
+            return;
+        }
+        const rows = dips.map((d) => (
+            `<tr>
+                <td>rollout ${esc(d.rollout_id)}</td>
+                <td class="num">${pct(d.prev_ratio)} → ${pct(d.ratio)}</td>
+                <td class="num">-${(d.drop * 100).toFixed(1)} pct</td>
+                <td class="muted">相对上一 rollout ${esc(d.prev_rollout_id)}</td>
+            </tr>`
+        )).join("");
+        $("dipBox").innerHTML = `<table class="dips"><thead><tr><th>骤降点</th><th class="num">占比</th><th class="num">下降</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderSplit(split) {
+        const series = (split && split.series) || [];
+        $("splitNote").textContent = (split && split.note) || "";
+        $("splitChart").innerHTML = multiLineChart(series, [
+            { key: "raw_mean_reward", color: "#1565c0" },
+            { key: "measurable_pass_rate", color: "#2d6a4f" },
+            { key: "timeout_ratio", color: "#ef6c00" },
+            { key: "abort_ratio", color: "#c62828" },
+        ], 1);
+        if (series.length) {
+            const last = series[series.length - 1];
+            $("splitReadout").textContent =
+                `最近 rollout ${last.rollout_id}：原始 ${num(last.raw_mean_reward)} · 可测通过 ${pct(last.measurable_pass_rate)} · 超时 ${pct(last.timeout_ratio)} · abort ${pct(last.abort_ratio)}`;
+        } else {
+            $("splitReadout").textContent = "";
+        }
+    }
+
+    function renderBehavior(beh, turnCoverage) {
+        const cards = (beh && beh.cards) || [];
+        const cov = turnCoverage || {};
+        $("behMeta").textContent = beh
+            ? `非通过 ${beh.n_failed || 0} · 有 turn ${beh.n_failed_with_turns || 0}`
+            : "";
+        $("behNote").textContent = [
+            beh && beh.turn_coverage_note,
+            cov.n_segments != null
+                ? `segment turn 覆盖 ${cov.n_segments_with_turns || 0}/${cov.n_segments || 0}`
+                : "",
+        ].filter(Boolean).join(" ");
+        if (!cards.length) {
+            $("behCards").innerHTML = `<div class="muted">暂无行为卡片</div>`;
+            return;
+        }
+        $("behCards").innerHTML = cards.map((card) => {
+            const examples = (card.examples || []).map((ex) => {
+                if (!ex.detail_url) return "";
+                const label = ex.instance_id
+                    ? `${esc(ex.instance_id)} (#${esc(ex.attempt_pk)})`
+                    : `attempt #${esc(ex.attempt_pk)}`;
+                return `<a href="${esc(ex.detail_url)}">${label}</a>`;
+            }).filter(Boolean).join("") || `<span class="muted">无样例</span>`;
+            return `<div class="card">
+                <h3>${esc(card.title)}</h3>
+                <div class="grid4">
+                    <div><div class="label">现象</div><div class="value">${esc(card.phenomenon)}</div></div>
+                    <div><div class="label">占失败 attempt</div><div class="value">${pct(card.ratio_of_failed)}（${esc(card.n_attempts)}/${esc(card.n_failed)}）</div></div>
+                    <div><div class="label">与通过率</div><div class="value">${relationText(card.pass_rate_relation)}</div></div>
+                    <div><div class="label">建议杠杆</div><div class="value">${esc(card.lever)}</div></div>
+                </div>
+                <div class="examples"><span class="label">样例</span> ${examples}</div>
+                <div class="muted" style="margin-top:6px;">该类 mean reward ${num(card.mean_reward)}</div>
+            </div>`;
+        }).join("");
+    }
+
+    async function load() {
+        if (TASK_ID == null) {
+            showError("缺少 task_id");
+            $("loading").style.display = "none";
+            return;
+        }
+        try {
+            const resp = await fetch(`/api/tasks/${encodeURIComponent(TASK_ID)}/reward-diagnosis.json`, {
+                headers: { "Accept": "application/json" },
+            });
+            const payload = await resp.json();
+            if (!payload || payload.code !== 0) {
+                throw new Error((payload && payload.msg) || ("HTTP " + resp.status));
+            }
+            const data = payload.data || {};
+            if (data.task && data.task.task_name) {
+                $("pageTitle").textContent = data.task.task_name + " · 奖励诊断";
+            }
+            if (data.page_note) $("pageNote").textContent = data.page_note;
+            renderGradient(data.gradient_groups || {});
+            renderSplit(data.reward_split || {});
+            renderBehavior(data.behavior || {}, data.turn_coverage || {});
+            $("loading").style.display = "none";
+            $("body").style.display = "";
+        } catch (e) {
+            $("loading").style.display = "none";
+            showError("加载奖励诊断失败：" + (e && e.message ? e.message : e));
+        }
+    }
+
+    load();
+})();
+</script>
+{% endblock %}

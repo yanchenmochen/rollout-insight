@@ -113,6 +113,8 @@ rollout-insight/
 | GET  | `/api/tasks/{id}/problem-analysis/pass.json` | 按题目的历次通过率（不含响应统计） |
 | GET  | `/api/tasks/{id}/problem-analysis.json` | 通过率与已有响应统计 JSON |
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
+| GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
+| GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
@@ -146,6 +148,16 @@ rollout-insight/
 **任务通过分析。** 一道题的一次出现是同一个 `rollout_id` 下的同一个 `instance_id`（通常约 8 条 attempt）。按 `rollout_id` 升序，第 k 次出现就是第 k 个 epoch。通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数；abort 与 timeout 计入分母、不计入分子。变好或变坏只看该题最后一次减第一次：大于 0 为绿，小于 0 为红，相等为灰。只出现一次的题单独计数，不进直方图。题目名可点进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，按出现次序看每次所在的 rollout，以及该次每条 attempt 的 sglang 轨迹。总览有两条：一是按 epoch 把全部题目合在一起的通过率曲线，第 k 个点是各题第 k 次出现的 attempt 加总（分子、分母跨题相加）。单步 raw_reward 只覆盖当步抽到的题目，所以会上下跳；这条曲线按 epoch 看全量题目。该次还没再次出现的题不计入，覆盖不足全部题目时用空心点标出。二是首尾差值直方图，每格 1/8。`ROLLOUT_BATCH_SIZE` 来自 run 目录环境变量，读不到时用每个 rollout 的 group 数众数，只用来核对「每个 epoch 窗口里一题是否只出现一次」，不用来重画曲线。
 
 **响应 fake_response。** 统计 sglang 序列里的 assistant 回复：有 tool_call、无 tool_call、工具名（其中 finish 单独列出）。「最后一条是不是 finish」看该 attempt 最后一条 assistant 回复的最后一个工具名。attempt 维度分开报告「出现过无 tool_call」和「最后一条不是 finish」，并给出两者的并集。合法工具名是 `execute_bash`、`str_replace_editor`、`think`、`finish`；有标签但名字不在其中仍算有 tool_call，另外单列。turn 已全部落库时直接用标记，不读正文。覆盖不全时，页面上的「统计全部响应」按 rollout 从 `.pt` 只累计计数，不把正文写入 turn 表，结果缓存在 `rollout_root/.ri_response_stats.json`，按 pt 的路径、大小和 mtime 失效。
+
+### 5.3 奖励诊断（任务级）
+
+奖励诊断从任务进入：任务详情页顶「奖励诊断」进入 `/api/tasks/{task_id}/reward-diagnosis`。它回答「奖励为什么不涨」。
+
+**有效梯度组。** 按 rollout 把每个 group 分成四类：混合（去掉 abort/timeout 后既有过又有挂，可学习）、全过、全挂、只剩基建。画出可学习组占比，并标出相对上一步下降超过 15 pct 的骤降点。判定与任务详情里的 `n_valid_groups` 一致。
+
+**奖励分解。** 同一 rollout 轴叠四条线：有数值 reward 的原始均值、可测通过率（abort/timeout 不进分母）、超时占比、abort 占比。用来区分能力掉分与基建噪声。
+
+**行为失败卡片。** 对非通过 attempt 按优先级打主类：abort → timeout → 无 tool_call → 最后不是 finish → 过早 finish（已 finish 但工具步很少且 diff 很小）。每张卡片给出现象、占失败 attempt 比例、与可测通过率是否同向、建议杠杆，以及跳到失败详情的样例链接。后三类依赖已落库的 assistant turn 标记。
 
 ---
 
