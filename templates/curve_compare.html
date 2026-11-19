@@ -1,0 +1,515 @@
+{% extends "base.html" %}
+
+{% block title %}多任务曲线对比 - Rollout Insight{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .lead { color: var(--ri-muted); font-size: 14px; margin-bottom: 16px; max-width: 960px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink);
+        border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+
+    /* 任务勾选 */
+    .task-picker { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .task-picker input[type="text"] { padding: 6px 9px; border: 1px solid var(--ri-border);
+        border-radius: 4px; min-width: 260px; flex: 1; max-width: 420px; }
+    .task-picker .btn { cursor: pointer; }
+    .task-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 16px; }
+    .task-check { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: 6px;
+        border: 1px solid transparent; font-size: 13px; cursor: pointer; }
+    .task-check:hover { background: #f4f7fa; border-color: var(--ri-border); }
+    .task-check input { margin-top: 3px; flex: 0 0 auto; }
+    .task-check .tname { display: block; word-break: break-all; }
+    .task-check .tid { font-size: 11px; color: var(--ri-muted); font-family: ui-monospace, monospace; }
+
+    /* 指标按钮组 */
+    .metric-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+    .metric-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 14px;
+        font-size: 13px; border: 1px solid var(--ri-border); background: #f8fafb; cursor: pointer; color: var(--ri-ink); }
+    .metric-btn.on { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
+    .metric-btn .count { font-size: 11px; opacity: 0.85; }
+
+    /* 曲线 */
+    .curve-row { border: 1px solid var(--ri-border); border-radius: var(--te-radius); padding: 10px 14px;
+        margin-bottom: 12px; background: #fff; }
+    .curve-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+    .curve-title { font-size: 15px; font-weight: 600; }
+    .curve-title .tag { font-size: 11px; padding: 1px 8px; border-radius: 9px; background: #eef3f8;
+        border: 1px solid var(--ri-border); color: var(--ri-muted); font-weight: 400; }
+    .curve-readout { font-size: 12px; color: var(--ri-muted); min-height: 18px; margin-bottom: 4px; }
+    .curve-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-bottom: 4px; }
+    .curve-legend .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .curve-legend .legend-swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+    .curve-legend .delta { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .delta-up { color: #2d6a4f; }
+    .delta-down { color: #c62828; }
+    .delta-flat { color: #5c6b7a; }
+    .curve-row svg { width: 100%; height: auto; display: block; }
+    .curve-empty { font-size: 12px; color: var(--ri-muted); padding: 10px 0; }
+    .view-switch { display: inline-flex; gap: 4px; }
+    .view-switch button { padding: 4px 12px; border: 1px solid var(--ri-border); background: #fff;
+        border-radius: 12px; cursor: pointer; font-size: 12px; }
+    .view-switch button.on { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+    .tb-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>多任务曲线对比</h1>
+<p class="lead">
+    在下方勾选多个任务与指标，即可把它们的训练曲线叠在同一张图里对比 ——
+    与「单任务训练曲线」完全同款（同一套指标目录、同样的 SVG 折线、逐 step / 按 epoch 两种视图）。
+    数据来自各任务 <code>rollout_root</code> 解析出的 <code>tbs/</code> 或 <code>tf_logs/</code> 事件目录。
+</p>
+
+<div class="section">
+    <h2>选择任务 <small>勾选要对比的任务</small></h2>
+    <div class="task-picker">
+        <input type="text" id="taskFilter" placeholder="按任务名筛选…" />
+        <button type="button" class="btn btn-secondary" id="btnSelectAll">全选</button>
+        <button type="button" class="btn btn-secondary" id="btnSelectNone">清空</button>
+        <button type="button" class="btn btn-secondary" id="btnSelectRecent">最近 5 个</button>
+        <span class="muted" id="taskCount"></span>
+    </div>
+    <div class="task-checks" id="taskChecks">
+        <div class="loading">正在加载任务…</div>
+    </div>
+</div>
+
+<div class="section">
+    <h2>选择指标 <small>与单任务训练曲线共用同一套指标</small></h2>
+    <div class="metric-group" id="metricGroup"></div>
+    <div class="muted" id="metricNote"></div>
+</div>
+
+<div class="section">
+    <h2>曲线
+        <span class="view-switch" id="viewSwitch" style="float:right; margin-top:-4px;">
+            <button type="button" data-view="step" class="on">逐 step</button>
+            <button type="button" data-view="epoch" id="epochBtn">按 epoch 聚合</button>
+        </span>
+    </h2>
+    <div class="muted" id="epochNote" style="margin-bottom:10px;"></div>
+    <div id="curveBody"><div class="loading">请先勾选任务与指标。</div></div>
+</div>
+
+<div class="section">
+    <h2>在 TensorBoard 中查看 <small>可选：拉起本机 TensorBoard</small></h2>
+    <div class="tb-actions" style="margin-bottom:10px;">
+        <button type="button" class="btn" id="btnCompareAll">对比全部任务曲线</button>
+        <button type="button" class="btn btn-secondary" id="btnOpenExisting" style="display:none;">打开当前 TensorBoard</button>
+        <button type="button" class="btn btn-secondary" id="btnStop">停止 TensorBoard</button>
+    </div>
+    <div class="muted" id="tbStatus">检查状态…</div>
+    <div id="tbResult" style="display:none;">
+        <h3 style="font-size:14px; margin:12px 0 6px 0;">本次纳入的 run</h3>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead><tr><th style="text-align:left;">TensorBoard Run（任务名）</th><th style="text-align:left;">task_id</th><th style="text-align:left;">事件目录</th></tr></thead>
+            <tbody id="tbRunsBody"></tbody>
+        </table>
+        <h3 style="font-size:14px; margin:12px 0 6px 0;">跳过的任务</h3>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead><tr><th style="text-align:left;">task_id</th><th style="text-align:left;">任务名</th><th style="text-align:left;">原因</th></tr></thead>
+            <tbody id="tbSkippedBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const $ = (id) => document.getElementById(id);
+    const SERIES_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2", "#be185d", "#4d7c0f"];
+
+    let ALL_TASKS = [];
+    let selectedTasks = new Set();
+    let selectedMetrics = new Set();
+    let viewMode = "step";
+    let lastData = null;
+
+    function esc(s) {
+        if (s == null) return "";
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+    }
+
+    function fmt(v) {
+        if (v == null || Number.isNaN(Number(v))) return "-";
+        const n = Number(v);
+        if (Number.isInteger(n)) return String(n);
+        const abs = Math.abs(n);
+        if (abs >= 1000) return n.toFixed(0);
+        if (abs >= 10) return n.toFixed(2);
+        return n.toFixed(3);
+    }
+
+    async function api(method, url) {
+        const resp = await fetch(url, {
+            method: method,
+            headers: { "Accept": "application/json" },
+            credentials: "same-origin",
+        });
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        return data.data || {};
+    }
+
+    // ------------------------------------------------------------ 任务勾选
+    function renderTaskChecks() {
+        const host = $("taskChecks");
+        const kw = ($("taskFilter").value || "").trim().toLowerCase();
+        const shown = ALL_TASKS.filter(function (t) {
+            if (!kw) return true;
+            return String(t.task_name || "").toLowerCase().includes(kw)
+                || String(t.task_id) === kw;
+        });
+        if (!shown.length) {
+            host.innerHTML = '<div class="loading">没有匹配的任务。</div>';
+            updateTaskCount();
+            return;
+        }
+        host.innerHTML = shown.map(function (t) {
+            const on = selectedTasks.has(Number(t.task_id));
+            return `<label class="task-check">
+                <input type="checkbox" data-task-id="${t.task_id}" ${on ? "checked" : ""} />
+                <span>
+                    <span class="tname">${esc(t.task_name || ("任务 #" + t.task_id))}</span>
+                    <span class="tid">#${t.task_id}</span>
+                </span>
+            </label>`;
+        }).join("");
+        host.querySelectorAll("input[data-task-id]").forEach(function (box) {
+            box.addEventListener("change", function () {
+                const id = Number(box.getAttribute("data-task-id"));
+                if (box.checked) selectedTasks.add(id);
+                else selectedTasks.delete(id);
+                updateTaskCount();
+                scheduleLoad();
+            });
+        });
+        updateTaskCount();
+    }
+
+    function updateTaskCount() {
+        $("taskCount").textContent = "已选 " + selectedTasks.size + " / " + ALL_TASKS.length + " 个任务";
+    }
+
+    // ------------------------------------------------------------ 指标按钮组
+    function renderMetricGroup() {
+        const host = $("metricGroup");
+        const metrics = (lastData && lastData.available_metrics) || [];
+        if (!metrics.length) {
+            host.innerHTML = '<span class="muted">加载中…</span>';
+            return;
+        }
+        host.innerHTML = metrics.map(function (m) {
+            const on = selectedMetrics.has(m.key);
+            return `<button type="button" class="metric-btn ${on ? "on" : ""}" data-key="${esc(m.key)}"
+                title="${esc(m.desc || "")}">${esc(m.label)}</button>`;
+        }).join("");
+        host.querySelectorAll("button[data-key]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const key = btn.getAttribute("data-key");
+                if (selectedMetrics.has(key)) selectedMetrics.delete(key);
+                else selectedMetrics.add(key);
+                renderMetricGroup();
+                scheduleLoad();
+            });
+        });
+    }
+
+    // ------------------------------------------------------------ 曲线渲染
+    function renderCurves(data) {
+        const host = $("curveBody");
+        const metrics = (data && data.metrics) || [];
+        if (!metrics.length) {
+            host.innerHTML = '<div class="curve-empty">没有可对比的曲线。请勾选任务与指标。</div>';
+            return;
+        }
+        host.innerHTML = metrics.map(function (metric) {
+            const series = metric.series || [];
+            const head = `<div class="curve-head">
+                <div class="curve-title">${esc(metric.label)}
+                    <span class="tag">${series.length} 条曲线</span>
+                </div>
+            </div>`;
+            const drawn = series.filter(function (s) { return (s.points || []).length; });
+            if (!drawn.length) {
+                return `<div class="curve-row">${head}<div class="curve-empty">选中的任务在该指标上没有数据。</div></div>`;
+            }
+            const readoutId = "readout-" + metric.key;
+            const body = `<div class="curve-row" data-key="${esc(metric.key)}">
+                ${head}
+                <div class="curve-readout" id="${readoutId}"></div>
+                <div class="curve-legend" data-role="legend"></div>
+                <div class="chart-host"></div>
+            </div>`;
+            // 渲染后填图（RiMultiChart 需要真实 DOM 节点）
+            setTimeout(function () {
+                const row = host.querySelector(`.curve-row[data-key="${cssEscape(metric.key)}"]`);
+                if (!row) return;
+                const chartHost = row.querySelector(".chart-host");
+                const legendHost = row.querySelector('[data-role="legend"]');
+                const readout = row.querySelector(".curve-readout");
+                drawMetric(metric, chartHost, legendHost, readout);
+            }, 0);
+            return body;
+        }).join("");
+    }
+
+    function cssEscape(text) {
+        if (window.CSS && CSS.escape) return CSS.escape(String(text));
+        return String(text).replace(/["\\]/g, "\\$&");
+    }
+
+    function drawMetric(metric, chartHost, legendHost, readout) {
+        if (!window.RiMultiChart || !chartHost) return;
+        const drawn = (metric.series || []).filter(function (s) {
+            return (s.points || []).length;
+        });
+        // 同 tag 的多任务曲线用同色系区分：先按 tag 分组，再按任务分色
+        const tagOrder = [];
+        drawn.forEach(function (s) {
+            if (tagOrder.indexOf(s.tag) < 0) tagOrder.push(s.tag);
+        });
+        const series = drawn.map(function (s) {
+            const tagIdx = tagOrder.indexOf(s.tag);
+            const color = SERIES_COLORS[tagIdx % SERIES_COLORS.length];
+            return {
+                label: (s.task_name || ("任务 #" + s.task_id)) + " · " + (s.label || s.tag),
+                color: color,
+                dashed: tagOrder.length > 1,
+                points: s.points.map(function (p) {
+                    return { x: Number(p.step), y: Number(p.value), meta: s };
+                }),
+            };
+        });
+
+        if (legendHost) {
+            legendHost.innerHTML = series.map(function (s) {
+                const pts = s.points;
+                const first = pts[0], last = pts[pts.length - 1];
+                const delta = Number(last.y) - Number(first.y);
+                const cls = delta > 1e-9 ? "delta-up" : (delta < -1e-9 ? "delta-down" : "delta-flat");
+                const sign = delta > 1e-9 ? "+" : "";
+                return `<span class="legend-item">
+                    <span class="legend-swatch" style="background:${s.color}"></span>
+                    <span>${esc(s.label)}</span>
+                    <span class="delta ${cls}">${sign}${fmt(delta)}</span>
+                </span>`;
+            }).join("");
+        }
+
+        const axisTitle = viewMode === "epoch" ? "epoch" : "step";
+        RiMultiChart.renderLineChart({
+            host: chartHost,
+            readout: readout,
+            series: series,
+            xLabel: axisTitle,
+            ariaLabel: metric.label + " 多任务对比",
+            legend: false,
+            tipFormat: function (s, p) {
+                const m = p.meta || {};
+                return s.label + " · " + axisTitle + " " + p.x + " · " + fmt(p.y)
+                    + "（共 " + (m.n_points || 0) + " 个点）";
+            },
+        });
+
+        // 初始读数：显示最后一条曲线的末点
+        if (readout && series.length) {
+            const s = series[series.length - 1];
+            const last = s.points[s.points.length - 1];
+            readout.textContent = s.label + " · " + axisTitle + " " + last.x + " · " + fmt(last.y);
+        }
+    }
+
+    // ------------------------------------------------------------ 数据加载
+    let loadTimer = null;
+    function scheduleLoad() {
+        if (loadTimer) clearTimeout(loadTimer);
+        loadTimer = setTimeout(loadCurves, 180);
+    }
+
+    async function loadCurves() {
+        const host = $("curveBody");
+        if (!selectedTasks.size || !selectedMetrics.size) {
+            host.innerHTML = '<div class="loading">请勾选至少一个任务与一个指标。</div>';
+            return;
+        }
+        host.innerHTML = '<div class="loading">正在读取事件目录…</div>';
+        const ids = Array.from(selectedTasks).join(",");
+        const keys = Array.from(selectedMetrics).join(",");
+        try {
+            const data = await api("GET",
+                `/api/tensorboard/curve-compare.json?task_ids=${encodeURIComponent(ids)}`
+                + `&keys=${encodeURIComponent(keys)}&view=${encodeURIComponent(viewMode)}`);
+            lastData = data;
+            renderMetricGroup();
+            renderCurves(data);
+            const epochBtn = $("epochBtn");
+            epochBtn.disabled = !(data.metrics || []).some(function (m) {
+                return (m.series || []).some(function (s) {
+                    return (s.points || []).length && s.points[0] && s.points[0].step != null;
+                });
+            });
+            $("epochNote").textContent = viewMode === "epoch"
+                ? "epoch 视图 = 每个 epoch 内所有 step 取平均（口径与单任务训练曲线一致）。"
+                : "逐 step 视图 = 直接使用事件目录里的每个 step。";
+        } catch (e) {
+            host.innerHTML = `<div class="curve-empty">加载失败：${esc(e && e.message ? e.message : e)}</div>`;
+        }
+    }
+
+    // ------------------------------------------------------------ 初始化
+    async function init() {
+        try {
+            const data = await api("GET", "/api/tensorboard/curve-compare.json?brief=true");
+            const tasks = (data && data.tasks) || [];
+            ALL_TASKS = tasks.map(function (t) {
+                return { task_id: t.task_id, task_name: t.task_name, event_dir: t.event_dir };
+            });
+            // 默认勾选最近 3 个任务
+            ALL_TASKS.slice(0, 3).forEach(function (t) { selectedTasks.add(Number(t.task_id)); });
+            const metrics = (data && data.available_metrics) || [];
+            const defaults = (data && data.default_keys) || [];
+            metrics.forEach(function (m) {
+                if (defaults.indexOf(m.key) >= 0) selectedMetrics.add(m.key);
+            });
+            renderTaskChecks();
+            renderMetricGroup();
+            loadCurves();
+        } catch (e) {
+            $("taskChecks").innerHTML = `<div class="loading">任务列表加载失败：${esc(e && e.message ? e.message : e)}</div>`;
+        }
+    }
+
+    // ------------------------------------------------------------ TensorBoard 区块
+    let lastUrl = null;
+    const btnOpen = $("btnOpenExisting");
+
+    function setStatus(text, isError) {
+        $("tbStatus").style.color = isError ? "#9b2c2c" : "";
+        $("tbStatus").textContent = text;
+    }
+
+    function renderTbPayload(data) {
+        lastUrl = data && data.url ? data.url : null;
+        btnOpen.style.display = lastUrl ? "" : "none";
+        const runs = (data && data.runs) || [];
+        const skipped = (data && data.skipped) || [];
+        $("tbRunsBody").innerHTML = runs.map(function (r) {
+            var runName = r.name || "";
+            var taskName = r.task_name || runName;
+            var label = runName;
+            if (taskName && taskName !== runName) label = runName + "（" + taskName + "）";
+            return "<tr><td>" + esc(label) + "</td><td class=\"mono\">" + r.task_id
+                + "</td><td class=\"mono\">" + esc(r.tbs_dir || "") + "</td></tr>";
+        }).join("") || "<tr><td colspan=\"3\">无</td></tr>";
+        $("tbSkippedBody").innerHTML = skipped.map(function (s) {
+            return "<tr><td class=\"mono\">" + s.task_id + "</td><td>" + esc(s.task_name || "")
+                + "</td><td>" + esc(s.reason || "") + "</td></tr>";
+        }).join("") || "<tr><td colspan=\"3\">无</td></tr>";
+        $("tbResult").style.display = "";
+    }
+
+    async function refreshTbStatus() {
+        try {
+            const st = await api("GET", "/api/tensorboard/status");
+            if (st.running && st.url) {
+                lastUrl = st.url;
+                btnOpen.style.display = "";
+                setStatus("TensorBoard 运行中 · port=" + st.port + " · " + ((st.runs || []).length) + " 个 run", false);
+                renderTbPayload({ url: st.url, runs: st.runs || [], skipped: [] });
+            } else {
+                lastUrl = null;
+                btnOpen.style.display = "none";
+                setStatus("TensorBoard 未运行。", false);
+            }
+        } catch (e) {
+            setStatus("状态查询失败：" + (e && e.message ? e.message : e), true);
+        }
+    }
+
+    $("btnCompareAll").addEventListener("click", async function () {
+        const btn = this;
+        btn.disabled = true;
+        setStatus("正在解析各任务 tbs/ 并启动 TensorBoard…", false);
+        try {
+            const resp = await fetch("/api/tensorboard/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ scope: "all" }),
+            });
+            const data = await resp.json();
+            if (!data || data.code !== 0) throw new Error((data && data.msg) || "启动失败");
+            renderTbPayload(data.data || {});
+            setStatus((data.data && data.data.reused ? "已复用" : "已启动") + " TensorBoard · "
+                + (((data.data && data.data.runs) || []).length) + " 个 run", false);
+            if (data.data && data.data.url) window.open(data.data.url, "_blank", "noopener");
+        } catch (e) {
+            setStatus("启动失败：" + (e && e.message ? e.message : e), true);
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    btnOpen.addEventListener("click", function () {
+        if (lastUrl) window.open(lastUrl, "_blank", "noopener");
+    });
+
+    $("btnStop").addEventListener("click", async function () {
+        try {
+            await api("POST", "/api/tensorboard/stop");
+            lastUrl = null;
+            btnOpen.style.display = "none";
+            $("tbResult").style.display = "none";
+            setStatus("已停止 TensorBoard。", false);
+        } catch (e) {
+            setStatus("停止失败：" + (e && e.message ? e.message : e), true);
+        }
+    });
+
+    // ------------------------------------------------------------ 事件绑定
+    $("taskFilter").addEventListener("input", renderTaskChecks);
+    $("btnSelectAll").addEventListener("click", function () {
+        ALL_TASKS.forEach(function (t) { selectedTasks.add(Number(t.task_id)); });
+        renderTaskChecks();
+        scheduleLoad();
+    });
+    $("btnSelectNone").addEventListener("click", function () {
+        selectedTasks.clear();
+        renderTaskChecks();
+        scheduleLoad();
+    });
+    $("btnSelectRecent").addEventListener("click", function () {
+        selectedTasks.clear();
+        ALL_TASKS.slice(0, 5).forEach(function (t) { selectedTasks.add(Number(t.task_id)); });
+        renderTaskChecks();
+        scheduleLoad();
+    });
+    $("viewSwitch").addEventListener("click", function (e) {
+        const btn = e.target.closest("button[data-view]");
+        if (!btn) return;
+        viewMode = btn.getAttribute("data-view");
+        this.querySelectorAll("button[data-view]").forEach(function (b) {
+            b.classList.toggle("on", b === btn);
+        });
+        loadCurves();
+    });
+
+    init();
+    refreshTbStatus();
+})();
+</script>
+{% endblock %}
