@@ -1,9 +1,9 @@
-"""奖励上升杠杆：有效梯度组 / 可测通过率 / timeout / abort / 原始奖励。"""
+"""奖励上升杠杆：有效梯度组 / 可测通过率 / timeout / abort / 原始奖励 / 题目池健康度。"""
 from __future__ import annotations
 
 import unittest
 
-from service.reward_diagnosis_service import build_reward_levers
+from service.reward_diagnosis_service import build_reward_levers, summarize_pool_health
 
 
 def _row(rid, gi, cat, reward=None, instance_id="alpha"):
@@ -29,7 +29,7 @@ def _row(rid, gi, cat, reward=None, instance_id="alpha"):
 
 
 class TestBuildRewardLevers(unittest.TestCase):
-    def test_always_returns_all_five_levers(self):
+    def test_always_returns_all_levers(self):
         result = build_reward_levers([])
         keys = [item["key"] for item in result["levers"]]
         self.assertEqual(
@@ -40,6 +40,8 @@ class TestBuildRewardLevers(unittest.TestCase):
                 "timeout_ratio",
                 "abort_ratio",
                 "raw_mean_reward",
+                "saturated_pool_ratio",
+                "hard_pool_ratio",
             },
         )
 
@@ -120,6 +122,68 @@ class TestBuildRewardLevers(unittest.TestCase):
         for lever in result["levers"]:
             self.assertEqual(lever["status"], "unknown")
             self.assertIsNone(lever["value"])
+
+
+class TestSummarizePoolHealth(unittest.TestCase):
+    """题目池健康度：饱和（刷穿）与太难。"""
+
+    def test_empty_returns_none_ratios(self):
+        out = summarize_pool_health([])
+        self.assertEqual(out["n_problems"], 0)
+        self.assertIsNone(out["saturated_pool_ratio"])
+        self.assertIsNone(out["hard_pool_ratio"])
+
+    def test_saturated_and_hard_problems(self):
+        rows = [
+            # 题 a：8/8 全过 → 饱和
+            *[_row(1, 0, "pass", instance_id="a") for _ in range(8)],
+            # 题 b：0/8 全挂 → 太难
+            *[_row(1, 1, "fail", instance_id="b") for _ in range(8)],
+            # 题 c：4/8 → 中间难度
+            *[_row(1, 2, "pass", instance_id="c") for _ in range(4)],
+            *[_row(1, 2, "fail", instance_id="c") for _ in range(4)],
+        ]
+        out = summarize_pool_health(rows)
+        self.assertEqual(out["n_problems"], 3)
+        self.assertEqual(out["n_saturated"], 1)
+        self.assertEqual(out["n_hard"], 1)
+        self.assertAlmostEqual(out["saturated_pool_ratio"], 1 / 3)
+        self.assertAlmostEqual(out["hard_pool_ratio"], 1 / 3)
+
+    def test_uses_best_appearance_not_last(self):
+        """早期没学会、后来学会了 → 不该判成「太难」。"""
+        rows = [
+            *[_row(1, 0, "fail", instance_id="a") for _ in range(8)],
+            *[_row(2, 0, "pass", instance_id="a") for _ in range(8)],
+        ]
+        out = summarize_pool_health(rows)
+        self.assertEqual(out["n_hard"], 0)
+        self.assertEqual(out["n_saturated"], 1)
+
+    def test_ignores_rows_without_instance(self):
+        rows = [_row(1, 0, "pass", instance_id="")]
+        out = summarize_pool_health(rows)
+        self.assertEqual(out["n_problems"], 0)
+
+
+class TestPoolHealthLevers(unittest.TestCase):
+    def test_pool_levers_present(self):
+        result = build_reward_levers([_row(1, 0, "pass")])
+        keys = {item["key"] for item in result["levers"]}
+        self.assertIn("saturated_pool_ratio", keys)
+        self.assertIn("hard_pool_ratio", keys)
+
+    def test_saturated_pool_is_bad(self):
+        rows = [*[_row(1, 0, "pass", instance_id=f"a{i}") for i in range(8) for _ in range(8)]]
+        result = build_reward_levers(rows)
+        lever = next(x for x in result["levers"] if x["key"] == "saturated_pool_ratio")
+        self.assertEqual(lever["status"], "bad")
+
+    def test_hard_pool_is_bad(self):
+        rows = [*[_row(1, 0, "fail", instance_id=f"b{i}") for i in range(8) for _ in range(8)]]
+        result = build_reward_levers(rows)
+        lever = next(x for x in result["levers"] if x["key"] == "hard_pool_ratio")
+        self.assertEqual(lever["status"], "bad")
 
 
 if __name__ == "__main__":

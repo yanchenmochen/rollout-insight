@@ -392,6 +392,7 @@
 - `staticmethod` `def classify_behavior_primary(row: Dict[str, Any], turn_summary: Optional[Dict[str, Any]]=None)…`
 - `staticmethod` `def summarize_behavior_cards(rows: Sequence[Dict[str, Any]], turn_flags: Sequence[Dict[str, Any…`
 - `staticmethod` `def build_reward_diagnosis(task_id: int) -> Dict[str, Any]`
+- `staticmethod` `def summarize_pool_health(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
 - `staticmethod` `def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
 
 ### `RolloutParseService` (`service/rollout_parse_service.py`)

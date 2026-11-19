@@ -573,9 +573,73 @@ _LEVER_RULES: Tuple[Tuple[str, str, str, str], ...] = (
         "对齐两者的差值与 abort / timeout 占比，判断奖励是「策略没学会」"
         "还是「环境把奖励吃了」。",
     ),
+    (
+        "saturated_pool_ratio",
+        "题目池饱和度",
+        "末次通过率贴近 1 的题占比过高 → 题目池已被刷穿，"
+        "剩下的样本同号，梯度趋零，再怎么训也涨不动。",
+        "把饱和题移出训练集或降采样，补充「差一点就能过」的题；"
+        "看跨任务对比里哪些题在别的配置下仍是难点。",
+    ),
+    (
+        "hard_pool_ratio",
+        "题目池难度天花板",
+        "末次通过率贴近 0 的题占比过高 → 题目池太难，"
+        "大量样本全挂，同样没有学习信号。",
+        "降采样全挂题或先补中间难度的题；"
+        "结合失败分析定位是能力不足还是行为缺陷。",
+    ),
 )
 
 
+def summarize_pool_health(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """按题目的**末次**通过率看题目池健康度。
+
+    每道题按 ``(rollout_id, instance_id)`` 归组，取通过率最高的一次出现
+    （即该题最好的表现）作为它的上限，避免「早期没学会」误判成「题目太难」。
+    末次通过率贴近 1 的题 = 已饱和（刷穿）；贴近 0 的题 = 太难。
+    """
+    buckets: Dict[Tuple[int, str], Dict[str, int]] = {}
+    for row in rows:
+        rid = row.get("rollout_id")
+        iid = str(row.get("instance_id") or "").strip()
+        if rid is None or not iid:
+            continue
+        key = (int(rid), iid)
+        bucket = buckets.setdefault(key, {"n_pass": 0, "n_attempts": 0})
+        bucket["n_attempts"] += 1
+        if row.get("category") == "pass":
+            bucket["n_pass"] += 1
+
+    best: Dict[str, float] = {}
+    for (_rid, iid), bucket in buckets.items():
+        n = int(bucket["n_attempts"])
+        if n <= 0:
+            continue
+        rate = int(bucket["n_pass"]) / n
+        if iid not in best or rate > best[iid]:
+            best[iid] = rate
+
+    n_total = len(best)
+    if n_total <= 0:
+        return {
+            "n_problems": 0,
+            "saturated_pool_ratio": None,
+            "hard_pool_ratio": None,
+            "n_saturated": 0,
+            "n_hard": 0,
+        }
+
+    # 饱和 / 太难的阈值：末次（最好一次）通过率 ≥0.875 视为刷穿，≤0.125 视为太难
+    n_saturated = sum(1 for rate in best.values() if rate >= 0.875)
+    n_hard = sum(1 for rate in best.values() if rate <= 0.125)
+    return {
+        "n_problems": n_total,
+        "saturated_pool_ratio": n_saturated / n_total,
+        "hard_pool_ratio": n_hard / n_total,
+        "n_saturated": n_saturated,
+        "n_hard": n_hard,
+    }
 
 
 def _lever_status(
@@ -583,6 +647,7 @@ def _lever_status(
     value: Optional[float],
     gradient: Dict[str, Any],
     split: Dict[str, Any],
+    pool: Optional[Dict[str, Any]] = None,
 ) -> str:
     """给单条杠杆判定状态：ok / warn / bad / unknown。"""
     if value is None:
@@ -619,6 +684,18 @@ def _lever_status(
             if value < measurable * 0.8:
                 return "warn"
         return "ok"
+    if key == "saturated_pool_ratio":
+        if value >= 0.6:
+            return "bad"
+        if value >= 0.35:
+            return "warn"
+        return "ok"
+    if key == "hard_pool_ratio":
+        if value >= 0.6:
+            return "bad"
+        if value >= 0.35:
+            return "warn"
+        return "ok"
     return "unknown"
 
 
@@ -630,6 +707,7 @@ def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """
     gradient = summarize_gradient_groups(rows)
     split = summarize_reward_split(rows)
+    pool = summarize_pool_health(rows)
     latest_gradient = gradient.get("latest") or {}
     latest_split = split.get("series")[-1] if split.get("series") else {}
 
@@ -642,6 +720,11 @@ def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "abort_ratio": latest_split.get("abort_ratio"),
         "raw_mean_reward": latest_split.get("raw_mean_reward"),
         "n_attempts": latest_split.get("n_attempts"),
+        "saturated_pool_ratio": pool.get("saturated_pool_ratio"),
+        "hard_pool_ratio": pool.get("hard_pool_ratio"),
+        "n_problems": pool.get("n_problems"),
+        "n_saturated": pool.get("n_saturated"),
+        "n_hard": pool.get("n_hard"),
     }
 
     levers: List[Dict[str, Any]] = []
@@ -651,7 +734,7 @@ def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                 "key": key,
                 "title": title,
                 "value": values.get(key),
-                "status": _lever_status(key, values.get(key), gradient, split),
+                "status": _lever_status(key, values.get(key), gradient, split, pool),
                 "phenomenon": phenomenon,
                 "action": action,
             }
@@ -664,6 +747,7 @@ def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "values": values,
         "levers": levers,
         "gradient_dips": gradient.get("dips") or [],
+        "pool_health": pool,
         "note": (
             "按「状态」排序：先修 bad，再看 warn。"
             "每条杠杆都给出可执行动作；跨任务对比时用同一口径比较不同配置。"
