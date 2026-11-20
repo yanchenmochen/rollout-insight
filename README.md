@@ -255,11 +255,12 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
 
 **外部评测分数（evaluations.md）。** 训练 run 根目录下若存在 `evaluations.md`，说明这个任务的检查点在持续做外部评测。该文件是评测台账：每行一次评测，记录 training step、评测名、轮次、南湖作业、作业状态与结果。训练曲线页在曲线**上方**渲染「外部评测分数」区块：
 
-- **按评测名分组**（例如 `panel`、`v500`），每组一张折线图，横轴是 training step，纵轴是评测分数；图例标出首尾值与变化量（变绿 / 变红）。
-- **分数口径**：优先取 `weighted score on N tasks`（加权分），其次 `merged M/N = x`，最后 `holdout score`；`95% selection interval ±x`、`ungraded N` 一并展示。
-- **逐次记录表**：列出每次评测的 step、轮次、作业状态（finished / running / scheduling / error）、分数、备注与作业 ID，便于回查南湖作业。
+- **按评测名分组**（例如 `panel`、`v500`），每组一张折线图，横轴是 training step，纵轴是评测分数。
+- **一个评测集内按分数口径分别画线**：同一次评测可能给出**多个评测集（不同题池）**的分数——例如 `panel` 同时给出「429 题的加权分」与「87 题的 holdout 分」。两者题池不同、各自独立成线，共用同一张图的坐标轴；图例标出口径名、题池（如「85/87 题」）、末值与变化量（变绿 / 变红），线型按口径区分（加权分实线 / merged 虚线 / holdout 点线）。
+- **分数口径**：`weighted score on N tasks`（加权分）、`merged M/N = x`、`holdout score: x over A of B tasks`（留出分）；`95% selection interval ±x`、`ungraded N`、`first round A/B` 一并展示。
+- **逐次记录表**：列出每次评测的 step、轮次、作业状态（finished / running / scheduling / error）、**各口径分数分列**、备注与作业 ID，便于回查南湖作业。
 
-解析逻辑在 `utils/eval_report_md.py`（`parse_evaluations_md` / `extract_scores` / `read_evaluations_for_rollout_root`），run 目录解析复用 `utils/tb_run_paths.resolve_run_dir`。文件不存在时该区块整体隐藏，不影响曲线。
+解析逻辑在 `utils/eval_report_md.py`（`parse_evaluations_md` / `extract_scores` / `iter_score_kinds` / `read_evaluations_for_rollout_root`），按口径拆分为多条曲线在 `service/train_curve_service.py` 的 `_build_eval_series`，run 目录解析复用 `utils/tb_run_paths.resolve_run_dir`。文件不存在时该区块整体隐藏，不影响曲线。
 
 ### 5.4.1 多任务曲线对比（顶栏）
 

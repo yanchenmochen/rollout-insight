@@ -11,6 +11,10 @@
   95% selection interval +-0.039; holdout score: 0.400 over 85 of 87 tasks``
 - ``first round 288/500; merged 298/500 = 0.596; 2 reruns; still bad {...}``
 
+**一个评测集可能同时给出多个评测集的分数**：上例里 ``weighted score on 429
+tasks`` 与 ``holdout score ... over 85 of 87 tasks`` 是**两个不同题池**的口径，
+必须分开画线，不能只取其一。
+
 本模块只做纯解析（无 DB / 路由依赖），供训练曲线页渲染「外部评测分数」。
 """
 from __future__ import annotations
@@ -22,7 +26,10 @@ from typing import Any, Dict, List, Optional
 __all__ = [
     "EVALUATION_FILE_NAME",
     "EVALUATION_COLUMNS",
+    "SCORE_KIND_LABELS",
+    "SCORE_KIND_ORDER",
     "extract_scores",
+    "iter_score_kinds",
     "parse_evaluations_md",
     "read_evaluations_md",
     "read_evaluations_for_rollout_root",
@@ -82,6 +89,41 @@ _STATUS_DONE = "finished"
 _STATUS_RUNNING = "running"
 _STATUS_SCHEDULED = "scheduling"
 _STATUS_ERROR = "error"
+
+# ---------------------------------------------------------------------------
+# 分数口径（score kind）
+#
+# 一次外部评测可能同时给出**多个评测集**的分数，例如 panel 同时给出
+# 「429 题的加权分」与「87 题的 holdout 分」——两者题池不同，必须分开画线。
+# 下面定义各口径的显示名与固定顺序；口径名同时就是 ``extract_scores``
+# 结果里的取值键（weighted / merged / holdout）。
+# ---------------------------------------------------------------------------
+
+# 口径 → 中文显示名
+SCORE_KIND_LABELS: Dict[str, str] = {
+    "weighted": "加权分",
+    "merged": "merged 分",
+    "holdout": "holdout 分",
+}
+
+# 口径的展示顺序（加权分优先，其后 merged / holdout）
+SCORE_KIND_ORDER: tuple = ("weighted", "merged", "holdout")
+
+
+def iter_score_kinds(scores: Optional[Dict[str, Any]]) -> List[str]:
+    """列出该次评测里**实际有分数**的口径，按固定顺序返回。
+
+    用于把一次评测拆成多条曲线（例如 panel 的加权分 + holdout 分）。
+    """
+    if not scores:
+        return []
+    out: List[str] = []
+    for kind in SCORE_KIND_ORDER:
+        value = scores.get(kind)
+        if value is None:
+            continue
+        out.append(kind)
+    return out
 
 
 def _to_float(text: Any) -> Optional[float]:

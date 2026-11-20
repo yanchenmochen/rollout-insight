@@ -102,6 +102,7 @@
 
 ### `utils/eval_report_md.py`
 
+- `def iter_score_kinds(scores: Optional[Dict[str, Any]]) -> List[str]` — 列出该次评测里**实际有分数**的口径，按固定顺序返回。
 - `def extract_scores(result_text: Any) -> Dict[str, Any]` — 从 ``Result`` 单元格里抽出各个分数。
 - `def parse_evaluations_md(text: Optional[str]) -> Dict[str, Any]` — 解析 ``evaluations.md`` 全文。
 - `def read_evaluations_md(path: Optional[Path | str]) -> Dict[str, Any]` — 读取并解析指定的 ``evaluations.md``；文件不存在返回 ``exists=False``。

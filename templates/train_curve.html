@@ -128,6 +128,9 @@
             <small>来自训练输出目录的 evaluations.md（检查点持续做外部评测的台账）</small>
         </h2>
         <div class="muted" id="evalMeta" style="margin-bottom:10px;"></div>
+        <div class="muted" style="margin-bottom:8px;">
+            同一次评测可能给出多个评测集（不同题池）的分数，各口径分别画线，共用同一张图的坐标轴。
+        </div>
         <div id="evalCharts"></div>
         <div id="evalTableWrap"></div>
     </div>
@@ -425,20 +428,46 @@
 
     // ---------------------------------------------------------------- 外部评测
     // 数据来自训练输出目录的 evaluations.md：每个 training step 的一次外部评测记录。
+    // 同一个评测集可能给出**多个题池**的分数（panel：429 题加权分 + 87 题 holdout 分），
+    // 每个口径单独画一条线，共用同一张图的坐标轴。
     const EVAL_COLORS = ["#2d6a9f", "#c2410c", "#2d6a4f", "#7c3aed", "#b45309", "#0891b2"];
 
-    function renderEvalChart(group, color) {
-        const points = group.points || [];
-        if (!points.length) return "";
+    // 分数口径 → 线型（同一评测集内多口径叠图时区分）
+    const EVAL_KIND_DASH = {
+        weighted: null,
+        merged: "6 4",
+        holdout: "2 3",
+    };
+
+    function evalSeriesColor(groupIndex, seriesIndex) {
+        return EVAL_COLORS[(groupIndex * 2 + seriesIndex) % EVAL_COLORS.length];
+    }
+
+    function evalTasksLabel(series) {
+        if (series.tasks == null) return "";
+        if (series.scored_tasks != null && series.scored_tasks !== series.tasks) {
+            return `${series.scored_tasks}/${series.tasks} 题`;
+        }
+        return `${series.tasks} 题`;
+    }
+
+    function renderEvalChart(group, groupIndex) {
+        const series = group.series || [];
+        if (!series.length) return "";
         const w = 760, h = 170, padL = 56, padR = 14, padT = 12, padB = 28;
         const plotW = w - padL - padR, plotH = h - padT - padB;
-        const values = points.map((p) => Number(p.value));
+
+        // 所有口径的点合并后算坐标轴范围，保证多口径可横向比较
+        const allPoints = [];
+        series.forEach((s) => (s.points || []).forEach((p) => allPoints.push(p)));
+        if (!allPoints.length) return "";
+        const values = allPoints.map((p) => Number(p.value));
         let yMin = Math.min(...values), yMax = Math.max(...values);
         if (yMax === yMin) { yMin -= 0.05; yMax += 0.05; }
         const padY = (yMax - yMin) * 0.15;
         yMin = Math.max(0, yMin - padY); yMax = Math.min(1, yMax + padY);
         if (yMax <= yMin) yMax = yMin + 0.1;
-        const steps = points.map((p) => Number(p.step));
+        const steps = allPoints.map((p) => Number(p.step));
         const xMin = Math.min(...steps), xMax = Math.max(...steps);
         const xAt = (s) => xMax === xMin ? padL + plotW / 2 : padL + (s - xMin) * plotW / (xMax - xMin);
         const yAt = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
@@ -451,33 +480,52 @@
             grid += `<text x="${padL - 8}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="11" fill="#5c6b7a">${fmt(v)}</text>`;
         });
 
-        const path = points.map((p, i) =>
-            `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
-        ).join(" ");
-        const dots = points.map((p, i) => {
-            const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
-            return `<circle class="pt" cx="${x}" cy="${y}" r="3" fill="${color}" data-i="${i}" />`;
+        // 每个口径一条线
+        const legendItems = [];
+        let paths = "", dots = "";
+        series.forEach((s, si) => {
+            const color = evalSeriesColor(groupIndex, si);
+            const pts = s.points || [];
+            if (!pts.length) return;
+            const path = pts.map((p, i) =>
+                `${i === 0 ? "M" : "L"}${xAt(Number(p.step)).toFixed(1)},${yAt(Number(p.value)).toFixed(1)}`
+            ).join(" ");
+            const dash = EVAL_KIND_DASH[s.kind];
+            const dashAttr = dash ? ` stroke-dasharray="${dash}"` : "";
+            paths += `<path d="${path}" fill="none" stroke="${color}" stroke-width="1.8"${dashAttr}></path>`;
+            dots += pts.map((p, i) => {
+                const x = xAt(Number(p.step)).toFixed(1), y = yAt(Number(p.value)).toFixed(1);
+                return `<circle class="pt" cx="${x}" cy="${y}" r="3" fill="${color}" data-i="${i}" data-s="${si}"></circle>`;
+            }).join("");
+
+            const delta = Number(s.delta);
+            const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
+            const tasks = evalTasksLabel(s);
+            legendItems.push(`
+                <span class="legend-item">
+                    <span class="legend-swatch" style="background:${dash ? `repeating-linear-gradient(90deg, ${color} 0 5px, transparent 5px 8px)` : color}"></span>
+                    <span>${esc(s.label)}${tasks ? `（${esc(tasks)}）` : ""}</span>
+                    <span class="legend-value">${fmt(s.last_value)}</span>
+                    <span style="color:${cls}">（${delta >= 0 ? "+" : ""}${fmt(delta)}）</span>
+                </span>`);
+        });
+
+        // 横轴刻度：按 step 去重后均匀取样
+        const uniqueSteps = Array.from(new Set(steps)).sort((a, b) => a - b);
+        const labelEvery = uniqueSteps.length <= 8 ? 1 : Math.ceil(uniqueSteps.length / 8);
+        const xLabels = uniqueSteps.map((st, i) => {
+            if (i !== 0 && i !== uniqueSteps.length - 1 && i % labelEvery !== 0) return "";
+            return `<text x="${xAt(st).toFixed(1)}" y="${padT + plotH + 15}" text-anchor="middle" font-size="10" fill="#5c6b7a">${st}</text>`;
         }).join("");
 
-        const xLabels = points.map((p) =>
-            `<text x="${xAt(Number(p.step)).toFixed(1)}" y="${padT + plotH + 15}" text-anchor="middle" font-size="10" fill="#5c6b7a">${p.step}</text>`
-        ).join("");
-
-        const first = points[0], last = points[points.length - 1];
-        const delta = Number(last.value) - Number(first.value);
-        const cls = delta > 1e-9 ? "#2d6a4f" : (delta < -1e-9 ? "#c62828" : "#5c6b7a");
-        const kindText = points[0].kind === "weighted" ? "加权分" : (points[0].kind === "merged" ? "merged 分" : "holdout 分");
+        const legendHtml = `<div class="curve-legend">${legendItems.join("")}</div>`;
 
         return `<div class="eval-block" data-group="${esc(group.name)}">
             <div class="eval-head">
-                <span class="legend-swatch" style="background:${color}"></span>
                 <span>${esc(group.name)}</span>
-                <span class="badge">${kindText} · ${points.length} 次</span>
-                <span class="muted" style="font-weight:400;">
-                    step ${first.step}→${last.step} · ${fmt(first.value)} → ${fmt(last.value)}
-                    <span style="color:${cls}">（${delta >= 0 ? "+" : ""}${fmt(delta)}）</span>
-                </span>
+                <span class="badge">${series.length} 个评测集 · ${group.n_runs || 0} 次</span>
             </div>
+            ${legendHtml}
             <div class="eval-chart">
                 <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(group.name)} 评测分数">
                     <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"></rect>
@@ -486,41 +534,65 @@
                     <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#5c6b7a"></line>
                     ${xLabels}
                     <text x="${padL + plotW / 2}" y="${h - 3}" text-anchor="middle" font-size="11" fill="#5c6b7a">training step</text>
-                    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.8"></path>
+                    ${paths}
                     ${dots}
                 </svg>
             </div>
         </div>`;
     }
 
+    // 分数口径 → 表格列标题（与图例一致）
+    const EVAL_KIND_COL = {
+        weighted: "加权分",
+        merged: "merged 分",
+        holdout: "holdout 分",
+    };
+    const EVAL_KIND_ORDER = ["weighted", "merged", "holdout"];
+
     function renderEvalTable(group) {
         const rounds = group.rounds || [];
         if (!rounds.length) return "";
+        const series = group.series || [];
+
+        // 只保留该评测集里**实际出现过分数**的口径，作为独立列
+        const kinds = EVAL_KIND_ORDER.filter((k) =>
+            series.some((s) => s.kind === k));
+        const colTitle = (kind) => {
+            const s = series.find((x) => x.kind === kind);
+            const tasks = s ? evalTasksLabel(s) : "";
+            return tasks ? `${EVAL_KIND_COL[kind]}<br><span class="muted">${esc(tasks)}</span>` : EVAL_KIND_COL[kind];
+        };
+
         const rows = rounds.map((r) => {
             const s = r.scores || {};
-            const score = s.weighted !== null && s.weighted !== undefined ? s.weighted
-                : (s.merged !== null && s.merged !== undefined ? s.merged : s.holdout);
-            const scoreCell = score === null || score === undefined
-                ? `<span class="muted">-</span>`
-                : `<b>${fmt(score)}</b>`;
+            // 每个口径一个独立单元格；没有分数的口径显示 "-"
+            const scoreCells = kinds.map((kind) => {
+                const v = s[kind];
+                const inner = (v === null || v === undefined)
+                    ? `<span class="muted">-</span>`
+                    : `<b>${fmt(v)}</b>`;
+                return `<td class="num">${inner}</td>`;
+            }).join("");
             const extra = [];
             if (s.interval !== null && s.interval !== undefined) extra.push(`±${fmt(s.interval)}`);
-            if (s.holdout !== null && s.holdout !== undefined && s.weighted !== null && s.weighted !== undefined) {
-                extra.push(`holdout ${fmt(s.holdout)}`);
-            }
             if (s.ungraded) extra.push(`ungraded ${s.ungraded}`);
+            if (s.first_round_pass !== null && s.first_round_pass !== undefined) {
+                extra.push(`first ${s.first_round_pass}/${s.first_round_total}`);
+            }
             return `<tr>
                 <td class="num">${r.step}</td>
                 <td>${esc(r.round || "-")}</td>
                 <td><span class="eval-status ${esc(r.job_status || "")}">${esc(r.job_status || "-")}</span></td>
-                <td class="num">${scoreCell}</td>
+                ${scoreCells}
                 <td class="muted">${esc(extra.join(" · "))}</td>
                 <td class="mono muted">${esc(r.job_id || "")}</td>
             </tr>`;
         }).join("");
         return `<table class="evals">
             <thead><tr>
-                <th class="num">step</th><th>轮次</th><th>状态</th><th class="num">分数</th><th>备注</th><th>作业 ID</th>
+                <th class="num">step</th><th>轮次</th><th>状态</th>
+                ${kinds.map((k) => `<th class="num">${colTitle(k)}</th>`).join("")}
+                <th>备注</th><th>作业 ID</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
@@ -545,14 +617,32 @@
             $("evalTableWrap").innerHTML = "";
             return;
         }
-        $("evalCharts").innerHTML = groups.map((g, i) =>
-            renderEvalChart(g, EVAL_COLORS[i % EVAL_COLORS.length])
-        ).join("");
+        $("evalCharts").innerHTML = groups.map((g, i) => renderEvalChart(g, i)).join("");
         $("evalTableWrap").innerHTML = groups.map((g) => `
             <div style="margin-top:12px;">
                 <div class="eval-head">${esc(g.name)} <span class="badge">逐次记录</span></div>
                 ${renderEvalTable(g)}
             </div>`).join("");
+        bindEvalHover(groups);
+    }
+
+    // 悬停评测折线上的点 → 显示该口径 / step 的读数
+    function bindEvalHover(groups) {
+        const host = $("evalCharts");
+        host.querySelectorAll(".eval-block").forEach((block) => {
+            const group = groups.find((g) => g.name === block.getAttribute("data-group"));
+            if (!group) return;
+            const series = group.series || [];
+            block.querySelectorAll("circle.pt").forEach((dot) => {
+                const s = series[Number(dot.getAttribute("data-s"))];
+                const p = (s && s.points || [])[Number(dot.getAttribute("data-i"))];
+                if (!s || !p) return;
+                const tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                const tasks = evalTasksLabel(s);
+                tip.textContent = `${s.label}${tasks ? "（" + tasks + "）" : ""} · step ${p.step} · ${fmt(p.value)}`;
+                dot.appendChild(tip);
+            });
+        });
     }
 
     // ---------------------------------------------------------------- 保存

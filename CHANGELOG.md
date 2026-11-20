@@ -1,5 +1,48 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 外部评测分数按评测集分别绘制
+
+### 概述
+
+「外部评测分数」区块此前把**一次评测里的多个评测集混成一条线**：分数口径按
+「加权分 → merged → holdout」取**第一个非空值**，导致 `panel` 的 **87 题 holdout 分被
+丢弃**（只画 429 题的加权分），无法看到留出集的真实走势。
+
+实际台账里，一次评测常同时给出**多个题池**的分数：
+
+```
+ungraded 1 [...]; weighted score on 429 tasks: 0.660;
+95% selection interval +-0.039; holdout score: 0.400 over 85 of 87 tasks
+```
+
+`weighted score on 429 tasks` 与 `holdout score ... over 85 of 87 tasks` 是**两个不同的
+评测集**，题池与难度都不同，必须分开看。
+
+现在按**评测名 → 分数口径**两级拆分：每个评测集下，每个口径各画一条线，共用同一张图
+的坐标轴（便于横向比较），线型按口径区分。
+
+### 关键实现要点
+
+| 变更 | 说明 |
+| --- | --- |
+| `utils/eval_report_md.py` | 新增 `SCORE_KINDS` / `SCORE_KIND_LABELS` / `SCORE_KIND_ORDER` 与 `iter_score_kinds(scores)`：列出一次评测里**实际有分数**的口径（固定顺序：加权分 → merged → holdout） |
+| `service/train_curve_service.py` | 新增 `_build_eval_series(rounds)`：把一个评测集的若干次记录拆成「每口径一条曲线」，附带题池信息（题数 / 参与评分题数）、首末值与变化量；`_build_evaluations` 改为输出 `groups[].series`，并保留 `groups[].points` / `groups[].kind` 作为兼容字段 |
+| `templates/train_curve.html` | 评测折线改为「一个评测集一张图、每个口径一条线」；图例标出口径名 + 题池（如「85/87 题」）+ 末值 + 变化量；线型区分口径（加权分实线 / merged 虚线 / holdout 点线）；圆点加 `<title>` 悬停读数 |
+| `templates/train_curve.html` | 逐次记录表改为**各口径分数分列**（表头带题池副标题），缺失口径显示 `-`；备注列补充 `first A/B` |
+
+### 影响面
+
+- `GET /api/tasks/{id}/train-curve.json` 的 `evaluations.groups[].series` 为**新增**字段；
+  `points` / `kind` 保留旧语义（主口径曲线），旧消费方不受影响。
+- 无 `evaluations.md` 的任务行为不变（区块整体隐藏）。
+
+### 测试
+
+- `tests/test_eval_report_md.py`（新增 `TestIterScoreKinds`：多口径并列 / merged 单口径 / 空结果 / 固定顺序）
+- `tests/test_train_curve_service.py`（新增 `TestBuildEvalSeries`：加权分与 holdout 拆成两条曲线 / 题池信息 / merged 单曲线 / 无分数记录跳过 / 按 step 排序 / 变化量 / 空输入）
+
+`python scripts/scan_func_md.py --check` 通过，`func.md` 已同步。
+
 ## 未发布 — 重启脚本默认后台启动
 
 ### 概述

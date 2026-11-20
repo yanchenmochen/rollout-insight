@@ -5,7 +5,10 @@ import unittest
 
 from utils.eval_report_md import (
     EVALUATION_FILE_NAME,
+    SCORE_KIND_LABELS,
+    SCORE_KIND_ORDER,
     extract_scores,
+    iter_score_kinds,
     parse_evaluations_md,
     read_evaluations_for_rollout_root,
     read_evaluations_md,
@@ -112,6 +115,33 @@ class TestParseEvaluationsMd(unittest.TestCase):
         step50 = [r for r in data["runs"] if r["step"] == 50]
         self.assertEqual(len(step50), 1)
         self.assertEqual(step50[0]["evaluation"], "v500")
+
+
+class TestIterScoreKinds(unittest.TestCase):
+    """一次评测可同时给出多个评测集（题池）的分数，需要逐个列出。"""
+
+    def test_weighted_and_holdout_are_two_kinds(self):
+        scores = extract_scores(
+            "weighted score on 429 tasks: 0.660; "
+            "holdout score: 0.400 over 85 of 87 tasks"
+        )
+        self.assertEqual(iter_score_kinds(scores), ["weighted", "holdout"])
+
+    def test_merged_only(self):
+        scores = extract_scores("merged 298/500 = 0.596")
+        self.assertEqual(iter_score_kinds(scores), ["merged"])
+
+    def test_no_score(self):
+        self.assertEqual(iter_score_kinds(extract_scores("")), [])
+        self.assertEqual(iter_score_kinds(None), [])
+
+    def test_order_is_fixed(self):
+        """输出顺序固定为 加权分 → merged → holdout。"""
+        self.assertEqual(SCORE_KIND_ORDER, ("weighted", "merged", "holdout"))
+
+    def test_labels_cover_all_kinds(self):
+        for kind in SCORE_KIND_ORDER:
+            self.assertIn(kind, SCORE_KIND_LABELS)
 
 
 class TestReadEvaluationsMd(unittest.TestCase):

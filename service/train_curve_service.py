@@ -204,11 +204,89 @@ def _resolve_steps_per_epoch(task_id: int) -> Optional[int]:
     return resolve_steps_per_epoch(trend.get("n_problems"), trend.get("batch_size"))
 
 
+def _score_task_meta(scores: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    """某个分数口径对应的题池信息（题数 / 参与评分题数）。"""
+    if kind == "weighted":
+        return {"tasks": scores.get("weighted_tasks"), "scored_tasks": None}
+    if kind == "holdout":
+        return {
+            "tasks": scores.get("holdout_tasks_total"),
+            "scored_tasks": scores.get("holdout_tasks"),
+        }
+    if kind == "merged":
+        return {"tasks": scores.get("merged_total"), "scored_tasks": scores.get("merged_pass")}
+    return {"tasks": None, "scored_tasks": None}
+
+
+def _build_eval_series(rounds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把一次评测集的若干次记录拆成「每个分数口径一条曲线」。
+
+    同一个评测集可能同时给出多个口径的分数（例如 panel 的「429 题加权分」与
+    「87 题 holdout 分」），题池不同，必须分开画线。
+    """
+    from utils.eval_report_md import (
+        SCORE_KIND_LABELS,
+        SCORE_KIND_ORDER,
+        iter_score_kinds,
+    )
+
+    # 口径 → 该口径下所有有分数的记录
+    by_kind: Dict[str, List[Dict[str, Any]]] = {}
+    for item in rounds:
+        scores = item.get("scores") or {}
+        for kind in iter_score_kinds(scores):
+            by_kind.setdefault(kind, []).append(item)
+
+    series: List[Dict[str, Any]] = []
+    for kind in SCORE_KIND_ORDER:
+        items = by_kind.get(kind)
+        if not items:
+            continue
+        points: List[Dict[str, Any]] = []
+        for item in items:
+            scores = item.get("scores") or {}
+            value = scores.get(kind)
+            if value is None:
+                continue
+            points.append(
+                {
+                    "step": int(item.get("step") or 0),
+                    "value": float(value),
+                    "kind": kind,
+                    "job_status": str(item.get("job_status") or ""),
+                    "round": str(item.get("round") or ""),
+                }
+            )
+        if not points:
+            continue
+        points.sort(key=lambda p: int(p.get("step") or 0))
+        first = points[0]
+        last = points[-1]
+        meta = _score_task_meta(items[0].get("scores") or {}, kind)
+        series.append(
+            {
+                "kind": kind,
+                "label": SCORE_KIND_LABELS.get(kind, kind),
+                "points": points,
+                "n_points": len(points),
+                "tasks": meta["tasks"],
+                "scored_tasks": meta["scored_tasks"],
+                "first_value": first["value"],
+                "last_value": last["value"],
+                "delta": float(last["value"]) - float(first["value"]),
+                "first_step": first["step"],
+                "last_step": last["step"],
+            }
+        )
+    return series
+
+
 def _build_evaluations(rollout_root: str) -> Dict[str, Any]:
     """读取 run 目录下的 ``evaluations.md``（外部评测台账）。
 
-    输出按「评测名」分组（如 panel / v500），每组给出每个 training step 的
-    分数，便于页面上按列渲染。文件不存在时 ``exists=False``。
+    输出按「评测名」分组（如 panel / v500）。每个评测名内再按**分数口径**拆成
+    多条曲线（加权分 / merged 分 / holdout 分），因为同一次评测可能同时给出
+    多个题池的分数，必须分开画线。文件不存在时 ``exists=False``。
     """
     from utils.eval_report_md import read_evaluations_for_rollout_root
 
@@ -223,10 +301,9 @@ def _build_evaluations(rollout_root: str) -> Dict[str, Any]:
         name = str(run.get("evaluation") or "").strip() or "eval"
         group = groups.setdefault(
             name,
-            {"name": name, "rounds": [], "points": [], "n_runs": 0},
+            {"name": name, "rounds": [], "n_runs": 0},
         )
         group["n_runs"] += 1
-        scores = run.get("scores") or {}
         group["rounds"].append(
             {
                 "step": int(run.get("step") or 0),
@@ -236,33 +313,16 @@ def _build_evaluations(rollout_root: str) -> Dict[str, Any]:
                 "job_id": str(run.get("job_id") or ""),
                 "run": str(run.get("run") or ""),
                 "result": str(run.get("result") or ""),
-                "scores": scores,
-            }
-        )
-        # 折线点：优先取加权分，其次 merged，最后 holdout
-        value = scores.get("weighted")
-        if value is None:
-            value = scores.get("merged")
-        if value is None:
-            value = scores.get("holdout")
-        if value is None:
-            continue
-        group["points"].append(
-            {
-                "step": int(run.get("step") or 0),
-                "value": float(value),
-                "kind": (
-                    "weighted" if scores.get("weighted") is not None
-                    else ("merged" if scores.get("merged") is not None else "holdout")
-                ),
-                "job_status": str(run.get("job_status") or ""),
-                "round": str(run.get("round") or ""),
+                "scores": run.get("scores") or {},
             }
         )
 
     group_list = []
     for group in groups.values():
-        group["points"].sort(key=lambda p: int(p.get("step") or 0))
+        group["series"] = _build_eval_series(group["rounds"])
+        # 兼容旧字段：主口径（第一条曲线）的点
+        group["points"] = group["series"][0]["points"] if group["series"] else []
+        group["kind"] = group["series"][0]["kind"] if group["series"] else ""
         group_list.append(group)
     group_list.sort(key=lambda g: str(g.get("name") or ""))
 
