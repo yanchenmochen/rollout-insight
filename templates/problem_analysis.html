@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}问题分析{% if task_id %} - 任务 #{{ task_id }}{% endif %} - Rollout Insight{% endblock %}
+{% block title %}问题分析{% if task_id %} · 任务 #{{ task_id }}{% endif %} · {{ brand }}{% endblock %}
 
 {% block extra_css %}
 <style>

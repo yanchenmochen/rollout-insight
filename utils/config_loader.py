@@ -61,6 +61,10 @@ def load_config(config_path: Optional[str] = None) -> Dict:
     config.setdefault("rollout_dump_pattern", "**/rollout_dumps/rollout_*.pt")
     config.setdefault("rollout_insight_version", "0.1.0")
     config.setdefault("rollout_insight_title", "Rollout Insight")
+    # 站点品牌名：浏览器标签页 / 顶栏 logo / 页面标题后缀统一用它。
+    # 「洞见」比「Rollout Insight」短很多 —— 标签页窄的时候 Chrome 不会把标题
+    # 折叠成只显示图标，用户才能同时看到图标与文字。
+    config.setdefault("site_brand_name", "洞见")
 
     # v0.3.0 nanhu-skill 集成默认配置
     config.setdefault("nanhu_cluster", "wuxi")
@@ -154,6 +158,11 @@ class Config:
     @property
     def rollout_insight_title(self) -> str:
         return self._data.get("rollout_insight_title", "Rollout Insight")
+
+    @property
+    def site_brand_name(self) -> str:
+        """站点品牌名（浏览器标签页 / 顶栏 logo / 页面标题后缀）。"""
+        return self._data.get("site_brand_name", "洞见")
 
     @property
     def nanhu_cluster(self) -> str:

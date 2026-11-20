@@ -22,17 +22,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
-from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from utils.auth_session import current_user, require_login
 from utils.config_loader import config
+from utils.template_factory import create_templates
 # v0.5.1：业务路由统一要求登录（未登录 → 302 或 401，由 require_login 自行判断）
 router = APIRouter(dependencies=[Depends(require_login)])
 
 # 模板对象复用 main 启动时相同的目录
-templates = Jinja2Templates(directory=str(config.templates_dir))
+templates = create_templates()
 
 
 # ---------------------------------------------------------------------------

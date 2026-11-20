@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }} - 任务 #{{ task.id if task else '-' }} - Rollout Insight{% endblock %}
+{% block title %}Rollout #{{ rollout.rollout_id if rollout.rollout_id is not none else rollout.id }} · {{ brand }}{% endblock %}
 
 {% block extra_css %}
 <style>

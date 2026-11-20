@@ -79,7 +79,8 @@ rollout-insight/
 │   ├── train_curve_catalog.py # 训练曲线指标目录：默认按钮组 + tag 匹配规则
 │   ├── train_curve_epoch.py   # 训练曲线 epoch 聚合（steps_per_epoch / 分箱均值）
 │   ├── eval_report_md.py      # 解析 run 目录的 evaluations.md（外部评测台账 + 分数）
-│   └── icon_catalog.py        # 菜单图标清单：路由/动作 → Lucide 图标名 + tooltip
+│   ├── icon_catalog.py        # 菜单图标清单：路由/动作 → Lucide 图标名 + tooltip
+│   └── template_factory.py    # 统一创建 Jinja2Templates（注入全局模板变量，如品牌名）
 ├── data/                      # 数据层
 │   ├── response.py            # 统一 JSON 响应（code/msg/data）
 │   └── rollout_insight_exception.py   # 业务异常（50xxx/51xxx/52xxx/53xxx/54xxx）
@@ -98,7 +99,9 @@ rollout-insight/
 │   └── recipes.md             # 按场景的速查手册
 ├── schedule/                  # 定时任务占位
 ├── static/                    # 静态资源
+│   ├── branding/              # 站点图标源图（唯一真源，由 scripts/gen_favicon.py 派生）
 │   ├── icons/                 # 离线内置 Lucide SVG 图标（MIT，见 static/icons/LICENSE）
+│   ├── favicon.ico            # 浏览器标签页 / 书签图标（内含 16/32/48）
 │   ├── ri_icons.css           # 图标 CSS mask（由 scripts/gen_icon_css.py 生成）
 │   ├── ri_epoch_chart.js      # 共享 epoch 折线渲染（window.RiEpochChart.render）
 │   └── ri_multi_chart.js      # 共享多序列折线渲染（window.RiMultiChart.renderLineChart）
@@ -115,6 +118,9 @@ rollout-insight/
 | ---- | ---- | ---- |
 | GET  | `/` | 中文欢迎页（自动 3 秒跳转到 `/api/tasks`） |
 | GET  | `/healthz` | 健康检查（返回 version） |
+| GET  | `/favicon.ico` | 站点图标（多尺寸 ICO，**无需登录**） |
+| GET  | `/apple-touch-icon.png` | 180×180 图标（iOS 添加到主屏，**无需登录**） |
+| GET  | `/site.webmanifest` | PWA manifest（名称 / 主题色 / 各尺寸图标） |
 | GET  | `/api/tasks` | 任务列表（带分页/状态过滤） |
 | POST | `/api/tasks` | 创建任务（form-encoded） |
 | GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染；结局/奖励柱 SSR，类型细分渐进加载） |
@@ -308,6 +314,17 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
   ```
 
 > 依赖 Pillow（`pip install Pillow`）；缺失时脚本会给出明确提示并返回退出码 1。
+
+### 5.8 站点品牌名（「洞见」）
+
+站点品牌名由配置项 **`site_brand_name`** 统一控制（默认「洞见」，见 `config.json`），它决定三处显示：浏览器标签页标题后缀、顶栏 logo 文字、登录 / 注册页标题。
+
+- **为什么是「洞见」而不是「Rollout Insight」**：Chrome 在标签页过窄时会把长标题折叠成**只显示图标**，用户就看不到文字了。短品牌名 + 短页面名（两段式）能稳定显示成「图标 + 文字」。
+- **标题格式**：统一为 `<页面名> · <品牌名>`，例如「任务列表 · 洞见」「任务 #11 · 洞见」「洞察 · 洞见」。页面名刻意取短，不带长任务名 —— 任务名几十个字符会把标签撑爆。
+- **注入方式**：品牌名是**全局模板变量**，由 `utils/template_factory.py` 的 `create_templates()` 一次性写进 `env.globals`；所有 controller 用它创建模板实例，模板里直接用 `{{ brand }}`。
+- **改名**：改 `config.json` 的 `site_brand_name` 后重启服务即可，**不需要改任何模板**。`config_loader` 里的 `site_brand_name` 属性是它的读取入口。
+
+> 顺带说明：各 controller 原先各自 `Jinja2Templates(directory=...)`，全局变量无处安放。现已统一收敛到 `create_templates()`，新增全局模板变量时只改这一处。
 
 ---
 

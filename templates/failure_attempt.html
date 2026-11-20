@@ -3,7 +3,7 @@
 {% set a = d.attempt %}
 {% set cat_zh = {"pass": "通过", "fail": "正常失败", "timeout": "超时/截断", "abort": "abort", "other": "其它"} %}
 
-{% block title %}失败轨迹 · attempt #{{ a.attempt_pk }} - Rollout Insight{% endblock %}
+{% block title %}失败轨迹 · attempt #{{ a.attempt_pk }} · {{ brand }}{% endblock %}
 
 {% block extra_css %}
 <style>

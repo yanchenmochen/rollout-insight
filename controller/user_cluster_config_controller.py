@@ -21,17 +21,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
-from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from utils.auth_session import current_user, require_login
 from utils.config_loader import config
+from utils.template_factory import create_templates
 
 # router 级别不写 require_login —— handler 显式声明更灵活（GET 列表也强制要求登录）
 router = APIRouter()
 
-templates = Jinja2Templates(directory=str(config.templates_dir))
+templates = create_templates()
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +144,7 @@ async def page_cluster_configs(
             request,
             "user_cluster_config.html",
             {
-                "page_title": "集群配置 - Rollout Insight",
+                "page_title": "集群配置",
                 "mode": "list",
                 "configs": items,
                 "editing": None,
@@ -181,7 +181,7 @@ async def page_cluster_config_new(
         request,
         "user_cluster_config.html",
         {
-            "page_title": "新建集群配置 - Rollout Insight",
+            "page_title": "新建集群配置",
             "mode": "new",
             "configs": [],
             "editing": empty,
@@ -207,7 +207,7 @@ async def page_cluster_config_edit(
             request,
             "user_cluster_config.html",
             {
-                "page_title": "集群配置 - Rollout Insight",
+                "page_title": "集群配置",
                 "mode": "list",
                 "configs": [],
                 "editing": None,
@@ -222,7 +222,7 @@ async def page_cluster_config_edit(
             request,
             "user_cluster_config.html",
             {
-                "page_title": "集群配置 - Rollout Insight",
+                "page_title": "集群配置",
                 "mode": "list",
                 "configs": [],
                 "editing": None,
@@ -235,7 +235,7 @@ async def page_cluster_config_edit(
         request,
         "user_cluster_config.html",
         {
-            "page_title": f"编辑 {cluster_key} - Rollout Insight",
+            "page_title": "编辑 {cluster_key}",
             "mode": "edit",
             "configs": [],
             "editing": _cfg_to_dict(row),
@@ -382,7 +382,7 @@ def _render_error_with_form(
         request,
         "user_cluster_config.html",
         {
-            "page_title": "集群配置 - Rollout Insight",
+            "page_title": "集群配置",
             "mode": "edit" if editing.get("primary_id") else "new",
             "configs": [],
             "editing": editing,

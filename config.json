@@ -5,6 +5,7 @@
     "database_url_readonly": "",
 
     "rollout_insight_title": "Rollout Insight",
+    "site_brand_name": "洞见",
     "log_dir": "/mnt/zj-data/data/songquanheng/rollout-insight/log",
     "templates_dir": "/mnt/seed-program-nas/001688/songquanheng/rollout-insight/templates",
     "static_dir": "/mnt/seed-program-nas/001688/songquanheng/rollout-insight/static",

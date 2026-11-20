@@ -27,9 +27,8 @@ from utils.config_loader import config
 
 router = APIRouter(tags=["site"])
 
-# 站点元信息：与 config.json 的标题保持一致的默认值。
-_SITE_NAME = "Rollout Insight"
-_SITE_SHORT_NAME = "Rollout Insight"
+# 站点元信息：品牌名与主题色。
+# 品牌名走 config.site_brand_name（默认「洞见」），与模板标题 / 顶栏 logo 一致。
 _THEME_COLOR = "#1f3550"
 _BACKGROUND_COLOR = "#e8ebef"
 
@@ -68,8 +67,8 @@ async def get_apple_touch_icon() -> FileResponse:
 async def get_site_manifest() -> JSONResponse:
     """返回 PWA manifest（声明名称、主题色与各尺寸图标）。"""
     manifest = {
-        "name": _SITE_NAME,
-        "short_name": _SITE_SHORT_NAME,
+        "name": config.site_brand_name,
+        "short_name": config.site_brand_name,
         "start_url": "/",
         "display": "standalone",
         "background_color": _BACKGROUND_COLOR,

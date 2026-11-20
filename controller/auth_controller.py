@@ -26,7 +26,6 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
-from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
@@ -36,12 +35,13 @@ from utils.auth_session import (
     set_login_session,
 )
 from utils.config_loader import config
+from utils.template_factory import create_templates
 
 # 注意：本 router 不加 ``dependencies=[Depends(require_login)]``，
 # 否则 login/register/me 会被自己的依赖挡掉。
 router = APIRouter()
 
-templates = Jinja2Templates(directory=str(config.templates_dir))
+templates = create_templates()
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ async def page_login(
         request,
         "login.html",
         {
-            "page_title": "登录 - Rollout Insight",
+            "page_title": "登录",
             "next": next or "",
             "register_open": _register_open(),
             "error": None,
@@ -124,7 +124,7 @@ async def api_login(
                 request,
                 "login.html",
                 {
-                    "page_title": "登录 - Rollout Insight",
+                    "page_title": "登录",
                     "next": next or "",
                     "register_open": _register_open(),
                     "error": "用户名或密码错误",
@@ -198,7 +198,7 @@ async def page_register(
         request,
         "register.html",
         {
-            "page_title": "注册 - Rollout Insight",
+            "page_title": "注册",
             "next": next or "",
             "error": None,
             "username": "",
@@ -262,7 +262,7 @@ async def api_register(
                 request,
                 "register.html",
                 {
-                    "page_title": "注册 - Rollout Insight",
+                    "page_title": "注册",
                     "next": next or "",
                     "error": "注册失败（用户名重复或 DB 错误）",
                     "username": username,

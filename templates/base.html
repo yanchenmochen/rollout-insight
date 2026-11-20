@@ -3,7 +3,14 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}Rollout Insight{% endblock %}</title>
+    <!--
+        品牌名统一走 ``brand``（配置项 site_brand_name，默认「洞见」）。
+        标签页标题刻意保持短：Chrome 在标签过窄时会把长标题折叠成"只显示图标"，
+        用户就看不到文字了。页面名 + 「洞见」两段式足够短，不会被折叠。
+        这里直接取 config，避免每个 controller 都要往模板上下文塞一遍。
+    -->
+    {% set brand = site_brand_name | default("洞见", true) %}
+    <title>{% block title %}{{ brand }}{% endblock %}</title>
     <!-- 站点图标：多尺寸 ICO 供浏览器标签页 / 书签自动挑选 -->
     <link rel="icon" href="/static/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -243,7 +250,7 @@
     <!-- 顶部导航 -->
     <nav class="navbar">
         <div class="navbar-container">
-            <a href="/api/tasks" class="navbar-brand">Rollout Insight</a>
+            <a href="/api/tasks" class="navbar-brand">{{ brand }}</a>
             <ul class="navbar-nav">
                 <li class="nav-item">
                     <a href="/api/tasks"

@@ -192,6 +192,10 @@
 - `def read_scalar_series(event_dir: Optional[Path | str], *, tags: Optional[Sequence[str]]=None, …` — 读取事件目录下若干 tag 的完整 scalar 序列。
 - `def series_points(series: Dict[str, List[Dict[str, Any]]], tag: str) -> List[Dict[str, Any]]` — 从序列字典里取某个 tag 的点列表（不存在返回空 list）。
 
+### `utils/template_factory.py`
+
+- `def create_templates() -> Jinja2Templates` — 创建带全局模板变量的 Jinja2Templates 实例。
+
 ### `utils/train_curve_catalog.py`
 
 - `def curve_metric_keys() -> List[str]` — 返回全部内置指标键。

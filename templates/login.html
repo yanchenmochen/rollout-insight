@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ page_title }}{% endblock %}
+{% block title %}登录 · {{ brand }}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -114,7 +114,7 @@
 {% block content %}
 <div class="auth-shell">
     <div class="auth-card">
-        <h1>登录 Rollout Insight</h1>
+        <h1>登录 {{ brand }}</h1>
         <p class="lead">v0.5.1 起的会话与权限管理；首次启动默认账号 <code>admin / admin123</code>。</p>
 
         {% if error %}

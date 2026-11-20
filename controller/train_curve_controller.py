@@ -15,14 +15,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import BaseModel, Field
-from starlette.templating import Jinja2Templates
 
 from data.response import Response
 from utils.auth_session import current_user, require_login
 from utils.config_loader import config
+from utils.template_factory import create_templates
 
 router = APIRouter(dependencies=[Depends(require_login)])
-templates = Jinja2Templates(directory=str(config.templates_dir))
+templates = create_templates()
 
 
 class CurvePreferenceRequest(BaseModel):

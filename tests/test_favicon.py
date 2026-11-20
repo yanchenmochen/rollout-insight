@@ -6,6 +6,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from utils.config_loader import config
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = REPO_ROOT / "static"
 
@@ -106,10 +108,49 @@ class TestSiteController(unittest.TestCase):
         manifest = asyncio.run(get_site_manifest())
         # JSONResponse.body 是 bytes；解出来校验关键字段。
         data = json.loads(manifest.body)
-        self.assertEqual(data["name"], "Rollout Insight")
+        self.assertEqual(data["name"], config.site_brand_name)
         self.assertTrue(data["icons"])
         for icon in data["icons"]:
             self.assertTrue(icon["src"].startswith("/static/"))
+
+
+class TestSiteBrand(unittest.TestCase):
+    """站点品牌名：配置化 + 模板标题统一走它。"""
+
+    def test_config_exposes_brand_name(self):
+        self.assertTrue(config.site_brand_name)
+
+    def test_template_factory_injects_brand(self):
+        """create_templates 必须把品牌名注入 env.globals，模板才拿得到。"""
+        from utils.template_factory import create_templates
+
+        templates = create_templates()
+        self.assertEqual(
+            templates.env.globals.get("site_brand_name"), config.site_brand_name
+        )
+
+    def test_base_html_uses_brand_variable(self):
+        html = (REPO_ROOT / "templates" / "base.html").read_text(encoding="utf-8")
+        self.assertIn("site_brand_name", html)
+        # 顶栏 logo 用品牌名，不再写死英文
+        self.assertIn('class="navbar-brand">{{ brand }}', html)
+
+    def test_page_titles_end_with_brand(self):
+        """各页面标题统一是「页面名 · 品牌名」，保证标签页短、不被折叠。"""
+        template_dir = REPO_ROOT / "templates"
+        brand = config.site_brand_name
+        checked = 0
+        for path in sorted(template_dir.glob("*.html")):
+            if path.name in {"base.html", "_sandbox_exec.html", "_task_jump_nav.html"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "{% block title %}" not in text:
+                continue
+            with self.subTest(template=path.name):
+                self.assertIn("{{ brand }}", text)
+                self.assertNotIn("Rollout Insight", text)
+            checked += 1
+        self.assertGreater(checked, 10, "应至少检查到 10 个带 title 的页面模板")
 
 
 if __name__ == "__main__":

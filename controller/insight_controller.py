@@ -10,13 +10,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from starlette.templating import Jinja2Templates
 
 from utils.auth_session import require_login
 from utils.config_loader import config
+from utils.template_factory import create_templates
 
 router = APIRouter(dependencies=[Depends(require_login)])
-templates = Jinja2Templates(directory=str(config.templates_dir))
+templates = create_templates()
 
 
 @router.get("/api/insights", include_in_schema=False)
