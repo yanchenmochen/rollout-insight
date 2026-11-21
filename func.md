@@ -121,6 +121,16 @@
 - `def extract_sample_failure_detail(sample: Dict[str, Any], *, sample_index: int=0) -> Optional[D…` — 抽取单条非通过 sample 的深挖细节；通过样本返回 None。
 - `def cluster_failure_insights(dump: Dict[str, Any], *, group_index: Optional[int]=None) -> Dict[…` — 跨组 / 组内失败深挖聚类。
 
+### `utils/failure_reason_taxonomy.py`
+
+- `def agent_outcome_label(agent_outcome: Any) -> str` — agent 结束态的中文标签；未知值原样返回。
+- `def is_agent_error_outcome(agent_outcome: Any) -> bool` — agent 结束态是否为异常（非 ``finished`` / 空）。
+- `def agent_outcome_reason(agent_outcome: Any) -> str` — agent 结束态 → 统一原因码（与 .pt 侧口径一致）。
+- `def normalize_reason(*, status: Any=None, reward: Any=None, diagnosis: Any=None, abort_reason: …` — 把散落的失败字段收敛为 ``(category, reason)``。
+- `def classify_from_fields(fields: Dict[str, Any]) -> Tuple[str, str]` — 从 summary / annotation 字典收敛出 ``(category, reason)``。
+- `def reason_label(category: str, reason: str) -> str` — ``(category, reason)`` → 中文短标签。
+- `def split_reason_prefix(reason: str) -> Tuple[str, str]` — 把 ``evaluator:tests_failed`` 拆成 ``("evaluator", "tests_failed")``。
+
 ### `utils/icon_catalog.py`
 
 - `def icon_path(name: str) -> str` — 返回图标在 static 下的访问路径。
