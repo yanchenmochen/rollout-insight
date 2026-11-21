@@ -110,6 +110,30 @@
     }
     .group-link.has-abort.active { background: #842029; color: #fff; }
     .group-link.is-split.active { background: #2d6a4f; color: #fff; }
+
+    /* 失败类型列：可点击的 attempt 链接 */
+    .cell-types { max-width: 320px; }
+    .type-chip {
+        display: inline-flex; gap: 4px; align-items: baseline; flex-wrap: wrap;
+        margin: 1px 4px 1px 0; padding: 1px 7px; border-radius: 9px;
+        font-size: 11px; border: 1px solid var(--c, #78909c);
+        background: #f8fafb; color: var(--c, #546e7a);
+    }
+    .type-chip.cat-fail { --c: #8e24aa; }
+    .type-chip.cat-timeout { --c: #fb8c00; }
+    .type-chip.cat-abort { --c: #e53935; }
+    .type-chip.cat-other { --c: #78909c; }
+    .type-chip em { font-style: normal; font-family: ui-monospace, monospace; }
+    .type-chip a {
+        color: var(--c, #1e5080); text-decoration: none;
+        border-bottom: 1px dotted currentColor; font-family: ui-monospace, monospace;
+    }
+    .type-chip a:hover { background: rgba(30, 80, 128, .12); }
+    .cell-link { text-decoration: none; font-weight: 600; border-bottom: 1px dotted currentColor; }
+    .cell-link:hover { background: rgba(0, 0, 0, .05); }
+    .cell-link-fail { color: #8e24aa; }
+    .cell-link-timeout { color: #ef6c00; }
+    .cell-link-abort { color: #c62828; }
     .legend-note {
         margin-top: 10px; font-size: 12px; color: var(--ri-muted); line-height: 1.55;
     }
@@ -531,6 +555,7 @@
                 <th class="col-num" title="去掉 abort/超时 后仍有过有挂 → 有效组">有效</th>
                 <th class="col-num" title="组内可测 reward 均值">mean_reward</th>
                 <th title="组级结果标签">组结果</th>
+                <th title="组内出现的失败类型（点类型名直接定位到对应 attempt）">失败类型</th>
             </tr>
         </thead>
         <tbody>
@@ -545,9 +570,34 @@
                     <td class="col-num">{{ g.n_attempts }}</td>
                     <td class="col-num">{{ g.n_segments }}</td>
                     <td class="col-num"><strong>{{ g.n_passed if g.n_passed is not none else g.all_one }}</strong></td>
-                    <td class="col-num">{{ g.n_failed if g.n_failed is not none else g.all_zero }}</td>
-                    <td class="col-num">{{ g.n_timeout if g.n_timeout is not none else 0 }}</td>
-                    <td class="col-num">{{ g.n_aborted if g.n_aborted is not none else g.aborted }}</td>
+                    <td class="col-num">
+                        {% if g.failure_types and (g.n_failed if g.n_failed is not none else g.all_zero) %}
+                            <a class="cell-link cell-link-fail"
+                               href="#group-{{ g.group_index }}"
+                               title="组内正常失败 {{ g.n_failed if g.n_failed is not none else g.all_zero }} 个 · 展开本组查看失败 attempt">{{ g.n_failed if g.n_failed is not none else g.all_zero }}</a>
+                        {% else %}
+                            {{ g.n_failed if g.n_failed is not none else g.all_zero }}
+                        {% endif %}
+                    </td>
+                    <td class="col-num">
+                        {% if g.n_timeout %}
+                            <a class="cell-link cell-link-timeout"
+                               href="#group-{{ g.group_index }}"
+                               title="组内超时 {{ g.n_timeout }} 个 · 展开本组查看失败 attempt">{{ g.n_timeout }}</a>
+                        {% else %}
+                            0
+                        {% endif %}
+                    </td>
+                    <td class="col-num">
+                        {% set _na = g.n_aborted if g.n_aborted is not none else g.aborted %}
+                        {% if _na %}
+                            <a class="cell-link cell-link-abort"
+                               href="#group-{{ g.group_index }}"
+                               title="组内 abort {{ _na }} 个 · 展开本组查看失败 attempt">{{ _na }}</a>
+                        {% else %}
+                            0
+                        {% endif %}
+                    </td>
                     <td class="col-num">{% if g.is_valid %}是{% else %}—{% endif %}</td>
                     <td class="col-num">
                         {% if g.mean_reward is not none %}{{ "%.4f"|format(g.mean_reward) }}{% else %}-{% endif %}
@@ -569,10 +619,26 @@
                             <span class="badge outcome-other">其它</span>
                         {% endif %}
                     </td>
+                    <td class="cell-types">
+                        {% if g.failure_types %}
+                            {% for t in g.failure_types %}
+                                {% set _first = loop.first %}
+                                <span class="type-chip cat-{{ t.category }}">
+                                    {% for pk in t.attempts %}
+                                        <a href="#attempt-{{ pk }}"
+                                           title="{{ t.label }} · {{ t.reason }} · attempt #{{ pk }}">{{ pk }}</a>{% if not loop.last %},{% endif %}
+                                    {% endfor %}
+                                    <em>{{ t.reason }} ×{{ t.count }}</em>
+                                </span>
+                            {% endfor %}
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             {% else %}
-                <tr><td colspan="11" class="empty-row">暂无 group 数据</td></tr>
+                <tr><td colspan="12" class="empty-row">暂无 group 数据</td></tr>
             {% endif %}
         </tbody>
     </table>
@@ -583,6 +649,7 @@
         <strong>超时</strong>=status=truncated；
         <strong>abort</strong>=不可测；
         <strong>有效</strong>=去掉 abort/超时后仍「有过有挂」（对应 filtered 保留组）。
+        <strong>失败类型</strong>列出该组内出现的失败类型，点其中的 attempt 号可跳到对应 attempt。
         展开下方可看旧版 全0/全1/段混 细分。
     </p>
     <details style="margin-top:8px;">
