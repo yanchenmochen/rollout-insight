@@ -129,7 +129,7 @@ rollout-insight/
 | POST | `/api/tasks/{id}/rescan` | 触发 RolloutScanService.rescan_task |
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
 | GET  | `/api/tasks/create` | 渲染 task_create.html |
-| GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析 |
+| GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析（可带 `cat=` / `reason=` / `agent=` / `rollout_id=` 初始筛选） |
 | GET  | `/api/tasks/{id}/problem-analysis` | 任务问题分析：通过率曲线与 sglang 响应统计 |
 | GET  | `/api/tasks/{id}/problem-analysis/instance?instance_id=` | 一道题每次出现的 rollout 与轨迹 |
 | GET  | `/api/tasks/{id}/problem-analysis/pass.json` | 按题目的历次通过率（不含响应统计） |
@@ -152,7 +152,7 @@ rollout-insight/
 | GET  | `/api/insights` | 洞察页：当前任务的 TensorBoard scalar、指标说明与分析流程 |
 | GET  | `/api/failures` | 失败分析旧入口（`?task_id=` 仍进入该任务；不带 `task_id` 时只提示回任务列表） |
 | GET  | `/api/failures/attempts/{attempt_pk}` | 单 attempt 失败详情页（结论 / 评测证据 / 耗时 / 轨迹 / patch） |
-| GET  | `/api/failures/tasks/{task_id}/overview.json` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt + 原因聚类 |
+| GET  | `/api/failures/tasks/{task_id}/overview.json` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt + 原因聚类 + agent 结束态聚类 + 组内失败类型 |
 | GET  | `/api/failures/attempts/{attempt_pk}/detail.json` | 单 attempt 失败详情（JSON） |
 | GET  | `/api/failures/attempts/{attempt_pk}/trajectory.json` | OpenHands 轨迹分页（`offset`/`limit`/`errors_only`） |
 
@@ -169,13 +169,17 @@ rollout-insight/
 失败分析从任务进入：任务列表打开任务详情后，用页顶「失败分析」进入 `/api/tasks/{task_id}/failures`。任务详情、失败分析、问题分析以及 rollout / attempt / segment 子页的右上角都有同一组跳转。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
 
 - **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
-- **按聚类**：按失败原因（`abort_reason` → `diagnosis` → agent 结束态）聚类，可下钻到对应 attempt 列表。
-- **按 attempt**：逐条列出非通过 attempt，可跳「失败轨迹」或「手风琴定位」。点题目名称切到「按题目」。
+- **按聚类**：按失败原因聚类，可下钻到对应 attempt 列表。失败原因由 `utils/failure_reason_taxonomy.py` 统一归一：artifacts summary 与 `.pt` 注解两处口径一致（`evaluator:tests_failed`、`slime_context_limit_reached`、`agent_time_budget_exceeded`、`exception:SandboxApiException` 等）。
+- **Agent 结束态**：单列一节按 `agent_outcome` 聚类（正常结束 / 上下文打满 / 时间预算耗尽 / SDK 报错 / 迭代次数超限 …），带次数与占比。它与评测结论正交——`evaluator:tests_failed` 说明评测没通过，`context_exhausted` / `sdk_error` 说明 agent 自己没跑完。点任一项即跳到该结束态的 attempt 列表。
+- **按 attempt**：逐条列出非通过 attempt，含「agent 结束态」列，可跳「失败轨迹」或「手风琴定位」。点题目名称切到「按题目」。
 - **按题目**：用题目名称（`instance_id`）检索。同一题会在多个 rollout 里各采样一次（通常约 8 条 attempt）。列出每次所在的 rollout、该次通过率，以及最后一次减第一次的变化。通过率与问题分析同一套算法。
 - **单 attempt 详情**：结论、首个失败用例、评测 stdout/stderr、耗时分解、同组 8 次尝试、OpenHands 轨迹（默认看结尾，可只看报错步）、patch。
 - **与 Rollout 详情页四层手风琴联动**：失败 attempt 行右侧出现「失败轨迹 →」；详情页「在手风琴中定位」跳回 `/api/tasks/{id}/rollouts/{pk}?group=..#attempt-{pk}` 并自动展开高亮。任务详情页的 Rollout 列表新增「失败分析」列。
+- **从任务详情直接跳**：任务详情页「正常失败 / 超时 / abort · 具体类型」清单里的每个原因都是快捷链接，点它跳到本任务的失败分析页并自动按该类型筛选（`/api/tasks/{id}/failures?cat=..&reason=..`）。
 
-数据来源为运行目录下的 `attempt_artifacts/`（`summaries/`、`patches/`、`failed_trajectories/`），从 `task.rollout_root` 向上最多 4 层查找；首次读取会在该目录写入索引缓存 `.ri_artifacts_index.json`（按 summaries 目录 mtime/文件数自动失效）。没有 `attempt_artifacts` 的任务回退为 `.pt` 标注的失败原因。
+数据来源为运行目录下的 `attempt_artifacts/`（`summaries/`、`patches/`、`failed_trajectories/`），从 `task.rollout_root` 向上最多 4 层查找；读取会在该目录写入索引缓存 `.ri_artifacts_index.json`。索引**增量刷新**：目录指纹（mtime + 文件数）未变时直接复用缓存，变了则只重新解析新增 / 被覆盖的 summary（按内容指纹比对），因此训练中持续增长的 run 目录不会每次都全量重扫。没有 `attempt_artifacts` 的任务回退为 `.pt` 标注的失败原因。
+
+**Rollout 详情页的组结果列**：Group 列表概览新增「失败类型」列，列出每个 group 内出现的失败类型；每个类型下的 attempt 主号都是超链接，点击直接定位到页面下方对应 attempt（`#attempt-{pk}`，自动展开并高亮）。「正常失败 / 超时 / abort」三列的数量同样渲染为可点链接，指向本组。
 
 ### 5.2 问题分析（任务级）
 
