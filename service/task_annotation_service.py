@@ -20,6 +20,7 @@ __all__ = [
     "empty_failure_clusters",
     "empty_failure_insights",
     "load_pt_annotations",
+    "read_pt_annotation_sidecar",
     "warm_pt_annotation_sidecar",
     "sidecar_path_for",
     "list_task_annotation_meta",
@@ -386,6 +387,18 @@ def warm_pt_annotation_sidecar(pt_path: Optional[str]) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("预热注解 sidecar 失败 pt={} err={}", pt_path, exc)
         return False
+
+
+def read_pt_annotation_sidecar(pt_path: Optional[str]) -> Optional[Dict[str, Any]]:
+    """**只读**读取 .pt 注解 sidecar；不存在 / 版本不符 / 已过期返回 ``None``。
+
+    与 ``load_pt_annotations`` 的区别：本函数**不会**回退去解析 .pt，
+    因此调用方在 sidecar 缺失时能立刻知道「没有现成注解」，
+    用于失败分析页这类需要快速响应的场景。
+    """
+    if not pt_path:
+        return None
+    return _read_sidecar(pt_path)
 
 
 def assign_stack_type_colors(key_totals: Counter) -> Dict[str, Dict[str, str]]:

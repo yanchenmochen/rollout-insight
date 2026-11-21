@@ -101,7 +101,6 @@ class TestTaskAnnotationSidecar(unittest.TestCase):
         payload["pt_mtime"] = 1.0
         with open(sidecar, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
-
         tas.clear_annotation_cache_for_tests()
         called = {"n": 0}
 
@@ -117,6 +116,45 @@ class TestTaskAnnotationSidecar(unittest.TestCase):
         out = tas.load_pt_annotations(None)
         self.assertEqual(out["type_breakdown"]["n_attempts"], 0)
         self.assertEqual(out["train_sample_stats"]["n_samples"], 0)
+
+    def test_agent_outcome_captured_in_attempt_outcomes(self):
+        """.pt 侧的 agent 结束态要进 attempt_outcomes，供失败分析页渲染 agent 异常。"""
+        dump = {
+            "samples": [
+                {
+                    "group_index": 0,
+                    "rollout_id": 0,
+                    "status": "truncated",
+                    "reward": 0.0,
+                    "metadata": {
+                        "raw_reward": 0.0,
+                        "conversation_error_code": "slime_context_limit_reached",
+                        "agent_outcome": "context_exhausted",
+                    },
+                },
+            ]
+        }
+        with mock.patch("utils.rollout_pt_parser.load_pt", return_value=dump):
+            ann = tas.load_pt_annotations(self.pt_path)
+        outcomes = ann.get("attempt_outcomes") or {}
+        info = outcomes.get((0, 0)) or {}
+        self.assertEqual(info.get("outcome_category"), "timeout")
+        self.assertEqual(info.get("outcome_reason"), "slime_context_limit_reached")
+        self.assertEqual(info.get("agent_outcome"), "context_exhausted")
+
+    def test_read_sidecar_is_read_only(self):
+        """只读读取不应触发 .pt 解析；sidecar 不存在时返回 None。"""
+        self.assertIsNone(tas.read_pt_annotation_sidecar(self.pt_path))
+        dump = _tiny_dump()
+        with mock.patch("utils.rollout_pt_parser.load_pt", return_value=dump):
+            tas.load_pt_annotations(self.pt_path)
+        with mock.patch(
+            "utils.rollout_pt_parser.load_pt",
+            side_effect=AssertionError("read-only sidecar must not parse pt"),
+        ):
+            side = tas.read_pt_annotation_sidecar(self.pt_path)
+        self.assertIsNotNone(side)
+        self.assertIn("attempt_outcomes", side)
 
     def test_type_segments_payload_shape(self):
         dump = _tiny_dump()

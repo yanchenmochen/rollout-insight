@@ -25,11 +25,19 @@ from utils.attempt_artifacts import (
     locate_artifacts_dir,
     strip_ansi,
 )
+from utils.failure_reason_taxonomy import (
+    CATEGORY_LABELS,
+    agent_outcome_label,
+    classify_from_fields,
+    is_agent_error_outcome,
+)
 
 __all__ = [
     "FAILURE_CATEGORIES",
     "link_attempts_to_entries",
     "build_failure_clusters",
+    "build_group_failure_types",
+    "build_agent_outcome_clusters",
     "list_tasks_with_failure_counts",
     "get_task_failure_overview",
     "get_attempt_failure_detail",
@@ -37,6 +45,9 @@ __all__ = [
 ]
 
 FAILURE_CATEGORIES = ("fail", "timeout", "abort", "other")
+
+#: 结局大类全集（含 pass），用于校验分类结果
+_CATEGORY_KEYS = frozenset(CATEGORY_LABELS.keys())
 
 _MATCH_EXACT = "exact"
 _MATCH_GROUP_UNIQUE = "group_unique"
@@ -100,18 +111,44 @@ def link_attempts_to_entries(
 # ---------------------------------------------------------------------------
 
 def _reason_of(row: Dict[str, Any], entry: Optional[Dict[str, Any]], ann: Optional[Dict[str, Any]]) -> str:
+    """失败原因：artifacts summary 优先，其次 .pt 注解，最后退化为 status。
+
+    两处来源都归一到 ``utils.failure_reason_taxonomy`` 的同一套原因码，
+    保证「失败分析」页与 rollout 详情页的聚类口径一致、可互相跳转。
+    """
     if entry:
-        if entry.get("abort_reason"):
-            return str(entry["abort_reason"])
-        if entry.get("diagnosis"):
-            return str(entry["diagnosis"])
-        if entry.get("agent_outcome"):
-            return f"agent:{entry['agent_outcome']}"
+        category, reason = classify_from_fields(entry)
+        if reason:
+            return reason
     if ann:
         reason = ann.get("abort_reason") or ann.get("outcome_reason")
         if reason:
             return str(reason)
     return f"status:{row.get('status') or 'unknown'}"
+
+
+def _category_of(
+    row: Dict[str, Any], entry: Optional[Dict[str, Any]], ann: Optional[Dict[str, Any]]
+) -> str:
+    """结局大类：artifacts summary 优先，其次 .pt 注解，最后用 DB 判定。"""
+    if entry:
+        category, _ = classify_from_fields(entry)
+        if category in _CATEGORY_KEYS:
+            return category
+    if ann and ann.get("outcome_category"):
+        return str(ann["outcome_category"])
+    return str(row.get("category") or "other")
+
+
+def _agent_outcome_of(
+    row: Dict[str, Any], entry: Optional[Dict[str, Any]], ann: Optional[Dict[str, Any]]
+) -> str:
+    """agent 结束态（``finished`` / ``context_exhausted`` / ``sdk_error`` …）。"""
+    if entry and entry.get("agent_outcome"):
+        return str(entry["agent_outcome"])
+    if ann and ann.get("agent_outcome"):
+        return str(ann["agent_outcome"])
+    return ""
 
 
 def _sub_key_of(item: Dict[str, Any]) -> Optional[str]:
@@ -147,6 +184,94 @@ def build_failure_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "n_instances": len(b["instances"]),
             "by_rollout": [{"rollout_id": k, "count": v} for k, v in sorted(b["by_rollout"].items())],
             "sub": [{"key": k, "count": v} for k, v in b["sub"].most_common(_SUB_CLUSTER_TOP)],
+        })
+    return out
+
+
+def build_group_failure_types(
+    items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """按 ``group_index`` 汇总组内出现的失败类型（供组结果列展示）。
+
+    每组返回 ``{group_index, count, types:[{category, reason, count, attempts:[pk...]}]}``。
+    ``types`` 按出现次数降序；``attempts`` 给出该类型涉及的 attempt 主键，
+    供前端把「超时 / abort」列渲染成可点击的链接，直接定位到对应 attempt。
+    """
+    by_group: Dict[int, Dict[str, Any]] = {}
+    for it in items:
+        gi = it.get("group_index")
+        if gi is None:
+            continue
+        try:
+            key = int(gi)
+        except (TypeError, ValueError):
+            continue
+        bucket = by_group.setdefault(key, {"group_index": key, "count": 0, "types": {}})
+        bucket["count"] += 1
+        type_key = (str(it.get("category") or "other"), str(it.get("reason") or ""))
+        t = bucket["types"].setdefault(
+            type_key,
+            {
+                "category": type_key[0],
+                "reason": type_key[1],
+                "label": CATEGORY_LABELS.get(type_key[0], type_key[0]),
+                "count": 0,
+                "attempts": [],
+            },
+        )
+        t["count"] += 1
+        if it.get("attempt_pk") is not None:
+            t["attempts"].append(int(it["attempt_pk"]))
+
+    out: List[Dict[str, Any]] = []
+    for key in sorted(by_group):
+        bucket = by_group[key]
+        types = sorted(
+            bucket["types"].values(),
+            key=lambda x: (-x["count"], x["category"], x["reason"]),
+        )
+        out.append({
+            "group_index": bucket["group_index"],
+            "count": bucket["count"],
+            "types": types,
+        })
+    return out
+
+
+def build_agent_outcome_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 ``agent_outcome``（agent 结束态）聚类失败 attempt。
+
+    ``agent_outcome`` 描述的是 **agent 侧** 的结束原因，与评测结论
+    （``diagnosis``）正交：例如 ``evaluator:tests_failed`` 表示评测没通过，
+    而 ``context_exhausted`` / ``time_budget_exceeded`` / ``sdk_error`` 表示
+    agent 自己没跑完。这里按 agent 结束态聚类，并标出是否属于异常结束。
+    """
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        outcome = str(it.get("agent_outcome") or "").strip()
+        if not outcome:
+            continue
+        b = buckets.setdefault(
+            outcome,
+            {"agent_outcome": outcome, "count": 0, "by_rollout": Counter(), "instances": set()},
+        )
+        b["count"] += 1
+        if it.get("rollout_id") is not None:
+            b["by_rollout"][int(it["rollout_id"])] += 1
+        if it.get("instance_id"):
+            b["instances"].add(it["instance_id"])
+
+    total = sum(b["count"] for b in buckets.values()) or 1
+    out: List[Dict[str, Any]] = []
+    for b in sorted(buckets.values(), key=lambda x: (-x["count"], x["agent_outcome"])):
+        out.append({
+            "agent_outcome": b["agent_outcome"],
+            "label": agent_outcome_label(b["agent_outcome"]),
+            "is_error": is_agent_error_outcome(b["agent_outcome"]),
+            "count": b["count"],
+            "pct": round(100.0 * b["count"] / total, 1),
+            "n_instances": len(b["instances"]),
+            "by_rollout": [{"rollout_id": k, "count": v} for k, v in sorted(b["by_rollout"].items())],
         })
     return out
 
@@ -200,11 +325,14 @@ def _artifact_entries(rollout_root: str) -> Tuple[Optional[Path], List[Dict[str,
 
 def _sidecar_outcomes(pt_path: str) -> Dict[Tuple[int, int], Dict[str, Any]]:
     """仅当 .pt 注解 sidecar 已存在时读取结局索引，避免为列表页冷读 .pt。"""
-    from service.task_annotation_service import load_pt_annotations, sidecar_path_for
+    from service.task_annotation_service import read_pt_annotation_sidecar
 
-    if not pt_path or not os.path.isfile(sidecar_path_for(pt_path)):
+    if not pt_path:
         return {}
-    return load_pt_annotations(pt_path).get("attempt_outcomes") or {}
+    side = read_pt_annotation_sidecar(pt_path)
+    if side is None:
+        return {}
+    return side.get("attempt_outcomes") or {}
 
 
 def _attempt_item(
@@ -215,6 +343,8 @@ def _attempt_item(
 ) -> Dict[str, Any]:
     entry, match = linked if linked else (None, None)
     entry = entry or {}
+    agent_outcome = _agent_outcome_of(row, entry or None, ann)
+    category = _category_of(row, entry or None, ann)
     return {
         "attempt_pk": row["attempt_pk"],
         "rollout_pk": rollout_pk,
@@ -223,11 +353,14 @@ def _attempt_item(
         "attempt_id": row.get("attempt_id"),
         "instance_id": row.get("instance_id") or entry.get("instance_id") or "",
         "status": row.get("status"),
-        "category": row.get("category"),
+        "category": category,
+        "category_label": CATEGORY_LABELS.get(category, category),
         "reason": _reason_of(row, entry or None, ann),
         "failed_test": entry.get("failed_test"),
         "error_summary": entry.get("error_summary"),
-        "agent_outcome": entry.get("agent_outcome"),
+        "agent_outcome": agent_outcome,
+        "agent_outcome_label": agent_outcome_label(agent_outcome),
+        "agent_error": is_agent_error_outcome(agent_outcome),
         "agent_turns": entry.get("agent_turns") if entry.get("agent_turns") is not None else row.get("agent_turns"),
         "tool_calls": entry.get("agent_tool_calls") if entry.get("agent_tool_calls") is not None else row.get("tool_calls"),
         "tool_errors": entry.get("agent_tool_errors"),
@@ -339,6 +472,8 @@ def get_task_failure_overview(task_id: int, rollout_id: Optional[int] = None) ->
         },
         "progress": progress,
         "clusters": build_failure_clusters(items),
+        "group_types": build_group_failure_types(items),
+        "agent_outcomes": build_agent_outcome_clusters(items),
         "attempts": items,
     }
 

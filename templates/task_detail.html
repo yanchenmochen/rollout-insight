@@ -368,6 +368,9 @@
         flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--ri-ink);
     }
     .stack-reason-list em { color: var(--ri-muted); font-style: normal; margin-left: 4px; }
+    .stack-reason-link { text-decoration: none; min-width: 0; }
+    .stack-reason-link:hover code { color: var(--ri-accent); text-decoration: underline; }
+    .stack-reason-list li:has(.stack-reason-link):hover { background: #f3f6fa; }
     @media (max-width: 900px) {
         .stack-reason-grid { grid-template-columns: 1fr; }
         .stack-col { grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
@@ -1068,15 +1071,21 @@
         });
     }
 
-    function renderReasonList(el, rows, emptyText) {
+    function renderReasonList(el, rows, emptyText, cat) {
         if (!el) return;
         if (!rows || !rows.length) {
             el.innerHTML = '<div class="empty-inline">' + escapeHtml(emptyText) + "</div>";
             return;
         }
         el.innerHTML = '<ul class="stack-reason-list">' + rows.map(function (row) {
-            return "<li><code>" + escapeHtml(row.reason) + "</code><span>" + row.count
-                + " <em>" + row.pct + "%</em></span></li>";
+            // 快捷方式：点具体类型直接跳到失败分析页并按该类型筛选 attempt 列表
+            const href = "/api/tasks/" + encodeURIComponent(TASK_ID) + "/failures"
+                + "?cat=" + encodeURIComponent(cat || "")
+                + "&reason=" + encodeURIComponent(row.reason);
+            return '<li><a class="stack-reason-link" href="' + href + '" '
+                + 'title="在失败分析中查看该类型的 attempt 列表">'
+                + "<code>" + escapeHtml(row.reason) + "</code></a>"
+                + "<span>" + row.count + " <em>" + row.pct + "%</em></span></li>";
         }).join("") + "</ul>";
     }
 
@@ -1237,9 +1246,9 @@
             }
         }
 
-        renderReasonList(document.getElementById("stackFailReasons"), topCounts(failC, 8), "本任务无正常失败 attempt");
-        renderReasonList(document.getElementById("stackTimeoutReasons"), topCounts(timeoutC, 8), "本任务无超时/截断 attempt");
-        renderReasonList(document.getElementById("stackAbortReasons"), topCounts(abortC, 8), "本任务无 abort attempt");
+        renderReasonList(document.getElementById("stackFailReasons"), topCounts(failC, 8), "本任务无正常失败 attempt", "fail");
+        renderReasonList(document.getElementById("stackTimeoutReasons"), topCounts(timeoutC, 8), "本任务无超时/截断 attempt", "timeout");
+        renderReasonList(document.getElementById("stackAbortReasons"), topCounts(abortC, 8), "本任务无 abort attempt", "abort");
     }
 
     async function fetchJson(url) {
