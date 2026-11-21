@@ -22,6 +22,7 @@ from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
 from utils.auth_session import require_login
 from utils.config_loader import config
+from utils.failure_reason_taxonomy import normalize_reason
 from utils.template_factory import create_templates
 
 # v0.5.1：业务路由统一要求登录
@@ -369,6 +370,57 @@ def _group_outcome(
     return "other"
 
 
+def summarize_group_failure_types(
+    attempts: List[Dict[str, Any]],
+    outcome_index: Optional[Dict[Any, Any]] = None,
+) -> Dict[int, Dict[str, Any]]:
+    """按 group 汇总组内出现的失败类型，供「组结果」列展示并做跳转入口。
+
+    返回 ``{group_index: {"count": n, "types": [{category, reason, label, count, attempts:[pk]}]}}``。
+    ``attempts`` 给出该类型涉及的 attempt 主键，前端据此渲染成可点击链接，
+    点击后直接定位到 rollout 详情页里对应的 attempt。
+
+    聚合逻辑复用 ``service.failure_analysis_service.build_group_failure_types``，
+    保证「失败分析」页与 rollout 详情页的组内失败类型口径一致。
+    """
+    from service.failure_analysis_service import build_group_failure_types
+
+    index = outcome_index or {}
+    items: List[Dict[str, Any]] = []
+    for a in attempts or []:
+        gi = a.get("group_index")
+        if gi is None:
+            continue
+        aid = a.get("attempt_id")
+        info: Dict[str, Any] = {}
+        if isinstance(gi, int) and aid is not None:
+            try:
+                info = index.get((int(gi), int(aid))) or {}
+            except (TypeError, ValueError):
+                info = {}
+        category = str(info.get("outcome_category") or "").strip()
+        reason = str(info.get("abort_reason") or info.get("outcome_reason") or "").strip()
+        if not category:
+            # 无 .pt 注解时按 DB 侧 status/reward 兜底（与失败分析页同一套口径）
+            category, fallback = normalize_reason(
+                status=a.get("status"), reward=a.get("reward")
+            )
+            reason = reason or fallback
+        if category in ("pass", ""):
+            continue
+        items.append({
+            "attempt_pk": a.get("primary_id"),
+            "group_index": gi,
+            "category": category,
+            "reason": reason,
+        })
+
+    return {
+        int(row["group_index"]): {"count": row["count"], "types": row["types"]}
+        for row in build_group_failure_types(items)
+    }
+
+
 def summarize_groups(
     attempts: List[Dict[str, Any]],
     group_briefs: Optional[Dict[int, Dict[str, str]]] = None,
@@ -467,6 +519,7 @@ async def page_rollout_detail(
     distinct_groups: List[int] = []
     group_briefs: Dict[int, Dict[str, str]] = {}
     group_summaries: List[Dict[str, Any]] = []
+    group_failure_types: Dict[int, Dict[str, Any]] = {}
     abort_clusters: Dict[str, Any] = {
         "total": 0,
         "n_groups_with_abort": 0,
@@ -578,6 +631,15 @@ async def page_rollout_detail(
                             rollout_id,
                             exc,
                         )
+                    # 组内失败类型（供「组结果」列渲染成可点击链接）
+                    group_failure_types = summarize_group_failure_types(
+                        attempts, outcome_index
+                    )
+                    for gs in group_summaries:
+                        gi = gs.get("group_index")
+                        info = group_failure_types.get(int(gi), {}) if gi is not None else {}
+                        gs["failure_types"] = info.get("types") or []
+                        gs["n_failure_types"] = len(gs["failure_types"])
                     # 组过滤时：柱状图只展示该组失败分布
                     if group is not None:
                         gi = int(group)
