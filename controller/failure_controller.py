@@ -52,9 +52,19 @@ async def page_task_failures(
     request: Request,
     task_id: int,
     rollout_id: Optional[int] = None,
+    cat: Optional[str] = None,
+    reason: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> HTMLResponse:
-    """任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。"""
+    """任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。
+
+    支持 ``cat`` / ``reason`` / ``agent`` 初始筛选，便于从任务详情页的
+    「具体类型」清单直接跳到对应的 attempt 列表。
+    """
     ctx = await _failure_page_context(task_id, rollout_id)
+    ctx["init_cat"] = cat or ""
+    ctx["init_reason"] = reason or ""
+    ctx["init_agent"] = agent or ""
     return templates.TemplateResponse(request, "failure_overview.html", ctx)
 
 

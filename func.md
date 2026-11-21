@@ -395,6 +395,8 @@
 
 - `staticmethod` `def link_attempts_to_entries(rows: List[Dict[str, Any]], entries: List[Dict[str, Any]]) -> Dict…`
 - `staticmethod` `def build_failure_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]`
+- `staticmethod` `def build_group_failure_types(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]`
+- `staticmethod` `def build_agent_outcome_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]`
 - `staticmethod` `def list_tasks_with_failure_counts(limit: int=50) -> List[Dict[str, Any]]`
 - `staticmethod` `def get_task_failure_overview(task_id: int, rollout_id: Optional[int]=None) -> Dict[str, Any]`
 - `staticmethod` `def get_attempt_failure_detail(attempt_pk: int) -> Dict[str, Any]`
@@ -487,6 +489,7 @@
 - `staticmethod` `def sidecar_path_for(pt_path: str) -> str`
 - `staticmethod` `def load_pt_annotations(pt_path: Optional[str]) -> Dict[str, Any]`
 - `staticmethod` `def warm_pt_annotation_sidecar(pt_path: Optional[str]) -> bool`
+- `staticmethod` `def read_pt_annotation_sidecar(pt_path: Optional[str]) -> Optional[Dict[str, Any]]`
 - `staticmethod` `def assign_stack_type_colors(key_totals: Counter) -> Dict[str, Dict[str, str]]`
 - `staticmethod` `def list_task_annotation_meta(task_id: int) -> Dict[str, Any]`
 - `staticmethod` `def get_rollout_annotation_payload(task_id: int, rollout_pk: int) -> Dict[str, Any]`

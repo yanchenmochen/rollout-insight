@@ -94,6 +94,25 @@
     .btn-xs { padding: 2px 8px; font-size: 12px; font-weight: 500; white-space: nowrap; }
     .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
     .loading { color: var(--ri-muted); padding: 16px 0; }
+
+    /* Agent 结束态 */
+    .agent-chip {
+        display: grid; grid-template-columns: minmax(140px, 220px) 1fr auto auto;
+        gap: 12px; align-items: center; padding: 5px 0;
+        font-size: 13px; border-bottom: 1px dashed #e4e8ec;
+    }
+    .agent-chip:last-child { border-bottom: none; }
+    .agent-chip .agent-name { font-weight: 600; font-family: ui-monospace, monospace; }
+    .agent-chip.is-error .agent-name { color: #c62828; }
+    .agent-chip .agent-bar { height: 8px; background: #eceff1; border-radius: 4px; overflow: hidden; }
+    .agent-chip .agent-bar span { display: block; height: 100%; background: #90a4ae; }
+    .agent-chip.is-error .agent-bar span { background: linear-gradient(90deg, #ef9a9a, #c62828); }
+    .agent-chip .agent-cnt { font-variant-numeric: tabular-nums; color: var(--ri-muted); white-space: nowrap; }
+    .agent-badge {
+        display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+        background: #eef3f8; color: #445566; border: 1px solid #d5dee6; white-space: nowrap;
+    }
+    .agent-badge.is-error { background: #fff5f5; color: #c62828; border-color: #ef9a9a; }
 </style>
 {% endblock %}
 
@@ -138,6 +157,11 @@
         <div class="chip-row" id="totalChips"></div>
     </div>
 
+    <div class="section" id="agentOutcome">
+        <h2>Agent 结束态 <small id="agentOutcomeSub">agent 侧异常与评测结论正交；点一项看对应 attempt</small></h2>
+        <div id="agentOutcomeList"></div>
+    </div>
+
     <div class="section" id="progress">
         <h2>进度 · 每个 rollout 的结局 <small>点击某行只看该 rollout；再次点击取消</small></h2>
         <div class="legend">
@@ -164,6 +188,7 @@
                     <option value="timeout">超时/截断</option><option value="abort">abort</option><option value="other">其它</option>
                 </select></label>
                 <label>原因 <select id="fReason"><option value="">全部</option></select></label>
+                <label>agent 结束态 <select id="fAgentOutcome"><option value="">全部</option></select></label>
                 <input id="fText" type="search" placeholder="搜 instance_id / 失败用例 / 错误摘要" />
                 <span class="muted" id="filterCount"></span>
             </span>
@@ -184,7 +209,7 @@
             <table class="att">
                 <thead><tr>
                     <th>rollout</th><th>group</th><th>attempt_id</th><th>instance_id</th><th>结局</th>
-                    <th>原因</th><th>失败用例 / 错误</th><th class="col-num">轮</th><th class="col-num">tool/err</th>
+                    <th>原因</th><th>agent 结束态</th><th>失败用例 / 错误</th><th class="col-num">轮</th><th class="col-num">tool/err</th>
                     <th class="col-num">峰值 ctx</th><th>操作</th>
                 </tr></thead>
                 <tbody id="attBody"></tbody>
@@ -222,6 +247,9 @@
 (function () {
     const TASK_ID = {{ task_id | tojson }};
     const INIT_ROLLOUT = {{ rollout_id | tojson }};
+    const INIT_CAT = {{ (init_cat or "") | tojson }};
+    const INIT_REASON = {{ (init_reason or "") | tojson }};
+    const INIT_AGENT = {{ (init_agent or "") | tojson }};
     const PAGE_SIZE = 100;
     const PROBLEM_PAGE = 20;
     const CAT_ZH = { pass: "通过", fail: "正常失败", timeout: "超时/截断", abort: "abort", other: "其它" };
@@ -233,7 +261,8 @@
     const problemState = { status: "idle", data: null, error: "" };
     const state = {
         rollout: INIT_ROLLOUT == null ? "" : String(INIT_ROLLOUT),
-        cat: "", reason: "", text: "", group: "", attempt: "",
+        cat: INIT_CAT || "", reason: INIT_REASON || "", agent: INIT_AGENT || "",
+        text: "", group: "", attempt: "",
         problemText: "", trend: "",
     };
 
@@ -260,8 +289,9 @@
             if (state.attempt !== "" && String(a.attempt_id) !== state.attempt) return false;
             if (state.cat && a.category !== state.cat) return false;
             if (state.reason && a.reason !== state.reason) return false;
+            if (state.agent && (a.agent_outcome || "") !== state.agent) return false;
             if (t) {
-                const hay = [a.instance_id, a.failed_test, a.error_summary, a.reason].join(" ").toLowerCase();
+                const hay = [a.instance_id, a.failed_test, a.error_summary, a.reason, a.agent_outcome].join(" ").toLowerCase();
                 if (!hay.includes(t)) return false;
             }
             return true;
@@ -358,6 +388,35 @@
         });
     }
 
+    function renderAgentOutcomes() {
+        const rows = DATA.agent_outcomes || [];
+        const host = $("agentOutcomeList");
+        if (!host) return;
+        if (!rows.length) {
+            host.innerHTML = '<div class="muted">无 agent 结束态数据（需 attempt_artifacts summary）。</div>';
+            return;
+        }
+        const total = rows.reduce(function (s, r) { return s + Number(r.count || 0); }, 0) || 1;
+        host.innerHTML = rows.map(function (r) {
+            const pctv = (100 * Number(r.count || 0) / total).toFixed(1);
+            const cls = r.is_error ? "agent-chip is-error" : "agent-chip";
+            return `<div class="${cls}">
+                <span class="agent-name" title="${esc(r.agent_outcome)}">${esc(r.label)}</span>
+                <span class="agent-bar"><span style="width:${pctv}%"></span></span>
+                <span class="agent-cnt"><strong>${r.count}</strong> 次 · ${pctv}%</span>
+                <button type="button" class="btn btn-secondary btn-xs" data-agent="${esc(r.agent_outcome)}">查看这些 attempt</button>
+            </div>`;
+        }).join("");
+        host.querySelectorAll("button[data-agent]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                state.agent = btn.dataset.agent;
+                $("fAgentOutcome").value = state.agent;
+                switchTab("attempts");
+                refresh();
+            });
+        });
+    }
+
     function renderAttempts(items) {
         const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
         page = Math.min(page, pages - 1);
@@ -365,6 +424,9 @@
         $("attBody").innerHTML = slice.map((a) => {
             const acc = accordionUrl(a);
             const err = a.failed_test || a.error_summary || "";
+            const ao = a.agent_outcome
+                ? `<span class="agent-badge${a.agent_error ? " is-error" : ""}" title="agent 结束态：${esc(a.agent_outcome)}">${esc(a.agent_outcome_label || a.agent_outcome)}</span>`
+                : '<span class="muted">-</span>';
             return `<tr>
                 <td><a href="/api/tasks/${TASK_ID}/rollouts/${a.rollout_pk}">${a.rollout_id}</a></td>
                 <td>${a.group_index}</td>
@@ -372,6 +434,7 @@
                 <td class="mono">${a.instance_id ? `<button type="button" class="linkish" data-problem="${esc(a.instance_id)}">${esc(a.instance_id)}</button>` : "-"}</td>
                 <td>${catBadge(a.category)}</td>
                 <td class="reason">${esc(a.reason)}</td>
+                <td>${ao}</td>
                 <td class="err" title="${esc(err)}">${esc(err) || '<span class="muted">-</span>'}</td>
                 <td class="num">${a.agent_turns ?? "-"}</td>
                 <td class="num">${a.tool_calls ?? "-"}/${a.tool_errors ?? "-"}</td>
@@ -381,7 +444,7 @@
                     ${acc ? `<a class="btn btn-secondary btn-xs" href="${acc}">手风琴定位</a>` : ""}
                 </td>
             </tr>`;
-        }).join("") || '<tr><td colspan="11" class="muted">当前筛选下没有 attempt。</td></tr>';
+        }).join("") || '<tr><td colspan="12" class="muted">当前筛选下没有 attempt。</td></tr>';
         $("pageInfo").textContent = `第 ${page + 1}/${pages} 页`;
         $("prevPage").disabled = page <= 0;
         $("nextPage").disabled = page >= pages - 1;
@@ -398,9 +461,30 @@
         const counts = new Map();
         pool.forEach((a) => counts.set(a.reason, (counts.get(a.reason) || 0) + 1));
         const opts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-        $("fReason").innerHTML = '<option value="">全部</option>' + opts.map(([r, n]) => `<option value="${esc(r)}">${esc(r)} (${n})</option>`).join("");
-        if (state.reason && !counts.has(state.reason)) state.reason = "";
+        // 初始筛选（来自 URL）可能不在当前 pool 里；保留它，避免筛选被静默清空
+        if (state.reason && !counts.has(state.reason)) opts.push([state.reason, 0]);
+        $("fReason").innerHTML = '<option value="">全部</option>' + opts.map(([r, n]) => `<option value="${esc(r)}">${esc(r)}${n ? ` (${n})` : ""}</option>`).join("");
         $("fReason").value = state.reason;
+        fillAgentOutcomeOptions(pool);
+    }
+
+    function fillAgentOutcomeOptions(pool) {
+        const counts = new Map();
+        (pool || DATA.attempts).forEach((a) => {
+            const k = a.agent_outcome || "";
+            if (!k) return;
+            counts.set(k, (counts.get(k) || 0) + 1);
+        });
+        const rows = DATA.agent_outcomes || [];
+        const labelOf = {};
+        rows.forEach((r) => { labelOf[r.agent_outcome] = r.label || r.agent_outcome; });
+        const opts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+        if (state.agent && !counts.has(state.agent)) opts.push([state.agent, 0]);
+        $("fAgentOutcome").innerHTML = '<option value="">全部</option>' + opts.map(([k, n]) => {
+            const lbl = labelOf[k] || k;
+            return `<option value="${esc(k)}">${esc(lbl)}${n ? ` (${n})` : ""}</option>`;
+        }).join("");
+        $("fAgentOutcome").value = state.agent;
     }
 
     function pct(v) {
@@ -584,9 +668,11 @@
         document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
         $("fRollout").innerHTML = '<option value="">全部</option>' + DATA.progress.map((p) => `<option value="${p.rollout_id}">rollout ${p.rollout_id}</option>`).join("");
         $("fRollout").value = state.rollout;
+        $("fCat").value = state.cat;
         $("fRollout").addEventListener("change", (e) => { state.rollout = e.target.value; page = 0; problemPage = 0; fillReasonOptions(); refresh(); });
         $("fCat").addEventListener("change", (e) => { state.cat = e.target.value; page = 0; fillReasonOptions(); refresh(); });
         $("fReason").addEventListener("change", (e) => { state.reason = e.target.value; page = 0; refresh(); });
+        $("fAgentOutcome").addEventListener("change", (e) => { state.agent = e.target.value; page = 0; refresh(); });
         $("fText").addEventListener("input", (e) => { state.text = e.target.value; page = 0; refresh(); });
         $("fGroup").addEventListener("input", (e) => { state.group = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
         $("fAttempt").addEventListener("input", (e) => { state.attempt = e.target.value.trim(); page = 0; fillReasonOptions(); refresh(); });
@@ -615,6 +701,7 @@
             $("pageSub").textContent = `任务 #${DATA.task.id} · ${DATA.progress.length} 个 rollout · 状态 ${DATA.task.status}`;
             renderSource();
             renderTotals();
+            renderAgentOutcomes();
             bind();
             fillReasonOptions();
             refresh();

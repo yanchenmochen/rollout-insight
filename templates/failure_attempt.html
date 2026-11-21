@@ -29,6 +29,11 @@
     .cat-abort { --c: #e53935; } .cat-other { --c: #78909c; }
     .badge-cat { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; color: #fff; background: var(--c, #78909c); }
     .reason-big { font-family: ui-monospace, monospace; font-size: 16px; }
+    .agent-badge {
+        display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+        background: #eef3f8; color: #445566; border: 1px solid #d5dee6; white-space: nowrap;
+    }
+    .agent-badge.is-error { background: #fff5f5; color: #c62828; border-color: #ef9a9a; }
 
     .verdict { border-left: 5px solid var(--c); background: #fafbfc; padding: 10px 14px; border-radius: 4px; margin-bottom: 12px; }
     .verdict .line { font-size: 14px; margin: 2px 0; }
@@ -128,6 +133,19 @@
             <div class="line">超时 / 截断（status <code>{{ a.status }}</code>）{% if c.agent_outcome %}，agent 结束态 <code>{{ c.agent_outcome }}</code>{% endif %}{% if c.diagnosis %}，评测结论 <code>{{ c.diagnosis }}</code>{% endif %}。</div>
         {% else %}
             <div class="line">评测结论 <code>{{ c.diagnosis or a.reason }}</code>{% if c.agent_outcome %}，agent 结束态 <code>{{ c.agent_outcome }}</code>{% endif %}{% if c.applied is not none %}，patch {{ '已应用' if c.applied else '未应用' }}{% endif %}。</div>
+        {% endif %}
+        {% if a.agent_outcome %}
+            <div class="line">
+                Agent 结束态：<code>{{ a.agent_outcome }}</code>
+                {% if a.agent_outcome_label and a.agent_outcome_label != a.agent_outcome %}
+                    （{{ a.agent_outcome_label }}）
+                {% endif %}
+                {% if a.agent_error %}
+                    <span class="agent-badge is-error">agent 侧异常</span>
+                {% else %}
+                    <span class="agent-badge">agent 正常结束</span>
+                {% endif %}
+            </div>
         {% endif %}
         {% if ev.failed_test %}<div class="line">首个失败用例：<code>{{ ev.failed_test }}</code></div>{% endif %}
         {% if ev.error_summary %}<div class="line">错误摘要：<code>{{ ev.error_summary }}</code></div>{% endif %}

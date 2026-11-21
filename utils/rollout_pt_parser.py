@@ -183,6 +183,8 @@ def index_attempt_outcomes(dump: Dict[str, Any]) -> Dict[Tuple[int, int], Dict[s
 
     ``attempt_id`` 与 ``rollout_scan_service`` 一致：优先 ``sample.rollout_id``，
     缺省时用 enumerate 下标（abort 样本常见 ``rollout_id=None``）。
+
+    额外带出 ``agent_outcome``（agent 结束态），供 UI 渲染 agent 侧异常。
     """
     samples = dump.get("samples") if isinstance(dump, dict) else None
     if not isinstance(samples, list):
@@ -202,11 +204,13 @@ def index_attempt_outcomes(dump: Dict[str, Any]) -> Dict[Tuple[int, int], Dict[s
         except (TypeError, ValueError):
             continue
         outcome = classify_sample_outcome(sample)
+        metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
         out[key] = {
             "abort_reason": sample_abort_reason(sample),
             "outcome_category": outcome.get("category"),
             "outcome_reason": outcome.get("reason"),
             "outcome_label": outcome.get("label"),
+            "agent_outcome": metadata.get("agent_outcome"),
         }
     return out
 
