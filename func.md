@@ -74,7 +74,7 @@
 - `def clear_artifact_cache_for_tests() -> None` — 仅供单测清空进程内索引缓存。
 - `def locate_artifacts_dir(rollout_root: Optional[str]) -> Optional[Path]` — 从 ``task.rollout_root``（通常是 ``{run}/generated/rollout_dumps``）向上找 ``attempt_artifacts``。
 - `def summarize_entry(summary: Dict[str, Any], stem: str) -> Dict[str, Any]` — 把单条 summary JSON 压成索引行（列表 / 聚类所需字段）。
-- `def load_summary_index(artifacts_dir: Path, *, use_cache: bool=True) -> List[Dict[str, Any]]` — 返回 summaries 的索引行列表；按 summaries 目录 mtime + 文件数失效。
+- `def load_summary_index(artifacts_dir: Path, *, use_cache: bool=True) -> List[Dict[str, Any]]` — 返回 summaries 的索引行列表。
 - `def load_summary(artifacts_dir: Path, stem: str) -> Optional[Dict[str, Any]]` — 读取单条完整 summary JSON；不存在返回 None。
 - `def load_patch(artifacts_dir: Path, stem: str, max_chars: int=_PATCH_MAX) -> Dict[str, Any]` — 读取 unified diff；超长截断并标记 ``truncated``。
 - `def find_trajectory_path(artifacts_dir: Path, stem: str) -> Optional[Path]` — 在 failed_ / passed_trajectories 中查找同名 history.jsonl。
