@@ -1,5 +1,68 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 失败分析提速、agent 结束态聚类与失败类型跳转
+
+### 概述
+
+本轮改动解决失败分析（任务级）的三类问题：**慢**、**看不出 agent 侧异常**、
+**从别处跳不进来**。
+
+**1. 失败分析太慢。** 根因是 `attempt_artifacts` 索引每次都全量重扫 summary：
+训练中的 run 目录持续新增 summary → 目录指纹变化 → sidecar 失效 → 重扫万级
+JSON。task 4（8064 attempt）首屏要 78.5 秒。
+
+改为**增量刷新**后：目录指纹未变直接复用 sidecar；变了则只重解析新增 / 被覆盖的
+summary（按内容指纹比对）。同一个接口降到 0.32 秒。
+
+**2. agent 侧异常看不出来。** 失败分析原先只按评测结论（`diagnosis` /
+`abort_reason`）聚类。`evaluator:tests_failed` 说明评测没通过，
+`context_exhausted` / `sdk_error` 说明 agent 自己没跑完——两者正交，混在一个维度里
+无法区分。现在按 `agent_outcome` 单独聚类成「Agent 结束态」区块。
+
+**3. 跳不进来。** 现在：
+
+- 任务详情页「正常失败 / 超时 / abort · 具体类型」清单里**每个原因是快捷链接**，
+  点一下跳到失败分析页并自动按该类型筛选；
+- rollout 详情页 Group 概览新增「**失败类型**」列，列出每组内出现的失败类型，
+  每个类型下的 attempt 主号都是超链接，点击直接定位到对应 attempt；
+- 「正常失败 / 超时 / abort」三列的数量同样渲染为可点链接。
+
+### 关键实现要点
+
+| 变更 | 说明 |
+| --- | --- |
+| `utils/attempt_artifacts.py` | 索引改增量刷新：sidecar 升 v2 并记录每个 summary 的内容指纹（mtime + size）；目录指纹未变直接复用，变了只重解析新增/被覆盖的 |
+| `utils/failure_reason_taxonomy.py` | 新增失败原因归一化：`normalize_reason` / `classify_from_fields` 收敛 `(category, reason)`；`AGENT_OUTCOME_REASON_CODES` 把 agent 结束态映射成与 `.pt` 侧 `conversation_error_code` 一致的原因码 |
+| `service/failure_analysis_service.py` | 新增 `build_agent_outcome_clusters`（按 agent 结束态聚类）与 `build_group_failure_types`（按 group 汇总失败类型，附 attempt 主键）；失败原因改用归一化口径 |
+| `service/task_annotation_service.py` | 新增 `read_pt_annotation_sidecar`：只读 sidecar，不回退去解析 `.pt`，保证失败分析页响应快 |
+| `controller/failure_controller.py` | 失败分析页支持 `cat` / `reason` / `agent` 初始筛选参数 |
+| `controller/rollout_controller.py` | 新增 `summarize_group_failure_types`，聚合逻辑复用 service 层实现，两处口径不漂移 |
+| `templates/failure_overview.html` | 新增「Agent 结束态」区块；attempt 列表新增「agent 结束态」列与筛选下拉 |
+| `templates/failure_attempt.html` | 结论区渲染 agent 结束态，异常时标「agent 侧异常」 |
+| `templates/rollout_detail.html` | Group 概览新增「失败类型」列，类型与数量均为可点链接 |
+| `templates/task_detail.html` | 具体类型清单改为快捷链接，跳到失败分析页并带上筛选条件 |
+
+### 影响面
+
+- `GET /api/failures/tasks/{task_id}/overview.json` 新增 `agent_outcomes` /
+  `group_types` 两个字段；`attempts[]` 新增 `agent_outcome` /
+  `agent_outcome_label` / `agent_error` / `category_label`。原有字段语义不变。
+- `GET /api/tasks/{task_id}/failures` 新增可选查询参数 `cat` / `reason` / `agent`。
+- `.pt` 注解 sidecar **未升版本号**（保持 v2）：升版本会让线上所有任务的 sidecar
+  全部失效并触发重解析 `.pt`（每个 1~2 秒 × 数十个 rollout），代价远大于收益；
+  `agent_outcome` 改为在**新写入**的 sidecar 中携带，现存 sidecar 仍走 artifacts
+  侧取数，功能不受影响。
+
+### 测试
+
+- `tests/test_failure_reason_taxonomy.py`（新增）：分类优先级、agent 结束态标签与原因码映射
+- `tests/test_failure_group_types.py`（新增）：组内失败类型汇总、agent 结束态聚类
+- `tests/test_summarize_group_failure_types.py`（新增）：rollout 详情页组内失败类型汇总
+- `tests/test_task_annotation_service.py`：补充 `agent_outcome` 透传与只读 sidecar 用例
+- `tests/test_attempt_artifacts.py`：sidecar 复用契约保持不变，全绿
+
+`python scripts/scan_func_md.py --check` 通过，`func.md` 已同步。
+
 ## 未发布 — 外部评测分数按评测集分别绘制
 
 ### 概述
