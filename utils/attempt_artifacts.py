@@ -44,7 +44,8 @@ _PATCHES = "patches"
 _TRAJ_DIRS = ("failed_trajectories", "passed_trajectories")
 _TRAJ_SUFFIX = ".history.jsonl"
 _SIDECAR_NAME = ".ri_artifacts_index.json"
-_SIDECAR_VERSION = 1
+# v2 增加 ``fingerprints`` 字段用于增量刷新；v1 的 sidecar 仍可读（退化为全量扫描）
+_SIDECAR_VERSION = 2
 _TEXT_MAX = 4000
 _PATCH_MAX = 200_000
 
@@ -150,6 +151,36 @@ def _summaries_fingerprint(summaries_dir: Path) -> Optional[Tuple[float, int]]:
     return float(st.st_mtime), int(count)
 
 
+def _list_summary_fingerprints(summaries_dir: Path) -> Dict[str, str]:
+    """列出 summaries 目录下每个 summary 的 stem → 内容指纹（只 stat，不读内容）。"""
+    out: Dict[str, str] = {}
+    try:
+        with os.scandir(summaries_dir) as it:
+            for entry in it:
+                if not entry.name.endswith(".json"):
+                    continue
+                stem = entry.name[: -len(".json")]
+                fp = _summary_fingerprint(Path(entry.path))
+                if fp:
+                    out[stem] = fp
+    except OSError as exc:
+        logger.warning("扫描 summaries 目录失败 dir={} err={}", summaries_dir, exc)
+    return out
+
+
+def _summary_fingerprint(path: Path) -> str:
+    """单个 summary 的内容指纹（mtime + size）。
+
+    只用 mtime 不可靠：文件系统 mtime 精度有限，同秒内覆盖写可能察觉不到。
+    叠加 size 后绝大多数覆盖写都能被识别。
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    return f"{st.st_mtime:.6f}:{st.st_size}"
+
+
 def _trajectory_stems(artifacts_dir: Path) -> Dict[str, str]:
     out: Dict[str, str] = {}
     for name in _TRAJ_DIRS:
@@ -165,30 +196,41 @@ def _trajectory_stems(artifacts_dir: Path) -> Dict[str, str]:
     return out
 
 
-def _scan_summaries(artifacts_dir: Path) -> List[Dict[str, Any]]:
+def _read_summary_file(path: str, stem: str, traj: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            summary = json.load(fh)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning("读取 summary 失败 path={} err={}", path, exc)
+        return None
+    if not isinstance(summary, dict):
+        return None
+    row = summarize_entry(summary, stem)
+    row["trajectory_kind"] = traj.get(stem)
+    return row
+
+
+def _scan_summaries(
+    artifacts_dir: Path, stems: Optional[Iterable[str]] = None
+) -> List[Dict[str, Any]]:
+    """全量扫描 summaries（较慢；仅在无 sidecar 时使用）。"""
     summaries_dir = artifacts_dir / _SUMMARIES
     traj = _trajectory_stems(artifacts_dir)
+    if stems is None:
+        stems = _list_summary_fingerprints(summaries_dir).keys()
     entries: List[Dict[str, Any]] = []
-    for entry in os.scandir(summaries_dir):
-        if not entry.name.endswith(".json"):
-            continue
-        stem = entry.name[: -len(".json")]
-        try:
-            with open(entry.path, "r", encoding="utf-8") as fh:
-                summary = json.load(fh)
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            logger.warning("读取 summary 失败 path={} err={}", entry.path, exc)
-            continue
-        if not isinstance(summary, dict):
-            continue
-        row = summarize_entry(summary, stem)
-        row["trajectory_kind"] = traj.get(stem)
-        entries.append(row)
+    for stem in stems:
+        row = _read_summary_file(
+            str(summaries_dir / f"{stem}.json"), stem, traj
+        )
+        if row is not None:
+            entries.append(row)
     entries.sort(key=lambda r: (r.get("sample_index") is None, r.get("sample_index") or 0, r["stem"]))
     return entries
 
 
-def _read_sidecar(artifacts_dir: Path, fp: Tuple[float, int]) -> Optional[List[Dict[str, Any]]]:
+def _read_sidecar(artifacts_dir: Path) -> Optional[Dict[str, Any]]:
+    """读取 sidecar；返回 ``{"mtime","count","entries","fingerprints"}``，格式不符返回 None。"""
     path = artifacts_dir / _SIDECAR_NAME
     if not path.is_file():
         return None
@@ -199,16 +241,29 @@ def _read_sidecar(artifacts_dir: Path, fp: Tuple[float, int]) -> Optional[List[D
         return None
     if not isinstance(payload, dict) or payload.get("version") != _SIDECAR_VERSION:
         return None
-    if payload.get("mtime") != fp[0] or payload.get("count") != fp[1]:
-        return None
     entries = payload.get("entries")
-    return entries if isinstance(entries, list) else None
+    if not isinstance(entries, list):
+        return None
+    fps = payload.get("fingerprints")
+    return {
+        "mtime": payload.get("mtime"),
+        "count": payload.get("count"),
+        "entries": entries,
+        "fingerprints": fps if isinstance(fps, dict) else {},
+    }
 
 
-def _write_sidecar(artifacts_dir: Path, fp: Tuple[float, int], entries: List[Dict[str, Any]]) -> None:
+def _write_sidecar(artifacts_dir: Path, fp: Tuple[float, int], entries: List[Dict[str, Any]],
+                   fingerprints: Dict[str, str]) -> None:
     path = artifacts_dir / _SIDECAR_NAME
     tmp = path.with_name(path.name + ".tmp")
-    payload = {"version": _SIDECAR_VERSION, "mtime": fp[0], "count": fp[1], "entries": entries}
+    payload = {
+        "version": _SIDECAR_VERSION,
+        "mtime": fp[0],
+        "count": fp[1],
+        "fingerprints": fingerprints,
+        "entries": entries,
+    }
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
@@ -222,10 +277,62 @@ def _write_sidecar(artifacts_dir: Path, fp: Tuple[float, int], entries: List[Dic
             pass
 
 
+def _incremental_update(
+    artifacts_dir: Path,
+    cached_entries: List[Dict[str, Any]],
+    cached_fps: Dict[str, str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, str], bool]:
+    """增量刷新索引：只解析新增 / 变更的 summary，复用未变文件的缓存行。
+
+    训练中的 run 目录会持续新增 summary，全量重扫代价随规模线性增长；
+    这里按 ``(stem, 内容指纹)`` 比对，只重读新增或被覆盖的文件。
+
+    返回 ``(entries, fingerprints, changed)``；``changed`` 表示索引内容是否有变动
+    （未变动时调用方可跳过 sidecar 落盘）。
+    """
+    summaries_dir = artifacts_dir / _SUMMARIES
+    current_fps = _list_summary_fingerprints(summaries_dir)
+    cached_by_stem = {str(e.get("stem")): e for e in cached_entries}
+
+    stale = [
+        stem
+        for stem, fp in current_fps.items()
+        if cached_fps.get(stem) != fp
+    ]
+
+    removed = len(cached_by_stem) - (len(current_fps) - len(stale))
+    if not stale and removed <= 0:
+        return cached_entries, current_fps, False
+
+    traj = _trajectory_stems(artifacts_dir)
+    stale_set = set(stale)
+    reused = [
+        e for stem, e in cached_by_stem.items()
+        if stem in current_fps and stem not in stale_set
+    ]
+    fresh: List[Dict[str, Any]] = []
+    for stem in stale:
+        row = _read_summary_file(str(summaries_dir / f"{stem}.json"), stem, traj)
+        if row is not None:
+            fresh.append(row)
+
+    entries = reused + fresh
+    entries.sort(key=lambda r: (r.get("sample_index") is None, r.get("sample_index") or 0, r["stem"]))
+    return entries, current_fps, True
+
+
 def load_summary_index(artifacts_dir: Path, *, use_cache: bool = True) -> List[Dict[str, Any]]:
-    """返回 summaries 的索引行列表；按 summaries 目录 mtime + 文件数失效。
+    """返回 summaries 的索引行列表。
 
     命中顺序：进程内缓存 → ``attempt_artifacts/.ri_artifacts_index.json`` → 全量扫描。
+
+    sidecar 的复用分两种情况：
+
+    - **目录指纹未变**（目录 mtime + 文件数一致）：直接复用 sidecar 里的条目，
+      不做任何 stat/解析，最快。
+    - **目录指纹已变**（训练中 run 目录持续新增 summary）：走**增量刷新**，
+      只重新解析新增 / 被覆盖的 summary，未变文件复用缓存行。
+      避免万级 summary 的 run 目录每次请求都全量重扫。
     """
     summaries_dir = artifacts_dir / _SUMMARIES
     fp = _summaries_fingerprint(summaries_dir)
@@ -236,13 +343,26 @@ def load_summary_index(artifacts_dir: Path, *, use_cache: bool = True) -> List[D
         cached = _INDEX_CACHE.get(key)
         if cached is not None and cached.get("fp") == fp:
             return cached["entries"]
-        side = _read_sidecar(artifacts_dir, fp)
+        side = _read_sidecar(artifacts_dir)
         if side is not None:
-            _INDEX_CACHE[key] = {"fp": fp, "entries": side}
-            return side
+            if side.get("mtime") == fp[0] and side.get("count") == fp[1]:
+                # 目录指纹未变：直接复用 sidecar
+                entries = side["entries"]
+            else:
+                # 目录指纹已变：增量刷新（只重解析新增/被覆盖的 summary）
+                entries, fingerprints, changed = _incremental_update(
+                    artifacts_dir, side["entries"], side["fingerprints"]
+                )
+                if changed:
+                    _write_sidecar(artifacts_dir, fp, entries, fingerprints)
+            _INDEX_CACHE[key] = {"fp": fp, "entries": entries}
+            logger.info(
+                "artifacts 索引完成 dir={} n={}", artifacts_dir, len(entries)
+            )
+            return entries
     entries = _scan_summaries(artifacts_dir)
     _INDEX_CACHE[key] = {"fp": fp, "entries": entries}
-    _write_sidecar(artifacts_dir, fp, entries)
+    _write_sidecar(artifacts_dir, fp, entries, _list_summary_fingerprints(summaries_dir))
     logger.info("artifacts 索引完成 dir={} n={}", artifacts_dir, len(entries))
     return entries
 
