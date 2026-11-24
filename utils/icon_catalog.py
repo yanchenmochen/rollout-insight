@@ -48,9 +48,13 @@ NAV_ICONS: Dict[str, Dict[str, str]] = {
         "icon": "lightbulb",
         "hint": "洞察：自动生成的训练结论与观察",
     },
+    "nanhu": {
+        "icon": "repeat",
+        "hint": "南湖作业：按关键字/算法库检索并批量关联创建任务",
+    },
     "settings": {
         "icon": "settings",
-        "hint": "系统设置：服务级参数与调度配置",
+        "hint": "系统设置：每人维护自己的南湖 app_key / app_secret",
     },
     "login": {
         "icon": "log-in",

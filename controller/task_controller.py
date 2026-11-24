@@ -17,11 +17,13 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 
 from data.response import Response
 from data.rollout_insight_exception import RolloutInsightException
@@ -447,6 +449,57 @@ def _resolve_create_fields_from_nanhu(
     return resolved
 
 
+def _allocate_unique_task_name(
+    base_name: str,
+    *,
+    job_id: str = "",
+    auto_suffix: bool = True,
+) -> Tuple[str, Optional[str]]:
+    """保证 ``task_name`` 唯一。
+
+    - 无冲突：原样返回
+    - 有冲突且 ``auto_suffix``（南湖自动解析场景）：追加 job_id 尾缀
+    - 有冲突且不允许自动改名：抛 ``TASK_NAME_ALREADY_EXISTS``
+    """
+    base = (base_name or "").strip()
+    if not base:
+        raise RolloutInsightException(
+            RolloutInsightException.INVALID_ARGUMENT, "任务名不能为空"
+        )
+    TaskSvc = _safe_import_attr("db.db_task_service", "DBTaskService")
+    get_by_name = getattr(TaskSvc, "get_by_name", None) if TaskSvc else None
+
+    def _exists(name: str) -> Optional[Any]:
+        if not callable(get_by_name):
+            return None
+        try:
+            return get_by_name(name)
+        except Exception:  # noqa: BLE001
+            return None
+
+    hit = _exists(base)
+    if hit is None:
+        return base, None
+
+    tid = getattr(hit, "primary_id", None)
+    if not auto_suffix:
+        raise RolloutInsightException(
+            RolloutInsightException.TASK_NAME_ALREADY_EXISTS,
+            f"任务名已存在 #{tid}：{base}",
+        )
+
+    jid = (job_id or "").strip()
+    tail = jid.rsplit("-", 1)[-1][:12] if jid else str(int(time.time()) % 100000000)
+    candidate = f"{base}-{tail}"
+    if _exists(candidate) is None:
+        note = f"任务名「{base}」已存在，已自动改为「{candidate}」"
+        return candidate, note
+
+    candidate2 = f"{base}-{tail}-{int(time.time()) % 100000}"
+    note = f"任务名「{base}」已存在，已自动改为「{candidate2}」"
+    return candidate2, note
+
+
 @router.post("/api/tasks")
 async def api_create_task(
     request: Request,
@@ -455,28 +508,65 @@ async def api_create_task(
     rollout_root: str = Form(default=""),
     tokenizer_dir: str = Form(default=""),
     nanhu_job_id: str = Form(default=""),
-    source_type: str = Form(default="local_dump"),
+    source_type: str = Form(default="nanhu_job"),
     recursive: str = Form(default="0"),
     cluster: str = Form(default=""),
 ) -> Response:
     """创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。
 
     若填写 ``nanhu_job_id`` 且任务名 / rollout_root 为空，则自动从南湖作业详情补全。
+    默认来源为南湖作业（``nanhu_job``）。
     """
     name = (task_name or "").strip()
     root = (rollout_root or "").strip()
     tok = (tokenizer_dir or "").strip()
-    job_id = (nanhu_job_id or "").strip()
-    src = (source_type or "local_dump").strip() or "local_dump"
+    src = (source_type or "nanhu_job").strip() or "nanhu_job"
+    name_note: Optional[str] = None
+
+    # 支持粘贴文本中夹带空白；本接口一次只创建一个 job
+    from controller.nanhu_controller import extract_job_id_tokens
+
+    job_tokens = extract_job_id_tokens(nanhu_job_id)
+    if len(job_tokens) > 1:
+        return Response.error(
+            code=50001,
+            msg="一次只能创建一个任务；多个 job_id 请点「解析」走批量创建",
+        )
+    job_id = job_tokens[0] if job_tokens else (nanhu_job_id or "").strip()
 
     if job_id and src in ("", "local_dump"):
         src = "nanhu_job"
+
+    if job_id:
+        TaskSvc = _safe_import_attr("db.db_task_service", "DBTaskService")
+        if TaskSvc is not None and hasattr(TaskSvc, "list_by_nanhu_job_ids"):
+            existing = TaskSvc.list_by_nanhu_job_ids([job_id]) or {}
+            hit = existing.get(job_id)
+            if hit:
+                tid = hit.get("primary_id")
+                tname = hit.get("task_name") or ""
+                raise RolloutInsightException(
+                    RolloutInsightException.TASK_NANHU_JOB_ALREADY_LINKED,
+                    f"job_id 已关联任务 #{tid}"
+                    + (f"（{tname}）" if tname else "")
+                    + f"：{job_id}",
+                )
+
     if job_id and (not name or not root or not tok):
         user = current_user(request)
         local_uid = getattr(user, "primary_id", None) if user is not None else None
-        resolved = _resolve_create_fields_from_nanhu(
-            job_id, cluster=cluster, local_user_id=local_uid
-        )
+        try:
+            resolved = _resolve_create_fields_from_nanhu(
+                job_id, cluster=cluster, local_user_id=local_uid
+            )
+        except RolloutInsightException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # 南湖侧「无权查看」等错误，避免再包一层生硬的 CREATE_FAILED
+            raise RolloutInsightException(
+                RolloutInsightException.NANHU_RESOURCE_QUERY_FAILED,
+                str(exc) or "查询南湖作业失败",
+            ) from exc
         if not name:
             name = (resolved.get("task_name") or "").strip()
         if not root:
@@ -491,6 +581,12 @@ async def api_create_task(
             code=50001,
             msg="rollout 根路径不能为空（可填写南湖 job_id 后由后端自动解析）",
         )
+
+    # 带 nanhu_job_id 时任务名冲突自动加尾缀（批量创建无需人工改名）；
+    # 纯手动创建且未带 job_id 时冲突则明确报错
+    name, name_note = _allocate_unique_task_name(
+        name, job_id=job_id, auto_suffix=bool(job_id)
+    )
 
     Task = _task_model()
     Session = _session_factory()
@@ -520,10 +616,11 @@ async def api_create_task(
             session.refresh(obj)
             new_id = getattr(obj, "primary_id", None) or getattr(obj, "id", None)
             logger.info(
-                "已创建任务 id={} name={} nanhu_job_id={}",
+                "已创建任务 id={} name={} nanhu_job_id={} note={}",
                 new_id,
                 name,
                 job_id or "",
+                name_note or "",
             )
 
         # 触发一次初始扫描（如果扫描服务已就绪）；失败不影响创建结果
@@ -544,17 +641,34 @@ async def api_create_task(
             logger.warning("初始扫描触发失败（不影响创建）: {}", exc)
 
         return Response.success(
-            msg="创建成功",
+            msg="创建成功" + (f"（{name_note}）" if name_note else ""),
             data={
                 "id": new_id,
                 "task_id": new_id,
+                "task_name": name,
+                "name_note": name_note,
                 "redirect": f"/api/tasks/{new_id}" if new_id else "/api/tasks",
             },
         )
+    except RolloutInsightException:
+        raise
+    except IntegrityError as exc:
+        logger.warning("创建任务唯一约束冲突 name={} job_id={}: {}", name, job_id, exc)
+        raise RolloutInsightException(
+            RolloutInsightException.TASK_NAME_ALREADY_EXISTS,
+            f"任务名已存在：{name}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("创建任务失败: {}", exc)
+        # 不把整段 SQLAlchemy 参数列表甩给前端
+        brief = str(exc).split("[SQL:", 1)[0].strip() or str(exc)
+        if "UNIQUE constraint failed" in str(exc) and "task_name" in str(exc):
+            raise RolloutInsightException(
+                RolloutInsightException.TASK_NAME_ALREADY_EXISTS,
+                f"任务名已存在：{name}",
+            ) from exc
         raise RolloutInsightException(
-            RolloutInsightException.TASK_CREATE_FAILED, f"创建任务失败: {exc}"
+            RolloutInsightException.TASK_CREATE_FAILED, f"创建任务失败: {brief}"
         ) from exc
 
 

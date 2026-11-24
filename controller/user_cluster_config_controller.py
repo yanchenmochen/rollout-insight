@@ -126,6 +126,15 @@ def _wants_html(request: Request) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@router.get("/api/settings", include_in_schema=False)
+async def redirect_legacy_settings(
+    request: Request,
+    _user=Depends(require_login),
+):
+    """兼容旧顶栏「系统设置」死链 ``/api/settings`` → 每人自己的集群凭据页。"""
+    return RedirectResponse(url="/api/me/cluster-configs", status_code=302)
+
+
 @router.get("/api/me/cluster-configs", include_in_schema=False)
 async def page_cluster_configs(
     request: Request,

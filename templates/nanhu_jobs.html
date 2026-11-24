@@ -248,11 +248,15 @@
     <div>
         <h1>南湖作业</h1>
         <div class="page-subtitle">
-            仅 <strong>slime</strong> 作业可链接 / 快速创建 Rollout 任务；评测与转换作业仅展示
+            南湖 OpenAPI 的「同步」通常<strong>只能拉到本人创建</strong>的作业；控制台里同事共享给你的作业
+            （例如算法名 <code>021-32B agentic v0.1</code>）需从网页复制 UUID，用下方「导入共享作业」写入本地。
+            仅 <strong>slime / agentic RL</strong> 可勾选批量关联或快速创建。
         </div>
     </div>
     <div>
+        <button type="button" class="btn" id="batchCreateBtn" title="为勾选的未关联 slime/agentic 作业批量创建任务">批量创建任务</button>
         <button type="button" class="btn" id="syncBtn">从南湖同步</button>
+        <a href="/api/tasks/create" class="btn btn-secondary">新建任务</a>
         <a href="/api/tasks" class="btn btn-secondary">返回任务列表</a>
     </div>
 </div>
@@ -261,6 +265,25 @@
 <div class="alert alert-warning">{{ warning }}</div>
 {% endif %}
 <div class="alert alert-info" id="topNotice" style="display:none;"></div>
+
+<div class="filter-panel" style="align-items:stretch;">
+    <div class="form-group" style="flex:1 1 420px; min-width:280px;">
+        <label for="importJobIds">批量 UUID（同事共享作业，与 nanhu jobs detail 同源；每行一个或逗号分隔，最多 100）</label>
+        <textarea id="importJobIds" rows="4" placeholder="jb-aitrain-165272097743459392&#10;jb-aitrain-xxxxxxxx&#10;jb-aitrain-yyyyyyyy" style="width:100%; padding:8px; border:1px solid var(--ri-border); border-radius:var(--te-radius); font-family:ui-monospace,monospace; font-size:12px;">{% if filter_job_ids %}{{ filter_job_ids }}{% endif %}</textarea>
+        <div class="page-subtitle" style="margin-top:4px;">
+            粘贴一组 UUID →「导入并勾选」→ 勾选行后点「批量创建任务」即可批量关联
+        </div>
+    </div>
+    <div class="form-group" style="min-width:160px;">
+        <label for="importCluster">集群</label>
+        <select id="importCluster">
+            <option value="x10000" selected>x10000</option>
+            <option value="wuxi">wuxi</option>
+        </select>
+        <label>&nbsp;</label>
+        <button type="button" class="btn" id="importJobsBtn">导入并勾选</button>
+    </div>
+</div>
 
 <form id="filterForm" class="filter-panel" autocomplete="off" onsubmit="return false;">
     <div class="form-group">
@@ -272,18 +295,38 @@
         </select>
     </div>
     <div class="form-group">
+        <label for="shareScopeFilter">范围</label>
+        <select id="shareScopeFilter">
+            <option value="all" {% if filter_share_scope == 'all' or not filter_share_scope %}selected{% endif %}>全部</option>
+            <option value="shared" {% if filter_share_scope == 'shared' %}selected{% endif %}>共享给我的</option>
+            <option value="mine" {% if filter_share_scope == 'mine' %}selected{% endif %}>我创建的</option>
+        </select>
+    </div>
+    <div class="form-group">
         <label for="statusFilter">状态</label>
         <input id="statusFilter" placeholder="如 PENDING / RUNNING" value="{{ filter_status or '' }}" />
     </div>
+    <div class="form-group" style="min-width:220px; flex:1 1 220px;">
+        <label for="keywordFilter">任务名称 / 一组 UUID</label>
+        <textarea id="keywordFilter" rows="2" placeholder="作业名，或粘贴多行 jb-aitrain-…" style="min-width:200px; width:100%; font-family:ui-monospace,monospace; font-size:12px;">{{ filter_keyword or '' }}</textarea>
+    </div>
+    <div class="form-group" style="min-width:140px;">
+        <label for="creatorFilter">创建人</label>
+        <input id="creatorFilter" placeholder="姓名 / userId" value="{{ filter_creator or '' }}" />
+    </div>
     <div class="form-group">
-        <label for="algoKindFilter">算法库</label>
+        <label for="algoKindFilter">算法库类型</label>
         <select id="algoKindFilter">
-            <option value="slime" {% if filter_algo_kind == 'slime' or not filter_algo_kind %}selected{% endif %}>slime</option>
+            <option value="slime" {% if filter_algo_kind == 'slime' or not filter_algo_kind %}selected{% endif %}>slime / agentic</option>
             <option value="eval" {% if filter_algo_kind == 'eval' %}selected{% endif %}>评测</option>
             <option value="convert" {% if filter_algo_kind == 'convert' %}selected{% endif %}>转换</option>
             <option value="other" {% if filter_algo_kind == 'other' %}selected{% endif %}>其它</option>
             <option value="all" {% if filter_algo_kind == 'all' %}selected{% endif %}>全部</option>
         </select>
+    </div>
+    <div class="form-group" style="min-width:180px;">
+        <label for="algoQueryFilter">算法库名称</label>
+        <input id="algoQueryFilter" placeholder="如 agentic rl / nanhu-slime" value="{{ filter_algo_query or '' }}" />
     </div>
     <div class="form-group">
         <label>&nbsp;</label>
@@ -294,9 +337,13 @@
 <table class="nanhu-table">
     <thead>
         <tr>
+            <th style="width:36px;">
+                <input type="checkbox" id="selectAllJobs" title="全选可关联作业" />
+            </th>
             <th>job_id</th>
-            <th>名称</th>
-            <th>算法库</th>
+            <th>任务名称</th>
+            <th>创建人</th>
+            <th>算法库名称</th>
             <th>状态</th>
             <th>集群</th>
             <th>output_dir</th>
@@ -307,13 +354,24 @@
     <tbody id="jobTableBody">
         {% if jobs %}
             {% for j in jobs %}
-            <tr data-job-id="{{ j.job_id }}" data-algo-kind="{{ j.algo_kind or 'other' }}">
+            <tr data-job-id="{{ j.job_id }}" data-algo-kind="{{ j.algo_kind or 'other' }}"
+                data-cluster="{{ j.cluster or '' }}"
+                data-related="{{ j.related_task_id or '' }}">
+                <td>
+                    {% if j.algo_kind == 'slime' and not j.related_task_id %}
+                    <input type="checkbox" class="js-job-check" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}" />
+                    {% else %}
+                    <input type="checkbox" disabled title="{% if j.related_task_id %}已关联{% else %}不可关联{% endif %}" />
+                    {% endif %}
+                </td>
                 <td class="col-id">{{ j.job_id }}</td>
                 <td>
                     <span class="algo-tag algo-{{ j.algo_kind or 'other' }}">{{ j.algo_label or '其它' }}</span>
+                    {% if j.is_shared %}<span class="algo-tag algo-eval" title="共享算法或非本人创建">共享</span>{% endif %}
                     {{ j.name or '-' }}
                 </td>
-                <td>{{ j.algo_label or '-' }}</td>
+                <td title="{{ j.creator or '' }}">{{ j.creator_name or j.creator or '-' }}</td>
+                <td title="{{ j.algorithm_uuid or '' }}">{{ j.algorithm_name or j.algo_label or '-' }}</td>
                 <td><span class="status-tag {{ ('status-' + (j.status|lower)) if j.status else '' }}">{{ j.status or '-' }}</span></td>
                 <td>{{ j.cluster or '-' }}</td>
                 <td class="path-cell" title="{{ j.output_dir or '' }}">{{ j.output_dir or '-' }}</td>
@@ -332,15 +390,15 @@
                         <button type="button" class="btn btn-sm js-quick-create" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">快速创建任务</button>
                         {% endif %}
                     {% else %}
-                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">链接任务</button>
-                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">快速创建</button>
+                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime/agentic，rollout-insight 不接入">链接任务</button>
+                        <button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime/agentic，rollout-insight 不接入">快速创建</button>
                     {% endif %}
                     <button type="button" class="btn btn-secondary btn-sm js-restart" data-job="{{ j.job_id }}" data-cluster="{{ j.cluster or '' }}">重启</button>
                 </td>
             </tr>
             {% endfor %}
         {% else %}
-            <tr><td colspan="8" class="empty-row">暂无匹配的 nanhu job；可切换算法库或点击「从南湖同步」</td></tr>
+            <tr><td colspan="10" class="empty-row">暂无匹配的 nanhu job；可切换「共享给我的」或点击「从南湖同步」</td></tr>
         {% endif %}
     </tbody>
 </table>
@@ -424,6 +482,17 @@ function relatedCell(j) {
     return "-";
 }
 
+function checkCell(j) {
+    const kind = j.algo_kind || "other";
+    const job = escapeHtml(j.job_id);
+    const cluster = escapeHtml(j.cluster || "");
+    if (kind === "slime" && !j.related_task_id) {
+        return '<input type="checkbox" class="js-job-check" data-job="' + job + '" data-cluster="' + cluster + '" />';
+    }
+    const tip = j.related_task_id ? "已关联" : "不可关联";
+    return '<input type="checkbox" disabled title="' + tip + '" />';
+}
+
 function actionsCell(j) {
     const job = escapeHtml(j.job_id);
     const cluster = escapeHtml(j.cluster || "");
@@ -438,23 +507,43 @@ function actionsCell(j) {
             html += '<button type="button" class="btn btn-sm js-quick-create" data-job="' + job + '" data-cluster="' + cluster + '">快速创建任务</button> ';
         }
     } else {
-        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">链接任务</button> ';
-        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime，rollout-insight 不接入">快速创建</button> ';
+        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime/agentic，rollout-insight 不接入">链接任务</button> ';
+        html += '<button type="button" class="btn btn-secondary btn-sm" disabled title="非 slime/agentic，rollout-insight 不接入">快速创建</button> ';
     }
     html += '<button type="button" class="btn btn-secondary btn-sm js-restart" data-job="' + job + '" data-cluster="' + cluster + '">重启</button>';
     return html;
 }
 
+function creatorCell(j) {
+    const name = j.creator_name || j.creator || "-";
+    const tip = j.creator || "";
+    return '<td title="' + escapeHtml(tip) + '">' + escapeHtml(name) + '</td>';
+}
+
+function algoNameCell(j) {
+    const name = j.algorithm_name || j.algo_label || "-";
+    const tip = j.algorithm_uuid || "";
+    return '<td title="' + escapeHtml(tip) + '">' + escapeHtml(name) + '</td>';
+}
+
 function renderJobRow(j) {
     const kind = j.algo_kind || "other";
     const label = j.algo_label || "其它";
-    return '<tr data-job-id="' + escapeHtml(j.job_id) + '" data-algo-kind="' + escapeHtml(kind) + '">'
+    const cluster = j.cluster || "";
+    const sharedBadge = j.is_shared
+        ? '<span class="algo-tag algo-eval" title="共享算法或非本人创建">共享</span> '
+        : "";
+    return '<tr data-job-id="' + escapeHtml(j.job_id) + '" data-algo-kind="' + escapeHtml(kind)
+        + '" data-cluster="' + escapeHtml(cluster)
+        + '" data-related="' + escapeHtml(j.related_task_id || '') + '">'
+        + '<td>' + checkCell(j) + '</td>'
         + '<td class="col-id">' + escapeHtml(j.job_id) + '</td>'
         + '<td><span class="algo-tag algo-' + escapeHtml(kind) + '">' + escapeHtml(label) + '</span> '
-        + escapeHtml(j.name || '-') + '</td>'
-        + '<td>' + escapeHtml(label) + '</td>'
+        + sharedBadge + escapeHtml(j.name || '-') + '</td>'
+        + creatorCell(j)
+        + algoNameCell(j)
         + '<td><span class="status-tag status-' + statusClass(j.status) + '">' + escapeHtml(j.status || '-') + '</span></td>'
-        + '<td>' + escapeHtml(j.cluster || '-') + '</td>'
+        + '<td>' + escapeHtml(cluster || '-') + '</td>'
         + '<td class="path-cell" title="' + escapeHtml(j.output_dir) + '">' + escapeHtml(j.output_dir || '-') + '</td>'
         + '<td class="col-id">' + relatedCell(j) + '</td>'
         + '<td class="col-actions">' + actionsCell(j) + '</td>'
@@ -474,21 +563,45 @@ async function postJson(url, payload) {
     return data;
 }
 
+let pendingSelectJobIds = null;
+
 function filterParams(includeRefresh) {
     const params = new URLSearchParams();
     const cluster = document.getElementById("clusterFilter").value.trim();
     const status = document.getElementById("statusFilter").value.trim();
+    const keyword = document.getElementById("keywordFilter").value.trim();
+    const importIds = (document.getElementById("importJobIds").value || "").trim();
+    const creator = document.getElementById("creatorFilter").value.trim();
     const algoKind = document.getElementById("algoKindFilter").value.trim() || "slime";
+    const algoQuery = document.getElementById("algoQueryFilter").value.trim();
+    const shareScope = document.getElementById("shareScopeFilter").value.trim() || "all";
     if (cluster) params.set("cluster", cluster);
     if (status) params.set("status", status);
+    if (keyword) params.set("keyword", keyword);
+    if (importIds && /jb-/i.test(importIds)) params.set("job_ids", importIds);
+    if (creator) params.set("creator", creator);
     if (algoKind) params.set("algo_kind", algoKind);
+    if (algoQuery) params.set("algo_query", algoQuery);
+    if (shareScope) params.set("share_scope", shareScope);
     if (includeRefresh) params.set("refresh", "1");
     return params;
 }
 
+function selectJobCheckboxes(jobIds) {
+    if (!jobIds || !jobIds.length) return;
+    const want = {};
+    jobIds.forEach(function (id) { want[String(id)] = true; });
+    document.querySelectorAll(".js-job-check").forEach(function (el) {
+        const jid = el.getAttribute("data-job") || "";
+        if (want[jid] && !el.disabled) el.checked = true;
+    });
+}
+
 async function reloadJobs() {
     const tbody = document.getElementById("jobTableBody");
-    tbody.innerHTML = '<tr><td colspan="8" class="loading-row">加载中…</td></tr>';
+    const selectAll = document.getElementById("selectAllJobs");
+    if (selectAll) selectAll.checked = false;
+    tbody.innerHTML = '<tr><td colspan="10" class="loading-row">加载中…</td></tr>';
     const params = filterParams(false);
     try {
         const resp = await fetch("/api/nanhu/jobs?" + params.toString(), {
@@ -500,16 +613,85 @@ async function reloadJobs() {
         }
         const list = (data.data && data.data.jobs) || [];
         if (!list.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="empty-row">暂无匹配的 nanhu job；可切换算法库或点击「从南湖同步」</td></tr>';
+            const kw = document.getElementById("keywordFilter").value.trim()
+                + " " + (document.getElementById("importJobIds").value || "");
+            const hint = /jb-/i.test(kw)
+                ? "未找到；请确认一组 UUID / 集群，或先点「导入并勾选」"
+                : "暂无匹配；同事共享作业请粘贴一组 jb-aitrain-… UUID 后点「导入并勾选」";
+            tbody.innerHTML = '<tr><td colspan="10" class="empty-row">' + hint + "</td></tr>";
             return;
         }
+        const imported = (data.data && data.data.detail_imported) || 0;
+        if (imported) {
+            showNotice("已按一组 UUID 通过 getJobDetail 导入 " + imported + " 条", "success");
+        }
         tbody.innerHTML = list.map(renderJobRow).join("");
+        if (pendingSelectJobIds && pendingSelectJobIds.length) {
+            selectJobCheckboxes(pendingSelectJobIds);
+            pendingSelectJobIds = null;
+        } else if ((data.data && data.data.job_ids) && data.data.job_ids.length) {
+            selectJobCheckboxes(data.data.job_ids);
+        }
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">加载失败：' + escapeHtml(e.message) + "</td></tr>";
     }
 }
 
 document.getElementById("reloadBtn").addEventListener("click", reloadJobs);
+
+document.getElementById("importJobsBtn").addEventListener("click", async function () {
+    const raw = (document.getElementById("importJobIds").value || "").trim();
+    const cluster = (document.getElementById("importCluster").value || "x10000").trim();
+    if (!raw) {
+        showNotice("请先粘贴一组南湖 job UUID", "warn");
+        return;
+    }
+    const btn = this;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "导入中…";
+    try {
+        const fd = new FormData();
+        fd.set("job_ids", raw);
+        fd.set("cluster", cluster);
+        const resp = await fetch("/api/nanhu/jobs/import", {
+            method: "POST",
+            headers: { "Accept": "application/json" },
+            body: fd,
+        });
+        const data = await resp.json().catch(function () { return {}; });
+        if (!data || data.code !== 0) {
+            throw new Error((data && data.msg) || ("HTTP " + resp.status));
+        }
+        const ok = (data.data && data.data.imported_count) || 0;
+        const fail = (data.data && data.data.failed_count) || 0;
+        const failed = (data.data && data.data.failed) || [];
+        const imported = (data.data && data.data.imported) || [];
+        const okIds = imported.map(function (x) { return x.job_id; }).filter(Boolean);
+        let msg = "导入完成：成功 " + ok + "，失败 " + fail + "；已勾选成功项，可直接「批量创建任务」";
+        if (failed.length) {
+            msg += "；失败示例：" + failed.slice(0, 2).map(function (x) {
+                return (x.job_id || "") + " " + (x.error || "");
+            }).join("；");
+        }
+        showNotice(msg, fail ? "warn" : "success");
+        const clusterSel = document.getElementById("clusterFilter");
+        if (clusterSel) clusterSel.value = cluster;
+        const scope = document.getElementById("shareScopeFilter");
+        if (scope) scope.value = "all";
+        const algoKind = document.getElementById("algoKindFilter");
+        if (algoKind) algoKind.value = "slime";
+        const kw = document.getElementById("keywordFilter");
+        if (kw && okIds.length) kw.value = okIds.join("\n");
+        pendingSelectJobIds = okIds;
+        await reloadJobs();
+    } catch (e) {
+        showNotice("导入失败：" + e.message, "warn");
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+});
 
 document.getElementById("syncBtn").addEventListener("click", async function () {
     const btn = this;
@@ -550,6 +732,23 @@ function closeModal(modalId) {
     if (m) m.classList.remove("show");
 }
 
+async function createTaskFromJob(jobId, cluster) {
+    const fd = new FormData();
+    fd.set("nanhu_job_id", jobId);
+    fd.set("source_type", "nanhu_job");
+    if (cluster) fd.set("cluster", cluster);
+    const resp = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Accept": "application/json" },
+        body: fd,
+    });
+    const data = await resp.json().catch(function () { return {}; });
+    if (!data || data.code !== 0) {
+        throw new Error((data && data.msg) || ("HTTP " + resp.status));
+    }
+    return data.data && data.data.id;
+}
+
 async function quickCreateTask(jobId, cluster) {
     if (!jobId) {
         showNotice("job_id 不能为空", "warn");
@@ -558,27 +757,67 @@ async function quickCreateTask(jobId, cluster) {
     if (!confirm("确认为南湖 job\n" + jobId + "\n快速创建 Rollout 任务？\n将自动解析路径并写入 nanhu_job_id。")) {
         return;
     }
-    const fd = new FormData();
-    fd.set("nanhu_job_id", jobId);
-    fd.set("source_type", "nanhu_job");
-    if (cluster) fd.set("cluster", cluster);
     try {
-        const resp = await fetch("/api/tasks", {
-            method: "POST",
-            headers: { "Accept": "application/json" },
-            body: fd,
-        });
-        const data = await resp.json().catch(function () { return {}; });
-        if (!data || data.code !== 0) {
-            throw new Error((data && data.msg) || ("HTTP " + resp.status));
-        }
-        const tid = data.data && data.data.id;
+        const tid = await createTaskFromJob(jobId, cluster);
         showNotice("已创建任务" + (tid ? (" #" + tid) : "") + "，列表将刷新", "success");
         reloadJobs();
     } catch (err) {
         showNotice("快速创建失败：" + err.message, "warn");
     }
 }
+
+function selectedJobs() {
+    return Array.from(document.querySelectorAll(".js-job-check:checked")).map(function (el) {
+        return {
+            job_id: el.getAttribute("data-job") || "",
+            cluster: el.getAttribute("data-cluster") || "",
+        };
+    }).filter(function (x) { return !!x.job_id; });
+}
+
+async function batchCreateTasks() {
+    const items = selectedJobs();
+    if (!items.length) {
+        showNotice("请先勾选尚未关联的 slime / agentic RL 作业", "warn");
+        return;
+    }
+    if (!confirm("确认为勾选的 " + items.length + " 个南湖作业批量创建 Rollout 任务？\n将使用当前账号凭据解析路径。")) {
+        return;
+    }
+    const btn = document.getElementById("batchCreateBtn");
+    btn.disabled = true;
+    const original = btn.textContent;
+    let ok = 0;
+    let fail = 0;
+    const errors = [];
+    try {
+        for (let i = 0; i < items.length; i++) {
+            btn.textContent = "创建中 " + (i + 1) + "/" + items.length;
+            try {
+                await createTaskFromJob(items[i].job_id, items[i].cluster);
+                ok += 1;
+            } catch (err) {
+                fail += 1;
+                errors.push(items[i].job_id + ": " + err.message);
+            }
+        }
+        const detail = errors.length ? ("；失败：" + errors.slice(0, 3).join("；")) : "";
+        showNotice("批量创建完成：成功 " + ok + "，失败 " + fail + detail, fail ? "warn" : "success");
+        reloadJobs();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+}
+
+document.getElementById("selectAllJobs").addEventListener("change", function () {
+    const on = this.checked;
+    document.querySelectorAll(".js-job-check").forEach(function (el) {
+        el.checked = on;
+    });
+});
+
+document.getElementById("batchCreateBtn").addEventListener("click", batchCreateTasks);
 
 document.addEventListener("click", function (event) {
     const t = event.target;

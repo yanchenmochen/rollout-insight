@@ -270,18 +270,41 @@ def _run_cli(
 # ---------------------------------------------------------------------------
 
 
+def _extract_list_page(result: Dict[str, Any]) -> tuple:
+    """从 CLI JSON 抽出 ``(items, total)``。"""
+    if not isinstance(result, dict):
+        return [], 0
+    payload = result.get("data") if isinstance(result.get("data"), dict) else result
+    if not isinstance(payload, dict):
+        return [], 0
+    items = payload.get("result")
+    if not isinstance(items, list):
+        items = []
+    page = payload.get("page") if isinstance(payload.get("page"), dict) else {}
+    try:
+        total = int(page.get("total") or len(items) or 0)
+    except (TypeError, ValueError):
+        total = len(items)
+    return items, total
+
+
 def list_train_jobs(
     cluster: str = "",
     status: str = "",
     user_id: str = "",
     local_user_id: Optional[int] = None,
+    *,
+    page_size: int = 100,
+    max_pages: int = 50,
 ) -> List[Dict[str, Any]]:
-    """查询训练作业列表。
+    """查询训练作业列表（自动翻页拉全量）。
 
     :param cluster: 集群名（``wuxi`` / ``x10000``）；为空时读 ``config.nanhu_cluster``。
     :param status: 状态过滤（如 ``running`` / ``failed``），空字符串表示不过滤。
     :param user_id: 南湖 userId（保留参数，当前 list CLI 未透传）。
     :param local_user_id: 本地登录用户主键，用于匹配 DB 集群凭据。
+    :param page_size: 每页条数（默认 100，避免只同步 CLI 默认 20 条）。
+    :param max_pages: 翻页上限，防止异常 total 导致死循环。
     :returns: 作业列表；缺凭据或 nanhu 不可用时返回 ``[]`` 并 ``_write_audit``。
     """
     cluster = cluster or config.nanhu_cluster
@@ -304,25 +327,153 @@ def list_train_jobs(
         logger.info("[nanhu_client] list_train_jobs: 凭据未配置，返回空列表")
         return []
 
-    args = ["--cluster", cluster, "--format", "json", "jobs", "list", "--job-type", "AI_TRAIN"]
-    if status:
-        args.extend(["--status", status])
+    all_items: List[Dict[str, Any]] = []
+    seen_ids: set = set()
+    page_size = max(1, min(int(page_size or 100), 200))
+    max_pages = max(1, min(int(max_pages or 50), 200))
+    total = None
 
-    result = _run_cli(args, cluster=cluster, local_user_id=local_user_id)
-    _write_audit({"action": action, "result": "ok", "ok": result.get("ok"), **audit_extra})
+    for current in range(1, max_pages + 1):
+        args = [
+            "--cluster", cluster,
+            "--format", "json",
+            "jobs", "list",
+            "--job-type", "AI_TRAIN",
+            "--current", str(current),
+            "--page-size", str(page_size),
+        ]
+        if status:
+            args.extend(["--status", status])
 
-    if not result.get("ok", True):
-        logger.warning("[nanhu_client] list_train_jobs 返回失败: {}", result.get("error"))
+        result = _run_cli(args, cluster=cluster, local_user_id=local_user_id)
+        if not result.get("ok", True):
+            logger.warning(
+                "[nanhu_client] list_train_jobs 第 {} 页失败: {}",
+                current,
+                result.get("error"),
+            )
+            if current == 1:
+                _write_audit(
+                    {"action": action, "result": "error", "ok": False, **audit_extra}
+                )
+                return []
+            break
+
+        items, page_total = _extract_list_page(result)
+        if total is None:
+            total = page_total
+        if not items:
+            break
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            jid = str(
+                row.get("uuid")
+                or row.get("job_id")
+                or row.get("jobId")
+                or ""
+            ).strip()
+            if jid and jid in seen_ids:
+                continue
+            if jid:
+                seen_ids.add(jid)
+            all_items.append(row)
+        if total is not None and len(all_items) >= total:
+            break
+        if len(items) < page_size:
+            break
+
+    _write_audit(
+        {
+            "action": action,
+            "result": "ok",
+            "ok": True,
+            "fetched": len(all_items),
+            "total": total,
+            **audit_extra,
+        }
+    )
+    return all_items
+
+
+def list_shared_algorithms(
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+    *,
+    page_size: int = 50,
+    max_pages: int = 20,
+) -> List[Dict[str, Any]]:
+    """列出「共享给我的」算法（``algorithms list --is-public true``）。"""
+    cluster = cluster or config.nanhu_cluster
+    action = "algorithms list shared"
+    if not _nanhu_available():
+        _write_audit({"action": action, "result": "unavailable", "cluster": cluster})
+        return []
+    if not _credentials_configured(cluster, local_user_id):
+        _write_audit({"action": action, "result": "no_creds", "cluster": cluster})
         return []
 
-    payload = result.get("data") if isinstance(result, dict) else None
-    if isinstance(payload, dict):
-        items = payload.get("result")
-        if isinstance(items, list):
-            return items
-    if isinstance(result, dict) and isinstance(result.get("result"), list):
-        return result["result"]
-    return []
+    all_items: List[Dict[str, Any]] = []
+    seen: set = set()
+    page_size = max(1, min(int(page_size or 50), 100))
+    max_pages = max(1, min(int(max_pages or 20), 100))
+
+    for current in range(1, max_pages + 1):
+        args = [
+            "--cluster", cluster,
+            "--format", "json",
+            "algorithms", "list",
+            "--is-public", "true",
+            "--current", str(current),
+            "--page-size", str(page_size),
+        ]
+        result = _run_cli(args, cluster=cluster, local_user_id=local_user_id)
+        if not result.get("ok", True):
+            logger.warning(
+                "[nanhu_client] list_shared_algorithms 第 {} 页失败: {}",
+                current,
+                result.get("error"),
+            )
+            break
+        items, total = _extract_list_page(result)
+        if not items:
+            break
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uuid") or "").strip()
+            if uid and uid in seen:
+                continue
+            if uid:
+                seen.add(uid)
+            all_items.append(row)
+        if total and len(all_items) >= total:
+            break
+        if len(items) < page_size:
+            break
+
+    _write_audit(
+        {
+            "action": action,
+            "result": "ok",
+            "fetched": len(all_items),
+            "cluster": cluster,
+            "local_user_id": local_user_id,
+        }
+    )
+    return all_items
+
+
+def resolve_nanhu_user_id(
+    cluster: str = "",
+    local_user_id: Optional[int] = None,
+) -> str:
+    """解析当前南湖 userId（优先 DB 集群配置的 user_id_field）。"""
+    env = _credential_env_from_db(cluster, local_user_id) or {}
+    uid = (env.get("NANHU_USER_ID") or "").strip()
+    if uid:
+        return uid
+    return (config.nanhu_user_id or "").strip()
 
 
 def get_job_detail(
@@ -496,6 +647,8 @@ def module_diagnostics() -> Dict[str, Any]:
 
 __all__ = [
     "list_train_jobs",
+    "list_shared_algorithms",
+    "resolve_nanhu_user_id",
     "get_job_detail",
     "create_train_job",
     "restart_job",

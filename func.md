@@ -38,6 +38,8 @@
   | `RolloutInsightException.TASK_STATE_INVALID` | 51003 | `TASK_STATE_INVALID` | 任务状态非法，不允许该操作 |
   | `RolloutInsightException.TASK_DELETE_FORBIDDEN` | 51004 | `TASK_DELETE_FORBIDDEN` | 任务处于运行中，禁止删除 |
   | `RolloutInsightException.TASK_CREATE_FAILED` | 51005 | `TASK_CREATE_FAILED` | 创建任务失败 |
+  | `RolloutInsightException.TASK_NANHU_JOB_ALREADY_LINKED` | 51006 | `TASK_NANHU_JOB_ALREADY_LINKED` | 该南湖 job_id 已关联过任务 |
+  | `RolloutInsightException.TASK_NAME_ALREADY_EXISTS` | 51007 | `TASK_NAME_ALREADY_EXISTS` | 任务名已存在 |
   | `RolloutInsightException.PARSE_ERROR` | 52000 | `PARSE_ERROR` | 解析处理异常 |
   | `RolloutInsightException.PARSE_DUMP_NOT_FOUND` | 52001 | `PARSE_DUMP_NOT_FOUND` | rollout dump 文件不存在 |
   | `RolloutInsightException.PARSE_DUMP_CORRUPTED` | 52002 | `PARSE_DUMP_CORRUPTED` | rollout dump 文件损坏 |
@@ -154,6 +156,10 @@
 - `def resolve_paths_from_job_detail(job: Mapping[str, Any], *, prefer_existing_dirs: bool=True) -…` — 从作业详情 dict 解析创建任务字段。
 - `def extract_job_payload(detail: Mapping[str, Any]) -> Optional[MutableMapping[str, Any]]` — 从 ``get_job_detail`` 返回体取出作业 dict；失败返回 ``None``。
 
+### `utils/nanhu_job_schema.py`
+
+- `def ensure_nanhu_job_columns(extra_columns: Iterable[Tuple[str, str]]=_NANHU_JOB_EXTRA_COLUMNS)…` — 若表已存在但缺列，则 ``ALTER TABLE ... ADD COLUMN``。返回新加列名。
+
 ### `utils/rollout_pt_parser.py`
 
 - `def load_pt(path: str) -> Dict[str, Any]` — 加载 .pt dump：优先 zip/pickle，不要求环境能 ``import torch``。
@@ -258,7 +264,7 @@
 - `staticmethod` `def upsert(**fields: Any) -> DBNanhuJob`
 - `staticmethod` `def get_by_job_id() -> Optional[DBNanhuJob]`
 - `staticmethod` `def get_by_id() -> Optional[DBNanhuJob]`
-- `staticmethod` `def list_jobs(status: Optional[str]=None, keyword: Optional[str]=None, limit: int=200, offset: …`
+- `staticmethod` `def list_jobs(status: Optional[str]=None, keyword: Optional[str]=None, creator: Optional[str]=N…`
 - `staticmethod` `def update_status(status: str) -> bool`
 - `staticmethod` `def delete_by_job_id() -> bool`
 
@@ -414,6 +420,8 @@
 模块级公开函数（不在 class 内）：
 
 - `staticmethod` `def list_train_jobs(cluster: str='', status: str='', user_id: str='', local_user_id: Optional[i…`
+- `staticmethod` `def list_shared_algorithms(cluster: str='', local_user_id: Optional[int]=None, *, page_size: in…`
+- `staticmethod` `def resolve_nanhu_user_id(cluster: str='', local_user_id: Optional[int]=None) -> str`
 - `staticmethod` `def get_job_detail(cluster: str, job_id: str, local_user_id: Optional[int]=None) -> Dict[str, A…`
 - `staticmethod` `def create_train_job(cluster: str, yaml_path: str, submit: bool=False, local_user_id: Optional[…`
 - `staticmethod` `def restart_job(cluster: str, job_id: str, submit: bool=False, local_user_id: Optional[int]=Non…`
@@ -548,6 +556,7 @@
 | `insight_controller` | GET | `/api/insights` | `page_insights` | 渲染洞察页。没有事件目录时页面给出说明，不返回 500。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/page` | `page_nanhu_jobs` | 渲染 nanhu_jobs.html（页面 + 表 + 过滤）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs` | `api_list_nanhu_jobs` | JSON 列表；refresh=1 会先调 nanhu_client.list_train_jobs 同步落库。 |
+| `nanhu_controller` | POST | `/api/nanhu/jobs/import` | `api_import_nanhu_jobs` | 按 job_id 导入作业（绕过 jobList 只返回本人作业的限制）。 |
 | `nanhu_controller` | GET | `/api/nanhu/jobs/{job_id}/resolve-for-task` | `api_resolve_job_for_task` | 根据南湖 job 详情解析创建 Rollout 任务所需字段。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/link-task` | `api_link_task` | 关联 task 到南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/unlink-task` | `api_unlink_task` | 解绑 task 与南湖 job。 |
@@ -587,6 +596,7 @@
 | `train_curve_controller` | GET | `/api/tasks/{task_id}/train-curve` | `page_train_curve` | 渲染训练曲线页：指标按钮组 + 折线，可保存指标配置。 |
 | `train_curve_controller` | GET | `/api/tasks/{task_id}/train-curve.json` | `api_train_curve` | 返回训练曲线数据：指标按钮组 + 每个指标的折线点。 |
 | `train_curve_controller` | POST | `/api/tasks/{task_id}/train-curve/preference` | `api_save_train_curve_preference` | 保存指标偏好。scope=global 写用户默认，scope=task 写该任务追加项。 |
+| `user_cluster_config_controller` | GET | `/api/settings` | `redirect_legacy_settings` | 兼容旧顶栏「系统设置」死链 ``/api/settings`` → 每人自己的集群凭据页。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs` | `page_cluster_configs` | 渲染列表页（HTML）或返回 JSON 列表。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/new` | `page_cluster_config_new` | 渲染新建表单（cluster_key 为空 → 新建模式）。 |
 | `user_cluster_config_controller` | GET | `/api/me/cluster-configs/{cluster_key}/edit` | `page_cluster_config_edit` | 渲染编辑表单（带预填数据）。 |

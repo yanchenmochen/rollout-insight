@@ -23,6 +23,12 @@ class DBNanhuJobService:
 
         必填：job_id。
         """
+        try:
+            from utils.nanhu_job_schema import ensure_nanhu_job_columns
+
+            ensure_nanhu_job_columns()
+        except Exception:  # noqa: BLE001
+            pass
         job_id = (fields.get("job_id") or "").strip()
         if not job_id:
             raise RolloutInsightException(
@@ -48,11 +54,22 @@ class DBNanhuJobService:
                 "status",
                 "project_uuid",
                 "algorithm_uuid",
+                "algorithm_name",
+                "creator",
+                "creator_name",
+                "algo_creator",
+                "algo_creator_name",
+                "shared_users_json",
                 "output_dir",
                 "mounted_storages_json",
             ):
                 if field_name in fields:
                     setattr(existing, field_name, fields[field_name] or "")
+            if "is_public" in fields:
+                try:
+                    existing.is_public = 1 if int(fields.get("is_public") or 0) else 0
+                except (TypeError, ValueError):
+                    existing.is_public = 0
             existing.update_time = datetime.now()
             session.commit()
             session.refresh(existing)
@@ -86,22 +103,59 @@ class DBNanhuJobService:
         cluster: Optional[str] = None,
         status: Optional[str] = None,
         keyword: Optional[str] = None,
+        creator: Optional[str] = None,
+        algorithm_name: Optional[str] = None,
+        job_ids: Optional[List[str]] = None,
         limit: int = 200,
         offset: int = 0,
     ) -> List[DBNanhuJob]:
-        """分页列出 nanhu job；可选 cluster / status / 名称模糊过滤。"""
+        """分页列出 nanhu job；可选 cluster / status / 任务名 / 创建人 / 算法库 / job_ids 过滤。
+
+        ``job_ids`` 非空时按精确 UUID 集合过滤（批量导入共享作业后按组检索用），
+        不再与 ``keyword`` 模糊条件叠加。
+        """
         with Session() as session:
+            from sqlalchemy import func, or_
+
             query = session.query(DBNanhuJob)
             if cluster:
                 query = query.filter(DBNanhuJob.cluster == cluster.strip())
             if status:
                 query = query.filter(DBNanhuJob.status == status.strip())
-            kw = (keyword or "").strip()
-            if kw:
-                from sqlalchemy import func
-
+            id_list = [
+                str(x).strip()
+                for x in (job_ids or [])
+                if str(x).strip()
+            ]
+            if id_list:
+                query = query.filter(DBNanhuJob.job_id.in_(id_list))
+            else:
+                kw = (keyword or "").strip()
+                if kw:
+                    like = f"%{kw.lower()}%"
+                    query = query.filter(
+                        or_(
+                            func.lower(DBNanhuJob.name).like(like),
+                            func.lower(DBNanhuJob.job_id).like(like),
+                        )
+                    )
+            creator_q = (creator or "").strip()
+            if creator_q:
+                like_c = f"%{creator_q.lower()}%"
                 query = query.filter(
-                    func.lower(DBNanhuJob.name).like(f"%{kw.lower()}%")
+                    or_(
+                        func.lower(DBNanhuJob.creator).like(like_c),
+                        func.lower(DBNanhuJob.creator_name).like(like_c),
+                    )
+                )
+            algo_q = (algorithm_name or "").strip()
+            if algo_q:
+                like_a = f"%{algo_q.lower()}%"
+                query = query.filter(
+                    or_(
+                        func.lower(DBNanhuJob.algorithm_name).like(like_a),
+                        func.lower(DBNanhuJob.algorithm_uuid).like(like_a),
+                    )
                 )
             return (
                 query.order_by(DBNanhuJob.update_time.desc(), DBNanhuJob.primary_id.desc())

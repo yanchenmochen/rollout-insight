@@ -469,6 +469,183 @@ class TestNanhuController(unittest.TestCase):
             job_ids = [j["job_id"] for j in data["data"]["jobs"]]
             self.assertIn("j-MOCK-1", job_ids)
 
+    # ------------------------------------------------------------------
+    # 按 UUID 导入共享作业（绕过 jobList 只返回本人作业）
+    # ------------------------------------------------------------------
+
+    def test_extract_job_id_tokens(self):
+        from controller.nanhu_controller import extract_job_id_tokens, merge_job_id_filters
+
+        self.assertEqual(
+            extract_job_id_tokens("jb-aitrain-165272097743459392"),
+            ["jb-aitrain-165272097743459392"],
+        )
+        self.assertEqual(
+            extract_job_id_tokens("见 jb-aitrain-111 与 jb-aitrain-222"),
+            ["jb-aitrain-111", "jb-aitrain-222"],
+        )
+        self.assertEqual(extract_job_id_tokens("c021-e34-only-name"), [])
+        kw, ids = merge_job_id_filters(
+            "jb-aitrain-111\njb-aitrain-222",
+            "jb-aitrain-333",
+        )
+        self.assertIsNone(kw)
+        self.assertEqual(ids, ["jb-aitrain-111", "jb-aitrain-222", "jb-aitrain-333"])
+
+    def test_list_jobs_keyword_uuid_uses_get_job_detail(self):
+        """任务名称框粘贴 UUID 时，走与 CLI jobs detail 相同的 getJobDetail。"""
+        import service.nanhu_client as nc
+
+        jid = "jb-aitrain-165272097743459392"
+        detail = {
+            "code": 0,
+            "data": {
+                "uuid": jid,
+                "name": "c021-e34-20261123-093932",
+                "status": "stopped",
+                "algorithmName": "021-32B agentic rl v0.1",
+                "creator": "002921",
+                "creatorName": "沈亦翀",
+            },
+        }
+        with mock.patch.object(nc, "get_job_detail", return_value=detail) as spy:
+            resp = client.get(
+                "/api/nanhu/jobs",
+                params={
+                    "keyword": jid,
+                    "cluster": "x10000",
+                    "algo_kind": "all",
+                    "share_scope": "all",
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["code"], 0)
+        spy.assert_called()
+        self.assertGreaterEqual(data["data"].get("detail_imported") or 0, 1)
+        job_ids = [j["job_id"] for j in data["data"]["jobs"]]
+        self.assertIn(jid, job_ids)
+
+    def test_list_jobs_batch_uuids_via_job_ids_param(self):
+        """一组 UUID 经 job_ids 精确过滤，不会因整串 LIKE 漏掉。"""
+        import service.nanhu_client as nc
+
+        j1 = "jb-aitrain-batch001"
+        j2 = "jb-aitrain-batch002"
+
+        def _detail(cluster, job_id, local_user_id=None):
+            return {
+                "code": 0,
+                "data": {
+                    "uuid": job_id,
+                    "name": f"name-{job_id[-6:]}",
+                    "status": "stopped",
+                    "algorithmName": "021-32B agentic rl v0.1",
+                    "creator": "002921",
+                    "creatorName": "沈亦翀",
+                },
+            }
+
+        with mock.patch.object(nc, "get_job_detail", side_effect=_detail) as spy:
+            resp = client.get(
+                "/api/nanhu/jobs",
+                params={
+                    "job_ids": f"{j1},{j2}",
+                    "cluster": "x10000",
+                    "algo_kind": "all",
+                    "share_scope": "all",
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(spy.call_count, 2)
+        self.assertEqual(data["data"].get("detail_imported"), 2)
+        got = {j["job_id"] for j in data["data"]["jobs"]}
+        self.assertEqual(got, {j1, j2})
+        self.assertEqual(data["data"].get("job_ids"), [j1, j2])
+
+    def test_import_jobs_requires_ids(self):
+        resp = client.post(
+            "/api/nanhu/jobs/import",
+            data={"cluster": "x10000"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertNotEqual(data["code"], 0)
+        self.assertEqual(data["code"], 50001)
+
+    def test_import_jobs_by_form_and_json(self):
+        import service.nanhu_client as nc
+
+        detail = {
+            "code": 0,
+            "data": {
+                "uuid": "jb-aitrain-shared-1",
+                "name": "c021-e34-shared",
+                "status": "STOPPED",
+                "algorithmName": "021-32B agentic v0.1",
+                "creatorName": "colleague",
+                "projectUuid": "p-shared",
+                "algorithmUuid": "a-shared",
+            },
+        }
+        with mock.patch.object(nc, "get_job_detail", return_value=detail) as detail_spy:
+            resp = client.post(
+                "/api/nanhu/jobs/import",
+                data={
+                    "job_ids": "jb-aitrain-shared-1\njb-aitrain-shared-1",
+                    "cluster": "x10000",
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["code"], 0)
+            self.assertEqual(data["data"]["imported_count"], 1)
+            self.assertEqual(data["data"]["failed_count"], 0)
+            detail_spy.assert_called_once()
+            row = DBNanhuJobService.get_by_job_id("jb-aitrain-shared-1")
+            self.assertIsNotNone(row)
+            self.assertEqual(row.name, "c021-e34-shared")
+
+            # JSON body 路径
+            detail2 = {
+                "code": 0,
+                "data": {
+                    "uuid": "jb-aitrain-shared-2",
+                    "name": "c021-e35-shared",
+                    "status": "RUNNING",
+                    "algorithm_name": "021-32B agentic v0.1",
+                    "creator_name": "colleague2",
+                },
+            }
+            detail_spy.return_value = detail2
+            resp2 = client.post(
+                "/api/nanhu/jobs/import",
+                json={"job_ids": ["jb-aitrain-shared-2"], "cluster": "x10000"},
+            )
+            self.assertEqual(resp2.status_code, 200)
+            data2 = resp2.json()
+            self.assertEqual(data2["code"], 0)
+            self.assertEqual(data2["data"]["imported_count"], 1)
+
+    def test_import_jobs_records_failures(self):
+        import service.nanhu_client as nc
+
+        with mock.patch.object(
+            nc, "get_job_detail", return_value={"error": "作业找不到", "ok": False}
+        ):
+            resp = client.post(
+                "/api/nanhu/jobs/import",
+                json={"job_ids": ["jb-missing"], "cluster": "x10000"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["code"], 0)
+        self.assertEqual(data["data"]["imported_count"], 0)
+        self.assertEqual(data["data"]["failed_count"], 1)
+        self.assertIn("jb-missing", data["data"]["failed"][0]["job_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

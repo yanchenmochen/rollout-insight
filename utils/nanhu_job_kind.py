@@ -80,21 +80,40 @@ def classify_nanhu_job_kind(job: Optional[Mapping[str, Any]]) -> dict:
     )
     # outputDir 可能是 dict；规整后仍可能被 str() 落库，启发式对字符串即可
     haystack = f"{output} {name}"
+    name_l = name.lower()
+    hay_l = haystack.lower()
+    # 同事共享的 agentic RL 算法库名称常含 agentic / agentic-rl / agentic_rl
+    is_agentic = (
+        "agentic" in name_l
+        or "agentic" in hay_l
+        or "agentic-rl" in hay_l
+        or "agentic_rl" in hay_l
+        or "agentic rl" in hay_l
+    )
 
-    if algo in SLIME_ALGORITHM_UUIDS or "/slime/" in haystack or "output/slime" in haystack:
+    if (
+        algo in SLIME_ALGORITHM_UUIDS
+        or "/slime/" in haystack
+        or "output/slime" in haystack
+        or is_agentic
+    ):
         kind = "slime"
-    elif algo in CONVERT_ALGORITHM_UUIDS or name.lower().startswith("convert-"):
+        label = "agentic RL" if is_agentic else _KIND_LABELS[kind]
+    elif algo in CONVERT_ALGORITHM_UUIDS or name_l.startswith("convert-"):
         kind = "convert"
+        label = _KIND_LABELS[kind]
     elif (
         algo in EVAL_ALGORITHM_UUIDS
         or "TransEval" in haystack
         or "/Eval/" in haystack
     ):
         kind = "eval"
+        label = _KIND_LABELS[kind]
     else:
         kind = "other"
+        label = _KIND_LABELS[kind]
 
-    return {"algo_kind": kind, "algo_label": _KIND_LABELS[kind]}
+    return {"algo_kind": kind, "algo_label": label}
 
 
 def attach_nanhu_job_kind(job: MutableMapping[str, Any]) -> MutableMapping[str, Any]:

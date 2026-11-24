@@ -169,7 +169,15 @@
 {% block content %}
 <div class="cfg-page">
     <div class="cfg-toolbar">
-        <h1>{% if mode == 'edit' %}编辑集群配置{% elif mode == 'new' %}新建集群配置{% else %}集群配置{% endif %}</h1>
+        <div>
+            <h1>{% if mode == 'edit' %}编辑集群配置{% elif mode == 'new' %}新建集群配置{% else %}系统设置 · 集群凭据{% endif %}</h1>
+            {% if mode == 'list' %}
+            <p class="meta" style="margin-top:6px;">
+                每位登录用户维护<strong>自己的</strong>南湖 <code>app_key</code> / <code>app_secret</code>；
+                同步作业与解析路径时只会使用当前账号的凭据，不会混用他人配置。
+            </p>
+            {% endif %}
+        </div>
         <div>
             {% if mode == 'list' %}
             <a class="btn" href="/api/me/cluster-configs/new">+ 新建</a>

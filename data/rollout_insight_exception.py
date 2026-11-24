@@ -27,6 +27,16 @@ class RolloutInsightException(Exception):
     TASK_STATE_INVALID = (51003, "TASK_STATE_INVALID", "任务状态非法，不允许该操作")
     TASK_DELETE_FORBIDDEN = (51004, "TASK_DELETE_FORBIDDEN", "任务处于运行中，禁止删除")
     TASK_CREATE_FAILED = (51005, "TASK_CREATE_FAILED", "创建任务失败")
+    TASK_NANHU_JOB_ALREADY_LINKED = (
+        51006,
+        "TASK_NANHU_JOB_ALREADY_LINKED",
+        "该南湖 job_id 已关联过任务",
+    )
+    TASK_NAME_ALREADY_EXISTS = (
+        51007,
+        "TASK_NAME_ALREADY_EXISTS",
+        "任务名已存在",
+    )
 
     # ----- 52xxx 解析 -----
     PARSE_ERROR = (52000, "PARSE_ERROR", "解析处理异常")

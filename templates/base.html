@@ -277,9 +277,15 @@
                        <span class="ri-icon ri-icon-lightbulb"></span>洞察</a>
                 </li>
                 <li class="nav-item">
-                    <a href="/api/settings"
-                       class="nav-link {% if request.url.path.startswith('/api/settings') %}active{% endif %}"
-                       title="系统设置：服务级参数与调度配置">
+                    <a href="/api/nanhu/jobs/page"
+                       class="nav-link {% if request.url.path.startswith('/api/nanhu') %}active{% endif %}"
+                       title="南湖作业：按关键字/算法库检索并批量关联创建任务">
+                       <span class="ri-icon ri-icon-repeat"></span>南湖作业</a>
+                </li>
+                <li class="nav-item">
+                    <a href="/api/me/cluster-configs"
+                       class="nav-link {% if request.url.path.startswith('/api/me/cluster-configs') or request.url.path.startswith('/api/settings') %}active{% endif %}"
+                       title="系统设置：每人维护自己的南湖 app_key / app_secret">
                        <span class="ri-icon ri-icon-settings"></span>系统设置</a>
                 </li>
             </ul>

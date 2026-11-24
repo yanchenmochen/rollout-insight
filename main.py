@@ -102,6 +102,14 @@ include_all_routers()
 # 启动时建表（v0.1.0 暂为空模型；v0.2 起正式使用）
 Base.metadata.create_all(bind=engine)
 
+# SQLite create_all 不会 ALTER：为南湖作业表补齐创建人 / 算法名等增量列
+try:
+    from utils.nanhu_job_schema import ensure_nanhu_job_columns
+
+    ensure_nanhu_job_columns()
+except Exception as exc:  # noqa: BLE001
+    logger.warning("[main] ensure_nanhu_job_columns 失败: {}", exc)
+
 # v0.5.0 启动期 bootstrap：
 #   - DELETE FROM ri_segment_turn_table（p17_a：丢弃旧 turn 行）
 #   - ensure_admin_seed（若 user 表空则插入 admin/admin123）

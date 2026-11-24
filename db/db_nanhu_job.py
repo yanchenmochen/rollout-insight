@@ -37,6 +37,17 @@ class DBNanhuJob(Base):
     project_uuid = Column(String, nullable=False, default="")
     # 算法 / 镜像 UUID
     algorithm_uuid = Column(String, nullable=False, default="")
+    # 算法库显示名（如 nanhu-slime / agentic-rl-xxx）
+    algorithm_name = Column(String, nullable=False, default="")
+    # 作业创建人（南湖 userId / 显示名）
+    creator = Column(String, nullable=False, default="")
+    creator_name = Column(String, nullable=False, default="")
+    # 算法创建人（用于识别「共享算法」来源）
+    algo_creator = Column(String, nullable=False, default="")
+    algo_creator_name = Column(String, nullable=False, default="")
+    # 作业是否公开 / 共享用户列表（JSON 数组字符串）
+    is_public = Column(Integer, nullable=False, default=0)
+    shared_users_json = Column(Text, nullable=False, default="")
     # 训练产物输出目录（可被扫描器用作 dump 根目录）
     output_dir = Column(String, nullable=False, default="")
     # 挂载存储配置（JSON 字符串，复杂结构以 JSON 存）
@@ -62,6 +73,13 @@ class DBNanhuJob(Base):
             "status": self.status,
             "project_uuid": self.project_uuid,
             "algorithm_uuid": self.algorithm_uuid,
+            "algorithm_name": self.algorithm_name or "",
+            "creator": self.creator or "",
+            "creator_name": self.creator_name or "",
+            "algo_creator": self.algo_creator or "",
+            "algo_creator_name": self.algo_creator_name or "",
+            "is_public": int(self.is_public or 0),
+            "shared_users_json": self.shared_users_json or "",
             "output_dir": self.output_dir,
             "mounted_storages_json": self.mounted_storages_json or "",
             "create_time": self._dt_iso(self.create_time),

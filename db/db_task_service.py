@@ -43,8 +43,8 @@ class DBTaskService:
             )
             if existing is not None:
                 raise RolloutInsightException(
-                    RolloutInsightException.TASK_CREATE_FAILED,
-                    f"task_name={task_name} 已存在",
+                    RolloutInsightException.TASK_NAME_ALREADY_EXISTS,
+                    f"任务名已存在 #{existing.primary_id}：{task_name}",
                 )
             session.add(task)
             session.commit()

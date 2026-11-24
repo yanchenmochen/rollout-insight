@@ -32,6 +32,9 @@ from utils.nanhu_job_kind import (  # noqa: E402
 )
 from controller.nanhu_controller import (  # noqa: E402
     enrich_jobs_with_task_links,
+    filter_jobs_by_algo_query,
+    filter_jobs_by_creator,
+    mark_shared_jobs,
     prepare_nanhu_job_list,
 )
 
@@ -58,6 +61,23 @@ class TestNanhuJobKind(unittest.TestCase):
             }
         )
         self.assertEqual(out["algo_kind"], "slime")
+
+    def test_agentic_rl_classified_as_slime(self) -> None:
+        out = classify_nanhu_job_kind(
+            {
+                "algorithm_uuid": "",
+                "name": "share-agentic-rl-stack",
+                "output_dir": "/mnt/data/runs/demo",
+            }
+        )
+        self.assertEqual(out["algo_kind"], "slime")
+        self.assertEqual(out["algo_label"], "agentic RL")
+
+        spaced = classify_nanhu_job_kind(
+            {"name": "algo agentic rl train", "output_dir": "/tmp"}
+        )
+        self.assertEqual(spaced["algo_kind"], "slime")
+        self.assertEqual(spaced["algo_label"], "agentic RL")
 
     def test_convert_by_uuid_and_name(self) -> None:
         uuid = next(iter(CONVERT_ALGORITHM_UUIDS))
@@ -191,6 +211,88 @@ class TestEnrichRelatedTask(unittest.TestCase):
 
         all_jobs = prepare_nanhu_job_list(rows, algo_kind="all")
         self.assertEqual(len(all_jobs), 2)
+
+    def test_prepare_filters_algo_query_agentic(self) -> None:
+        rows = [
+            _FakeJob(
+                primary_id=1,
+                job_id="j-agentic",
+                cluster="x10000",
+                name="share-agentic-rl",
+                status="RUNNING",
+                project_uuid="",
+                algorithm_uuid="",
+                algorithm_name="agentic-rl-stack",
+                creator="002000",
+                creator_name="同事甲",
+                algo_creator="002000",
+                algo_creator_name="同事甲",
+                is_public=0,
+                shared_users_json="",
+                output_dir="/tmp/agentic",
+                mounted_storages_json="",
+                create_time=None,
+                update_time=None,
+            ),
+            _FakeJob(
+                primary_id=2,
+                job_id="j-other",
+                cluster="x10000",
+                name="plain-train",
+                status="RUNNING",
+                project_uuid="",
+                algorithm_uuid="",
+                algorithm_name="nanhu-slime",
+                creator="001688",
+                creator_name="我",
+                algo_creator="001688",
+                algo_creator_name="我",
+                is_public=0,
+                shared_users_json="",
+                output_dir="/tmp/plain",
+                mounted_storages_json="",
+                create_time=None,
+                update_time=None,
+            ),
+        ]
+        hit = prepare_nanhu_job_list(
+            rows, algo_kind="all", algo_query="agentic rl"
+        )
+        self.assertEqual(len(hit), 1)
+        self.assertEqual(hit[0]["job_id"], "j-agentic")
+        self.assertEqual(hit[0]["algo_kind"], "slime")
+        self.assertEqual(hit[0]["algorithm_name"], "agentic-rl-stack")
+
+        # 自由文本过滤也对 label 生效
+        filtered = filter_jobs_by_algo_query(
+            [{"algo_label": "agentic RL", "name": "x", "job_id": "1"}],
+            "AGENTIC",
+        )
+        self.assertEqual(len(filtered), 1)
+
+        by_creator = prepare_nanhu_job_list(
+            rows, algo_kind="all", creator="同事"
+        )
+        self.assertEqual(len(by_creator), 1)
+        self.assertEqual(by_creator[0]["creator_name"], "同事甲")
+
+        shared = prepare_nanhu_job_list(
+            rows,
+            algo_kind="all",
+            share_scope="shared",
+            local_nanhu_user_id="001688",
+        )
+        self.assertEqual(len(shared), 1)
+        self.assertEqual(shared[0]["job_id"], "j-agentic")
+        self.assertTrue(shared[0]["is_shared"])
+
+        marked = mark_shared_jobs(
+            [{"algorithm_uuid": "u-shared", "creator": "001688", "algo_creator": "001688", "is_public": 0}],
+            local_nanhu_user_id="001688",
+            shared_algo_uuids={"u-shared"},
+        )
+        self.assertTrue(marked[0]["is_shared"])
+        self.assertEqual(len(filter_jobs_by_creator(shared, "甲")), 1)
 
 
 if __name__ == "__main__":
