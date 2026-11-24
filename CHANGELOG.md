@@ -1,5 +1,133 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 奖励提升方案 v2：用真实数据验证并纠错「奖励不涨」的归因
+
+### 概述
+
+本轮是**纯文档改动**（无代码变更，`func.md` 无需同步），但结论有实质影响。
+
+`docs/PLAN_reward_uplift.md`（v1）是一份基于 slime 源码分析的设计方案。本次用**线上真实训练产出**
+（11 个任务 / 398 个 rollout / 51314 个 attempt / 8752+8320 份 attempt summary / 458 个 TB tag /
+task8 全量 8213 个 `.pt` sample）**逐条验证 v1 的结论**，结果 v1 的第一主因判断**被推翻**。
+
+#### v1 结论的逐条裁定
+
+| v1 结论 | 裁定 | 实测依据 |
+| --- | --- | --- |
+| 「abort 升高 = 基建问题，先修沙箱/driver」 | **推翻** | task8 的 1425 例 abort **全部**是 `agent_time_budget_exceeded`，沙箱类仅 14 例（1.1%） |
+| 「工具口径与 slime GRPO 不一致，结论会指向错误方向」 | **证实**，但降为次要问题 | 口径偏差确实存在（工具自推导 mixed=12 vs slime=13），但它会让归因偏，不会让奖励不涨 |
+| 「zero_std 是零梯度主因」 | **降级为次要** | task8 的 removed 主因是 `count_agent_timeout`（2→76），`zero_std_1.0` 仅 11→34 |
+| 「训练侧指标完全不可见」 | **证实，且更严重** | 实有 458 个 tag，含 `rollout/removed/*`、`rollout/funnel/*`、`rollout/population/*` 等 v1 完全没提的族 |
+| 「`train_drop_reason` 不存在，是死指标」 | **推翻** | 该字段**确实存在**于 `.pt` 的 `sample.metadata`，只是工具读的位置不对 |
+| 「丢弃统计前缀是 `rollout/dynamic_filter/drop_*`」 | **推翻** | 实际前缀是 `rollout/removed/*`；且 `zero_std/count_-1.0` 不存在，应为 `count_0.0` / `count_1.0` |
+
+#### 新增的第一主因：agent 时间预算退化
+
+**实测（task8 全量）**：
+
+- 1363 个 `time_budget_exceeded` 样本的 `agent_run` 落在 **[3606.9s, 3903.2s]**，**100% ≥ 3600s**
+  → 精确的 60 分钟墙钟硬预算
+- 退化机制是**单轮变慢**：单轮生成耗时 **18.1s → 86.0s（+375%）**、单轮 token **349 → 976（+180%）**
+- **不是**轮数爆炸（turns 62 → 35，**下降**）、**不是**上下文打满（peak ctx 88.5K → 70.4K，**下降**）
+- 放大机制是**组污染**：存活 attempt 数跌破 4 → `too_few_survivors_N` → **整组丢弃**
+  → 整组丢弃率 0% → **93.8%**，可训练 attempt **78 → 7**
+- 对照组 **task9 单轮只 +52%**、撞墙率 1.46% → 机制成立，**幅度**是关键
+
+#### v1 与 plan 都漏掉的三个关键维度
+
+1. **训练样本漏斗** `rollout/funnel/*`：`loss_eligible_attempts` 是最直接的样本供给指标
+   （task9 **127→107** / task8 **78→47** / task11 **95→15**）；
+   且 `filter_dropped_*` 全为 0 → 样本**不是被过滤器丢的**，是在 loss 计算阶段因奖励不可得而失效
+2. **slime 的权威组语义** `rollout/generated/shaped_group_reward/*`（31 个 tag）：
+   `mixed + all_zero + all_one + unknown == group_count` 在 task8 64/64 步、task9 48/48 步成立
+   → 工具**应优先读 slime 口径**，自推导降级为 fallback
+3. **题目池 → 采样密度 → 梯度密度**：每步固定 16 组，题目池越大梯度密度越低
+   （task9 32 题 → 50% 唯一成功；task8/11 64 题 → 25%；task4 688 题 → 2.3%）
+   → v1 的「末次通过率」口径在 task4（每题平均只出现 1.5 次）**直接失效**
+
+#### 其它实测更正
+
+- **【新发现】扫描完整性缺口**：`.pt` 文件数 vs DB 已入库数对比，
+  **task1 缺 rollout [6,7,8]、task4 缺 [63,64]、task7 缺 [47,48,49]**（其余 7 个任务完整）。
+  task4 的 rollout 63/64 在 `ri_attempt_table` 中是 **0 行**但 `.pt` 里有 128/130 个样本。
+  **【根因】主因是「`.pt` 在扫描后被重跑覆盖」**：task3 有 3 个、task4 有 3 个 `.pt`
+  的 `pt_size_bytes`/`pt_mtime` 与 DB 记录不符（实例：task4 ro0 由 141,560,377 B / 11-12
+  变为 67,830,457 B / 11-16）→ **DB 存的是旧快照，磁盘是新产物**，两者不是同一次运行。
+  后果：同一 `(group_index, attempt_id)` 在两侧对应不同样本。task8/task9/task11 指纹全部一致，
+  abort 数完全吻合（0 组不一致）。
+  **task4 的 abort 缺口 219 需按两段拆开**：已扫描段(ro0-62) `.pt` 195 / DB 157（差 38，**19.5%**，
+  来自「被重写覆盖」）；未扫描段(ro63-64) `.pt` 181 / DB 0（**来自「没扫」**，非丢失）。
+  → **「低估 58%」的说法不准确**，219 里只有 38 属于真正的覆盖问题。
+  差异的其余来源：① key collision（多 segment 去重，**正常行为**）53 个；
+  ② **键空间混用导致错位丢失 5 个**（真 bug：组内混用 `rollout_id=None`(idx 回落) 与真实
+  `rollout_id`，落在不同键空间 → task4 rollout 2 group 41 里 **5 个真实通过的样本**
+  (rollout_id 329/330/331/332/335) 被误记为 aborted/reward=0 而丢失）；
+  ③ 未扫描的 rollout 2 个（258 样本）。task9/task8 的 ② 均为 **0**
+  → **task4 的 `removed_ratio` 末值 1.000 / `trainable_attempt_count` 末值 0 含「扫描未完成」成分**，
+  不能直接读作「这一步一个样本都不剩」。
+  **但结论方向不变**：已扫完的 0–62 段内 `removed_ratio` 也已升到 0.731、trainable 已降到个位数。
+  → 方案新增「扫描完整性」维度（§1.5.3.1 + `service/task_scan_coverage_service.py`），
+    要求所有「末值/峰值」统计先校验完整性并在页面标注
+- **【实测 · 阻塞项】`ri_attempt_table` 缺关键字段 → 组语义无法仅凭 DB 复现**：
+  现有列只有 `status` / `reward` / `agent_turns` / `tool_calls` / `diff_line_count` / `response_length` 等，
+  **没有** `train_drop_reason` / `abort_reason` / `agent_outcome` / `diagnosis` / `agent_exit_code`。
+  实测逐 rollout 全对率：**DB-only 口径 task8 43/64、task9 13/48**；
+  **`.pt`-based（含 `train_drop_reason`）64/64、48/48**。
+  → 方案新增「`ri_attempt_table` 补 4 列」为**第一批阻塞项**（加列，不建表）
+- **【实测】题目池饱和的直接证据**：task4 的 `train_drop_reason=zero_std_1.0` 高达 **2599** 个 attempt
+  （≈5–11 组/rollout），实测样例确认这些组是 **8/8 全过**（`n1=8, n0=0`）
+  → **task4 的 688 题里有大量已被完全掌握**（v1 只是推测，现为实测确认）。
+  也是 `rollout/removed/count_zero_std_1.0`（34）之外的第二个来源 —— 该 tag 数的是被移除的
+  **attempt** 数，不是组数
+- **【实测标定】`ungradable` 必须计入 `dropped`**：用「工具自推导 vs TB 权威
+  （`rollout/generated/shaped_group_reward/*`）」的逐 rollout 全对率反向标定，
+  加入该规则后 task9 吻合度从 **13/48 → 42/48**、task8 从 43/64 → **54/64**。
+  **task8 45 个组含 ungradable（27 个仅因此判 dropped）、task9 64 个组含（59 个仅因此判 dropped）**
+  —— 漏掉这条规则会直接污染 `gradient_density` / `zero_gradient_ratio`。
+  **【v2 三次修订 · 穷举定稿】** 在三任务上对四个规则维度做组合穷举，唯一最优解 **(0,1,0,1)**：
+  `dropped` ⟸ 含 abort/`agent_timeout`/`aborted:*` **或** 含 `ungradable`；
+  **不因 `too_few_survivors_*`**、**不设存活数门槛**。吻合度 **task8 64/64、task9 48/48、task4 62/65**
+  （早期规则 task4 仅 18/65）。**旧口径同时高估梯度密度、低估浪费算力**：
+  task9 梯度密度 75.9%→**68.4%**、浪费算力 7.9%→**15.6%**；task8 37.9%→**35.6%**、43.4%→**46.0%**。
+  全文此前引用的梯度密度均为**旧口径**，已逐处标注并补上 §1.5.7
+  单组核验（task8 ro0）：工具推导 mixed=13 / all_pass=1 / all_fail=2，与 TB **逐项精确吻合**
+- **「预算被基建开销挤占」经两轮复核后定为三层**（初稿与第一轮复核**都不完全正确**）：
+  - **模型变慢**（`model_generation` / 单轮 token / `turns`）→ **竞争** agent 墙钟，**第一主因**
+  - **排队等待**（`sandbox_boot_queue`）→ **部分竞争**，分桶撞墙率 **20.7% / 33.9% / 80.0%**（q<100s / 100–250s / ≥250s），是**辅因**
+  - **准备/评测开销**（`cli_install` / `sandbox_boot` / `evaluator_total`）→ **不竞争**，纯成本/吞吐问题
+  - **根因是我两次把 `phase_time/sandbox_boot_queue` 误读成 `phase_time/sandbox_boot`**（后者 p50 仅 5–10s，差一个数量级）。
+    TB 侧 `perf/rollout_time/attempt/sandbox_boot_queue` = 152.1s → 392.0s 独立印证。
+    → 方案里已加**实现护栏**：读 `.pt` 必须用 `sandbox_boot_queue`，并配回归测试锁死
+- **`unknown_group_count` ≠ 「被丢弃的组数」**：task8 rollout 0 的 TB `unknown` = 0，
+  而按 `train_drop_reason` 的整组丢弃 = 6；真正判据是「存活数 < 4」，不是「含 abort」
+  （实测 rollout 55 组 884 含 4 个 timeout 但 4 个存活 → 整组保留）
+- **同名 zero_std 有两套口径，差 8 倍**：`removed/count_zero_std_*` 是 **attempts**，
+  `zero_std/count_*` 与 `all_zero/all_one_count` 是 **groups** → tag 目录必须标注单位
+- **已排除的病因**（避免重复怀疑）：`train_rollout_logprob_abs_diff` 全程 <0.05（排除 off-policy）、
+  `entropy_loss` 0.15→0.64 上升（排除熵坍缩）、`ppo_kl` ~1e-6（排除 KL 爆炸）。
+  **反例保留**：task11 的 `logprob_abs_diff` 峰值 **0.1054 已越界**、`grad_norm` 末值 **0.986**，
+  → `exclusions` 必须**可被数据推翻**，不能硬编码
+
+
+### 交付物
+
+| 文件 | 说明 |
+| --- | --- |
+| `docs/PLAN_reward_uplift.md` | **v2 主方案**（v1 骨架保留，新增「真实数据验证」与「agent 时间预算退化」两章，重排落地顺序） |
+| `docs/PLAN_reward_uplift_specs.md` | **配套设计规格**（新增）：A~C 时间预算/失败分类/题目池、§A~§F 组语义/奖励诊断/TB 目录/训练健康度/通过率三口径、页面规格、测试清单、`func.md` 同步清单 |
+
+### 影响面
+
+纯文档改动，**无代码变更、无数据库变更、无配置变更**，现有功能与 API 行为完全不变。
+
+`python scripts/scan_func_md.py --check` 通过（`func.md` 与代码一致，无需重新生成）。
+
+### 测试
+
+不适用（无代码变更）。
+
+---
+
 ## 未发布 — 失败分析提速、agent 结束态聚类与失败类型跳转
 
 ### 概述

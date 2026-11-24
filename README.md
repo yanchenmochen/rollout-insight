@@ -449,8 +449,31 @@ rm ~/.cursor/skills/rollout-insight
 
 ---
 
-## 9. 后续阶段（roadmap）
+## 9. 训练奖励诊断方案（设计文档）
+
+面向 slime + sglang 的 agentic RL 训练，把 rollout-insight 从「rollout 数据可视化工具」
+升级为「**奖励不涨时的归因与行动引擎**」。
+
+| 文档 | 内容 |
+|------|------|
+| [docs/PLAN_reward_uplift.md](docs/PLAN_reward_uplift.md) | **v2 主方案**：真实数据验证（11 任务 / 398 rollout / 51314 attempt / 458 个 TB tag）、agent 时间预算退化机制、口径修正、训练侧指标接入、题目池健康度、落地顺序 |
+| [docs/PLAN_reward_uplift_specs.md](docs/PLAN_reward_uplift_specs.md) | **配套设计规格**：各模块函数签名、数据契约、判定阈值、页面规格、测试清单、`func.md` 同步清单 |
+
+**当前结论速览**（2026-11-23 实测，详见主方案 §1.5）：
+
+- 本批任务奖励不涨的**第一主因**是 **agent 时间预算耗尽**（60 分钟墙钟）→ 单轮生成耗时膨胀
+  → attempt 被杀 → GRPO 组整组丢弃 → 训练样本枯竭，而非 v1 判断的「基建故障」
+- 口径修正（有效梯度组 / 通过率分母）与训练侧指标接入依然要做，但属次要问题
+- 配套还发现 v1 与初版方案都漏掉的三个维度：训练样本漏斗 `rollout/funnel/*`、
+  slime 权威组语义 `rollout/generated/shaped_group_reward/*`、题目池 → 采样密度 → 梯度密度
+
+> 文档为**设计级**，尚无对应代码实现；`func.md` 未变更。
+
+---
+
+## 10. 后续阶段（roadmap）
 
 - v0.3.0 阶段 3A：南湖调度接入（nanhu_client + 创建/重启/绑定作业）
 - v0.3.0 阶段 3B：表 UI 增强（任务列表/详情/segment transcript 的 Jinja 模板）
 - v0.4.0+：eval dataset、动态过滤、长期稳定性
+- 奖励诊断 v2 第一批：agent 时间预算画像 + 组语义口径对齐（见 `docs/PLAN_reward_uplift.md` §4）
