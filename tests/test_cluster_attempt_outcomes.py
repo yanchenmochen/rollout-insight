@@ -118,6 +118,12 @@ class TestClusterAttemptOutcomes(unittest.TestCase):
         self.assertEqual(labels["abort:exception:A"], 2)
         self.assertEqual(labels["timeout:slime_context_limit_reached"], 1)
         self.assertEqual(labels["fail:evaluator:tests_failed"], 1)
+        by_label = {r["label"]: r for r in all_c["by_reason"]}
+        # 奖励与结束态独立：timeout 可测奖 0；abort 无测；fail 奖 0
+        self.assertEqual(by_label["timeout:slime_context_limit_reached"]["n_reward_0"], 1)
+        self.assertEqual(by_label["timeout:slime_context_limit_reached"]["n_reward_1"], 0)
+        self.assertEqual(by_label["abort:exception:A"]["n_no_reward"], 2)
+        self.assertEqual(by_label["fail:evaluator:tests_failed"]["n_reward_0"], 1)
         self.assertEqual(len(all_c["group_trend"]), 2)
         g2 = cluster_attempt_outcomes(dump, group_index=2)
         self.assertEqual(g2["n_attempts"], 3)
@@ -131,6 +137,47 @@ class TestClusterAttemptOutcomes(unittest.TestCase):
         self.assertEqual(abort["total"], 2)
         self.assertEqual(abort["by_reason"][0]["reason"], "exception:A")
         self.assertEqual(abort["by_group"][2]["total"], 1)
+
+    def test_timeout_reason_splits_reward_independently(self):
+        dump = {
+            "samples": [
+                {
+                    "group_index": 0,
+                    "status": "truncated",
+                    "metadata": {
+                        "conversation_error_code": "slime_context_limit_reached",
+                        "raw_reward": 1.0,
+                    },
+                    "reward": 1.0,
+                },
+                {
+                    "group_index": 0,
+                    "status": "truncated",
+                    "metadata": {
+                        "conversation_error_code": "slime_context_limit_reached",
+                        "raw_reward": 0.0,
+                    },
+                    "reward": 0.0,
+                },
+                {
+                    "group_index": 1,
+                    "status": "truncated",
+                    "metadata": {
+                        "conversation_error_code": "slime_context_limit_reached",
+                        "raw_reward": 0.0,
+                    },
+                    "reward": 0.0,
+                },
+            ]
+        }
+        out = cluster_attempt_outcomes(dump)
+        self.assertEqual(out["n_timeout"], 3)
+        row = out["by_reason"][0]
+        self.assertEqual(row["reason"], "slime_context_limit_reached")
+        self.assertEqual(row["count"], 3)
+        self.assertEqual(row["n_reward_1"], 1)
+        self.assertEqual(row["n_reward_0"], 2)
+        self.assertEqual(row["n_no_reward"], 0)
 
 
 if __name__ == "__main__":

@@ -155,17 +155,53 @@ def _sub_key_of(item: Dict[str, Any]) -> Optional[str]:
     return item.get("failed_test") or item.get("error_summary") or None
 
 
+_REWARD_EPS = 1e-9
+
+
+def _reward_bucket(category: Any, reward: Any) -> str:
+    """奖励与结束态独立：abort 一律无测；其余按可测 reward 归 rw1 / rw0 / none。"""
+    cat = str(category or "").strip().lower()
+    if cat == "abort":
+        return "none"
+    if isinstance(reward, (int, float)):
+        rv = float(reward)
+        if abs(rv - 1.0) <= _REWARD_EPS:
+            return "rw1"
+        if abs(rv) <= _REWARD_EPS:
+            return "rw0"
+    return "none"
+
+
 def build_failure_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """按 ``(category, reason)`` 聚类非通过 attempt；每簇附 rollout 分布与子原因 Top。"""
+    """按 ``(category, reason)`` 聚类非通过 attempt；每簇附 rollout 分布与子原因 Top。
+
+    奖励与 agent 结束态独立：每簇附 ``n_reward_1`` / ``n_reward_0`` / ``n_no_reward``。
+    """
     buckets: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for it in items:
         key = (str(it.get("category")), str(it.get("reason")))
         b = buckets.setdefault(
             key,
-            {"category": key[0], "reason": key[1], "count": 0,
-             "by_rollout": Counter(), "sub": Counter(), "instances": set()},
+            {
+                "category": key[0],
+                "reason": key[1],
+                "count": 0,
+                "n_reward_1": 0,
+                "n_reward_0": 0,
+                "n_no_reward": 0,
+                "by_rollout": Counter(),
+                "sub": Counter(),
+                "instances": set(),
+            },
         )
         b["count"] += 1
+        flag = _reward_bucket(it.get("category"), it.get("reward"))
+        if flag == "rw1":
+            b["n_reward_1"] += 1
+        elif flag == "rw0":
+            b["n_reward_0"] += 1
+        else:
+            b["n_no_reward"] += 1
         if it.get("rollout_id") is not None:
             b["by_rollout"][int(it["rollout_id"])] += 1
         sub = _sub_key_of(it)
@@ -181,6 +217,9 @@ def build_failure_clusters(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "reason": b["reason"],
             "count": b["count"],
             "pct": round(100.0 * b["count"] / total, 1),
+            "n_reward_1": int(b["n_reward_1"]),
+            "n_reward_0": int(b["n_reward_0"]),
+            "n_no_reward": int(b["n_no_reward"]),
             "n_instances": len(b["instances"]),
             "by_rollout": [{"rollout_id": k, "count": v} for k, v in sorted(b["by_rollout"].items())],
             "sub": [{"key": k, "count": v} for k, v in b["sub"].most_common(_SUB_CLUSTER_TOP)],
@@ -345,6 +384,8 @@ def _attempt_item(
     entry = entry or {}
     agent_outcome = _agent_outcome_of(row, entry or None, ann)
     category = _category_of(row, entry or None, ann)
+    # 奖励优先 artifacts summary，其次 DB attempt.reward；与结束态独立展示
+    reward = entry.get("reward") if entry.get("reward") is not None else row.get("reward")
     return {
         "attempt_pk": row["attempt_pk"],
         "rollout_pk": rollout_pk,
@@ -353,6 +394,7 @@ def _attempt_item(
         "attempt_id": row.get("attempt_id"),
         "instance_id": row.get("instance_id") or entry.get("instance_id") or "",
         "status": row.get("status"),
+        "reward": reward,
         "category": category,
         "category_label": CATEGORY_LABELS.get(category, category),
         "reason": _reason_of(row, entry or None, ann),

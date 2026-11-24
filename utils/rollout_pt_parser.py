@@ -314,13 +314,19 @@ def cluster_attempt_outcomes(
 ) -> Dict[str, Any]:
     """跨组 / 组内失败情形聚类（abort / timeout / 正常失败 / 通过）。
 
+    ``by_reason`` 按 ``(category, reason)`` 聚类（不含 pass）；奖励与结束态独立，
+    每行附 ``n_reward_1`` / ``n_reward_0`` / ``n_no_reward``（可测奖 1 / 奖 0 / 无测）。
+
     Returns:
         {
           "n_attempts", "n_pass", "n_abort", "n_timeout", "n_fail", "n_other",
           "n_failure": abort+timeout+fail+other,
           "n_groups_with_abort", "n_groups_with_failure",
           "by_category": [{"category","count","pct"}, ...],
-          "by_reason": [{"category","reason","label","count","pct"}, ...],  # 不含 pass
+          "by_reason": [
+            {"category","reason","label","count","pct",
+             "n_reward_1","n_reward_0","n_no_reward"}, ...
+          ],
           "by_group": {gi: {n_*, by_category, by_reason}},
           "group_trend": [{"group_index","n_attempts","n_pass","n_abort","n_timeout","n_fail","n_other","n_failure"}, ...]
         }
@@ -347,9 +353,27 @@ def cluster_attempt_outcomes(
         return empty
 
     cat_overall: Counter = Counter()
-    reason_overall: Counter = Counter()  # key=(category, reason)
+    # key=(category, reason) → {count, n_reward_1, n_reward_0, n_no_reward}
+    reason_overall: Dict[Tuple[str, str], Dict[str, int]] = defaultdict(
+        lambda: {"count": 0, "n_reward_1": 0, "n_reward_0": 0, "n_no_reward": 0}
+    )
     per_group_cat: Dict[int, Counter] = defaultdict(Counter)
-    per_group_reason: Dict[int, Counter] = defaultdict(Counter)
+    per_group_reason: Dict[int, Dict[Tuple[str, str], Dict[str, int]]] = defaultdict(
+        lambda: defaultdict(
+            lambda: {"count": 0, "n_reward_1": 0, "n_reward_0": 0, "n_no_reward": 0}
+        )
+    )
+
+    def _bump_reason(
+        bucket: Dict[str, int], *, flag: str
+    ) -> None:
+        bucket["count"] += 1
+        if flag == "rw1":
+            bucket["n_reward_1"] += 1
+        elif flag == "rw0":
+            bucket["n_reward_0"] += 1
+        else:
+            bucket["n_no_reward"] += 1
 
     for sample in samples:
         if not isinstance(sample, dict):
@@ -365,12 +389,13 @@ def cluster_attempt_outcomes(
         cat = outcome["category"]
         reason = outcome["reason"]
         cat_overall[cat] += 1
+        flag = _timeout_reward_flag(resolve_sample_reward(sample))
         if cat != "pass":
-            reason_overall[(cat, reason)] += 1
+            _bump_reason(reason_overall[(cat, reason)], flag=flag)
         if isinstance(gi, int):
             per_group_cat[gi][cat] += 1
             if cat != "pass":
-                per_group_reason[gi][(cat, reason)] += 1
+                _bump_reason(per_group_reason[gi][(cat, reason)], flag=flag)
 
     def _cat_rows(counter: Counter) -> List[Dict[str, Any]]:
         total = sum(counter.values()) or 1
@@ -399,17 +424,27 @@ def cluster_attempt_outcomes(
             )
         return rows
 
-    def _reason_rows(counter: Counter) -> List[Dict[str, Any]]:
-        total = sum(counter.values()) or 1
+    def _reason_rows(
+        buckets: Dict[Tuple[str, str], Dict[str, int]],
+    ) -> List[Dict[str, Any]]:
+        total = sum(int(b.get("count") or 0) for b in buckets.values()) or 1
+        ordered = sorted(
+            buckets.items(),
+            key=lambda item: (-int(item[1].get("count") or 0), item[0][0], item[0][1]),
+        )
         rows = []
-        for (cat, reason), count in counter.most_common():
+        for (cat, reason), bucket in ordered:
+            count = int(bucket.get("count") or 0)
             rows.append(
                 {
                     "category": cat,
                     "reason": reason,
                     "label": f"{cat}:{reason}",
-                    "count": int(count),
+                    "count": count,
                     "pct": round(100.0 * count / total, 1),
+                    "n_reward_1": int(bucket.get("n_reward_1") or 0),
+                    "n_reward_0": int(bucket.get("n_reward_0") or 0),
+                    "n_no_reward": int(bucket.get("n_no_reward") or 0),
                 }
             )
         return rows
@@ -483,7 +518,7 @@ _STACK_REWARD_EPS = 1e-9
 
 
 def _timeout_reward_flag(reward: Optional[float]) -> str:
-    """超时样本的奖励标记：rw1 / rw0 / none。"""
+    """可测奖励标记：rw1 / rw0 / none（超时与其它结局共用）。"""
     if isinstance(reward, (int, float)):
         rv = float(reward)
         if abs(rv - 1.0) <= _STACK_REWARD_EPS:
