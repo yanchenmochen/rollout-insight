@@ -55,6 +55,19 @@
     .cluster-head .cnt { margin-left: auto; font-size: 13px; }
     .cluster-bar { height: 6px; background: #eceff1; border-radius: 3px; margin: 6px 0; overflow: hidden; }
     .cluster-bar span { display: block; height: 100%; background: var(--c); }
+    .cluster-rw-bar {
+        display: flex; height: 8px; border-radius: 3px; overflow: hidden;
+        background: #eceff1; margin: 4px 0 2px; width: 100%;
+    }
+    .cluster-rw-bar .rw1 { background: #2e7d32; }
+    .cluster-rw-bar .rw0 { background: #8e24aa; }
+    .cluster-rw-bar .norw { background: #b0bec5; }
+    .cluster-rw-meta {
+        font-size: 11px; color: var(--ri-muted); font-variant-numeric: tabular-nums;
+        margin-bottom: 4px;
+    }
+    .cluster-rw-meta .dot-rw1 { color: #2e7d32; }
+    .cluster-rw-meta .dot-rw0 { color: #8e24aa; }
     .cluster-meta { font-size: 12px; color: var(--ri-muted); }
     .spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 20px; vertical-align: middle; margin-left: 6px; }
     .spark span { width: 4px; background: var(--c); opacity: .75; }
@@ -340,19 +353,50 @@
         });
     }
 
+    function rewardBucket(category, reward) {
+        if (String(category || "") === "abort") return "none";
+        if (typeof reward === "number" && Number.isFinite(reward)) {
+            if (Math.abs(reward - 1) <= 1e-9) return "rw1";
+            if (Math.abs(reward) <= 1e-9) return "rw0";
+        }
+        return "none";
+    }
+
     function clustersOf(items) {
         const map = new Map();
         for (const a of items) {
             const k = a.category + "|" + a.reason;
             let b = map.get(k);
-            if (!b) { b = { category: a.category, reason: a.reason, count: 0, byRollout: new Map(), sub: new Map(), inst: new Set() }; map.set(k, b); }
+            if (!b) {
+                b = {
+                    category: a.category, reason: a.reason, count: 0,
+                    n_reward_1: 0, n_reward_0: 0, n_no_reward: 0,
+                    byRollout: new Map(), sub: new Map(), inst: new Set(),
+                };
+                map.set(k, b);
+            }
             b.count++;
+            const flag = rewardBucket(a.category, a.reward);
+            if (flag === "rw1") b.n_reward_1++;
+            else if (flag === "rw0") b.n_reward_0++;
+            else b.n_no_reward++;
             b.byRollout.set(a.rollout_id, (b.byRollout.get(a.rollout_id) || 0) + 1);
             const s = a.failed_test || a.error_summary;
             if (s) b.sub.set(s, (b.sub.get(s) || 0) + 1);
             if (a.instance_id) b.inst.add(a.instance_id);
         }
         return [...map.values()].sort((x, y) => y.count - x.count);
+    }
+
+    function renderRewardSplit(n1, n0, nn) {
+        if (!(n1 || n0 || nn)) return "";
+        const tip = `奖1 ${n1} · 奖0 ${n0} · 无测 ${nn}`;
+        let bar = `<div class="cluster-rw-bar" title="${tip}">`;
+        if (n1) bar += `<span class="rw1" style="flex:${n1} 0 0"></span>`;
+        if (n0) bar += `<span class="rw0" style="flex:${n0} 0 0"></span>`;
+        if (nn) bar += `<span class="norw" style="flex:${nn} 0 0"></span>`;
+        bar += `</div><div class="cluster-rw-meta"><span class="dot-rw1">奖1 ${n1}</span> · <span class="dot-rw0">奖0 ${n0}</span>${nn ? ` · 无测 ${nn}` : ""}</div>`;
+        return bar;
     }
 
     function renderClusters(items) {
@@ -371,6 +415,7 @@
                     <button type="button" class="btn btn-secondary btn-xs" data-cat="${esc(c.category)}" data-reason="${esc(c.reason)}">查看这些 attempt</button>
                 </div>
                 <div class="cluster-bar"><span style="width:${100 * c.count / total}%"></span></div>
+                ${renderRewardSplit(c.n_reward_1, c.n_reward_0, c.n_no_reward)}
                 <div class="cluster-meta">${c.inst.size} 个题目 · ${c.byRollout.size} 个 rollout 出现 <span class="spark">${spark}</span></div>
                 ${subs ? `<ul class="sub-list">${subs}</ul>` : ""}
             </div>`;
