@@ -355,22 +355,51 @@
         list-style: none; margin: 0; padding: 0; font-size: 12px;
     }
     .stack-reason-list li {
-        display: flex; justify-content: space-between; gap: 10px;
-        padding: 3px 0; border-bottom: 1px dashed #e8ecef;
-        align-items: baseline;
+        display: flex; flex-direction: column; gap: 4px;
+        padding: 6px 0; border-bottom: 1px dashed #e8ecef;
     }
     .stack-reason-list li:last-child { border-bottom: none; }
+    .stack-reason-list .reason-main {
+        display: flex; justify-content: space-between; gap: 10px;
+        align-items: baseline;
+    }
     .stack-reason-list code {
         font-family: ui-monospace, monospace; font-size: 11.5px;
         color: #333; word-break: break-all;
     }
-    .stack-reason-list span {
+    .stack-reason-list .reason-cnt {
         flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--ri-ink);
     }
     .stack-reason-list em { color: var(--ri-muted); font-style: normal; margin-left: 4px; }
     .stack-reason-link { text-decoration: none; min-width: 0; }
     .stack-reason-link:hover code { color: var(--ri-accent); text-decoration: underline; }
     .stack-reason-list li:has(.stack-reason-link):hover { background: #f3f6fa; }
+    .reason-rw-bar {
+        display: flex; height: 8px; border-radius: 3px; overflow: hidden;
+        background: #eceff1; width: 100%;
+    }
+    .reason-rw-bar .rw1 { background: #2e7d32; }
+    .reason-rw-bar .rw0 { background: #8e24aa; }
+    .reason-rw-bar .norw { background: #b0bec5; }
+    .reason-rw-meta {
+        font-size: 11px; color: var(--ri-muted); font-variant-numeric: tabular-nums;
+        line-height: 1.35;
+    }
+    .reason-rw-meta .dot-rw1 { color: #2e7d32; }
+    .reason-rw-meta .dot-rw0 { color: #8e24aa; }
+    .stack-reason-rw-legend {
+        display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px;
+        color: var(--ri-muted); margin: 0 0 8px;
+    }
+    .stack-reason-rw-legend i {
+        display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+        margin-right: 4px; vertical-align: -1px;
+    }
+    .stack-reason-rw-legend .lg-rw1 { background: #2e7d32; }
+    .stack-reason-rw-legend .lg-rw0 { background: #8e24aa; }
+    .stack-reason-rw-legend .lg-norw { background: #b0bec5; }
+    .stack-reason-section { margin-bottom: 16px; }
+    .stack-reason-section > h2 { margin-bottom: 8px; }
     @media (max-width: 900px) {
         .stack-reason-grid { grid-template-columns: 1fr; }
         .stack-col { grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
@@ -598,6 +627,117 @@
             </div>
         </div>
 
+        <div class="section stack-reason-section" id="stack-reasons-section">
+            <h2>失败类型统计 <small>奖励与结束态独立 · 绿=奖1 · 紫=奖0</small></h2>
+            {% if rollouts %}
+            <div class="stack-reason-rw-legend">
+                <span><i class="lg-rw1"></i>reward≈1（通过）</span>
+                <span><i class="lg-rw0"></i>reward≈0（失败）</span>
+                <span><i class="lg-norw"></i>无奖励/不可测</span>
+            </div>
+            <div class="stack-reason-grid stack-anchor" id="stack-reasons">
+                <div class="stack-reason-block">
+                    <div class="stack-reason-title"><i class="lg lg-fail"></i> 正常失败 · 具体类型</div>
+                    <div id="stackFailReasons">
+                    {% if annotations_lazy and not stack_fail_reasons %}
+                    <div class="ann-loading">加载中…</div>
+                    {% elif stack_fail_reasons %}
+                    <ul class="stack-reason-list">
+                        {% for row in stack_fail_reasons %}
+                        <li>
+                            <div class="reason-main">
+                                <code>{{ row.reason }}</code>
+                                <span class="reason-cnt">{{ row.count }} <em>{{ row.pct }}%</em></span>
+                            </div>
+                            {% set n1 = row.n_reward_1 or 0 %}
+                            {% set n0 = row.n_reward_0 or 0 %}
+                            {% set nn = row.n_no_reward or 0 %}
+                            {% if n1 or n0 or nn %}
+                            <div class="reason-rw-bar" title="奖1 {{ n1 }} · 奖0 {{ n0 }} · 无测 {{ nn }}">
+                                {% if n1 %}<span class="rw1" style="flex: {{ n1 }} 0 0;"></span>{% endif %}
+                                {% if n0 %}<span class="rw0" style="flex: {{ n0 }} 0 0;"></span>{% endif %}
+                                {% if nn %}<span class="norw" style="flex: {{ nn }} 0 0;"></span>{% endif %}
+                            </div>
+                            <div class="reason-rw-meta"><span class="dot-rw1">奖1 {{ n1 }}</span> · <span class="dot-rw0">奖0 {{ n0 }}</span>{% if nn %} · 无测 {{ nn }}{% endif %}</div>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <div class="empty-inline">本任务无正常失败 attempt</div>
+                    {% endif %}
+                    </div>
+                </div>
+                <div class="stack-reason-block">
+                    <div class="stack-reason-title"><i class="lg lg-timeout"></i> 超时/截断 · 具体类型</div>
+                    <div id="stackTimeoutReasons">
+                    {% if annotations_lazy and not stack_timeout_reasons %}
+                    <div class="ann-loading">加载中…</div>
+                    {% elif stack_timeout_reasons %}
+                    <ul class="stack-reason-list">
+                        {% for row in stack_timeout_reasons %}
+                        <li>
+                            <div class="reason-main">
+                                <code>{{ row.reason }}</code>
+                                <span class="reason-cnt">{{ row.count }} <em>{{ row.pct }}%</em></span>
+                            </div>
+                            {% set n1 = row.n_reward_1 or 0 %}
+                            {% set n0 = row.n_reward_0 or 0 %}
+                            {% set nn = row.n_no_reward or 0 %}
+                            {% if n1 or n0 or nn %}
+                            <div class="reason-rw-bar" title="奖1 {{ n1 }} · 奖0 {{ n0 }} · 无测 {{ nn }}">
+                                {% if n1 %}<span class="rw1" style="flex: {{ n1 }} 0 0;"></span>{% endif %}
+                                {% if n0 %}<span class="rw0" style="flex: {{ n0 }} 0 0;"></span>{% endif %}
+                                {% if nn %}<span class="norw" style="flex: {{ nn }} 0 0;"></span>{% endif %}
+                            </div>
+                            <div class="reason-rw-meta"><span class="dot-rw1">奖1 {{ n1 }}</span> · <span class="dot-rw0">奖0 {{ n0 }}</span>{% if nn %} · 无测 {{ nn }}{% endif %}</div>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <div class="empty-inline">本任务无超时/截断 attempt</div>
+                    {% endif %}
+                    </div>
+                </div>
+                <div class="stack-reason-block">
+                    <div class="stack-reason-title"><i class="lg lg-abort"></i> abort · 具体异常</div>
+                    <div id="stackAbortReasons">
+                    {% if annotations_lazy and not stack_abort_reasons %}
+                    <div class="ann-loading">加载中…</div>
+                    {% elif stack_abort_reasons %}
+                    <ul class="stack-reason-list">
+                        {% for row in stack_abort_reasons %}
+                        <li>
+                            <div class="reason-main">
+                                <code>{{ row.reason }}</code>
+                                <span class="reason-cnt">{{ row.count }} <em>{{ row.pct }}%</em></span>
+                            </div>
+                            {% set n1 = row.n_reward_1 or 0 %}
+                            {% set n0 = row.n_reward_0 or 0 %}
+                            {% set nn = row.n_no_reward or 0 %}
+                            {% if n1 or n0 or nn %}
+                            <div class="reason-rw-bar" title="奖1 {{ n1 }} · 奖0 {{ n0 }} · 无测 {{ nn }}">
+                                {% if n1 %}<span class="rw1" style="flex: {{ n1 }} 0 0;"></span>{% endif %}
+                                {% if n0 %}<span class="rw0" style="flex: {{ n0 }} 0 0;"></span>{% endif %}
+                                {% if nn %}<span class="norw" style="flex: {{ nn }} 0 0;"></span>{% endif %}
+                            </div>
+                            <div class="reason-rw-meta"><span class="dot-rw1">奖1 {{ n1 }}</span> · <span class="dot-rw0">奖0 {{ n0 }}</span>{% if nn %} · 无测 {{ nn }}{% endif %}</div>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <div class="empty-inline">本任务无 abort attempt</div>
+                    {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-inline">暂无 rollout 可统计</div>
+            {% endif %}
+        </div>
+
         <div class="section" id="rollout-stack">
             <h2>Attempt 分布趋势 <small>纵向每步一行 · 三根横柱（结局 / 奖励 / 类型）· 共 {{ rollouts | length }} 步</small></h2>
             {% if rollouts %}
@@ -707,57 +847,8 @@
                     {% endif %}
                     {% endif %}
                 </div>
-                <div class="stack-reason-grid stack-anchor" id="stack-reasons">
-                    <div class="stack-reason-block">
-                        <div class="stack-reason-title"><i class="lg lg-fail"></i> 正常失败 · 具体类型</div>
-                        <div id="stackFailReasons">
-                        {% if annotations_lazy and not stack_fail_reasons %}
-                        <div class="ann-loading">加载中…</div>
-                        {% elif stack_fail_reasons %}
-                        <ul class="stack-reason-list">
-                            {% for row in stack_fail_reasons %}
-                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}
-                        <div class="empty-inline">本任务无正常失败 attempt</div>
-                        {% endif %}
-                        </div>
-                    </div>
-                    <div class="stack-reason-block">
-                        <div class="stack-reason-title"><i class="lg lg-timeout"></i> 超时/截断 · 具体类型</div>
-                        <div id="stackTimeoutReasons">
-                        {% if annotations_lazy and not stack_timeout_reasons %}
-                        <div class="ann-loading">加载中…</div>
-                        {% elif stack_timeout_reasons %}
-                        <ul class="stack-reason-list">
-                            {% for row in stack_timeout_reasons %}
-                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}
-                        <div class="empty-inline">本任务无超时/截断 attempt</div>
-                        {% endif %}
-                        </div>
-                    </div>
-                    <div class="stack-reason-block">
-                        <div class="stack-reason-title"><i class="lg lg-abort"></i> abort · 具体异常</div>
-                        <div id="stackAbortReasons">
-                        {% if annotations_lazy and not stack_abort_reasons %}
-                        <div class="ann-loading">加载中…</div>
-                        {% elif stack_abort_reasons %}
-                        <ul class="stack-reason-list">
-                            {% for row in stack_abort_reasons %}
-                            <li><code>{{ row.reason }}</code><span>{{ row.count }} <em>{{ row.pct }}%</em></span></li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}
-                        <div class="empty-inline">本任务无 abort attempt</div>
-                        {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>            {% else %}
+            </div>
+            {% else %}
             <div class="empty-inline">暂无 rollout 可画图</div>
             {% endif %}
         </div>
@@ -1061,14 +1152,64 @@
 
     function topCounts(mapObj, limit) {
         const rows = Object.keys(mapObj).map(function (k) {
-            return { reason: k, count: mapObj[k] };
+            const v = mapObj[k];
+            if (v && typeof v === "object") {
+                return {
+                    reason: k,
+                    count: Number(v.count || 0),
+                    n_reward_1: Number(v.n_reward_1 || 0),
+                    n_reward_0: Number(v.n_reward_0 || 0),
+                    n_no_reward: Number(v.n_no_reward || 0),
+                };
+            }
+            return { reason: k, count: Number(v || 0), n_reward_1: 0, n_reward_0: 0, n_no_reward: 0 };
         });
         rows.sort(function (a, b) { return b.count - a.count; });
         const sliced = rows.slice(0, limit || 8);
         const total = sliced.reduce(function (s, r) { return s + r.count; }, 0) || 1;
         return sliced.map(function (r) {
-            return { reason: r.reason, count: r.count, pct: Math.round(1000 * r.count / total) / 10 };
+            return {
+                reason: r.reason,
+                count: r.count,
+                pct: Math.round(1000 * r.count / total) / 10,
+                n_reward_1: r.n_reward_1,
+                n_reward_0: r.n_reward_0,
+                n_no_reward: r.n_no_reward,
+            };
         });
+    }
+
+    function bumpReasonBucket(mapObj, reason, n1, n0, nn) {
+        const key = String(reason || "").trim() || "(unknown)";
+        let row = mapObj[key];
+        if (!row) {
+            row = { count: 0, n_reward_1: 0, n_reward_0: 0, n_no_reward: 0 };
+            mapObj[key] = row;
+        }
+        const a = Number(n1 || 0);
+        const b = Number(n0 || 0);
+        const c = Number(nn || 0);
+        row.n_reward_1 += a;
+        row.n_reward_0 += b;
+        row.n_no_reward += c;
+        row.count += a + b + c;
+    }
+
+    function renderRewardBar(n1, n0, nn) {
+        const a = Number(n1 || 0);
+        const b = Number(n0 || 0);
+        const c = Number(nn || 0);
+        if (!(a || b || c)) return "";
+        const tip = "奖1 " + a + " · 奖0 " + b + " · 无测 " + c;
+        let bar = '<div class="reason-rw-bar" title="' + tip + '">';
+        if (a) bar += '<span class="rw1" style="flex: ' + a + ' 0 0;"></span>';
+        if (b) bar += '<span class="rw0" style="flex: ' + b + ' 0 0;"></span>';
+        if (c) bar += '<span class="norw" style="flex: ' + c + ' 0 0;"></span>';
+        bar += "</div>";
+        bar += '<div class="reason-rw-meta"><span class="dot-rw1">奖1 ' + a
+            + '</span> · <span class="dot-rw0">奖0 ' + b + "</span>"
+            + (c ? (" · 无测 " + c) : "") + "</div>";
+        return bar;
     }
 
     function renderReasonList(el, rows, emptyText, cat) {
@@ -1082,10 +1223,14 @@
             const href = "/api/tasks/" + encodeURIComponent(TASK_ID) + "/failures"
                 + "?cat=" + encodeURIComponent(cat || "")
                 + "&reason=" + encodeURIComponent(row.reason);
-            return '<li><a class="stack-reason-link" href="' + href + '" '
+            return '<li><div class="reason-main">'
+                + '<a class="stack-reason-link" href="' + href + '" '
                 + 'title="在失败分析中查看该类型的 attempt 列表">'
                 + "<code>" + escapeHtml(row.reason) + "</code></a>"
-                + "<span>" + row.count + " <em>" + row.pct + "%</em></span></li>";
+                + '<span class="reason-cnt">' + row.count + " <em>" + row.pct + "%</em></span>"
+                + "</div>"
+                + renderRewardBar(row.n_reward_1, row.n_reward_0, row.n_no_reward)
+                + "</li>";
         }).join("") + "</ul>";
     }
 
@@ -1159,16 +1304,47 @@
                 const k = String(seg.key || "");
                 if (!k) return;
                 typeTotals[k] = (typeTotals[k] || 0) + Number(seg.count || 0);
+                // 类型段已含超时×奖励拆分；失败/abort 推断奖 0 / 无测
+                const cat = String(seg.category || "");
+                const reason = String(seg.reason || "").trim() || "(unknown)";
+                const cnt = Number(seg.count || 0);
+                if (!cnt) return;
+                const flag = seg.reward_flag;
+                if (cat === "fail") {
+                    bumpReasonBucket(failC, reason, 0, cnt, 0);
+                } else if (cat === "timeout") {
+                    if (flag === "rw1") bumpReasonBucket(timeoutC, reason, cnt, 0, 0);
+                    else if (flag === "rw0") bumpReasonBucket(timeoutC, reason, 0, cnt, 0);
+                    else bumpReasonBucket(timeoutC, reason, 0, 0, cnt);
+                } else if (cat === "abort") {
+                    bumpReasonBucket(abortC, reason, 0, 0, cnt);
+                }
             });
+            // 旧 sidecar 若无 type_segments，回退 by_reason（含新增 n_reward_*）
             const fc = payload.failure_clusters || {};
-            (fc.by_reason || []).forEach(function (row) {
-                const cat = row.category;
-                const reason = String(row.reason || "").trim() || "(unknown)";
-                const cnt = Number(row.count || 0);
-                if (cat === "abort") abortC[reason] = (abortC[reason] || 0) + cnt;
-                else if (cat === "timeout") timeoutC[reason] = (timeoutC[reason] || 0) + cnt;
-                else if (cat === "fail") failC[reason] = (failC[reason] || 0) + cnt;
+            const hasTypeSegs = (payload.type_segments || []).some(function (s) {
+                const c = String(s.category || "");
+                return c === "fail" || c === "timeout" || c === "abort";
             });
+            if (!hasTypeSegs) {
+                (fc.by_reason || []).forEach(function (row) {
+                    const cat = row.category;
+                    const reason = String(row.reason || "").trim() || "(unknown)";
+                    const n1 = Number(row.n_reward_1 || 0);
+                    const n0 = Number(row.n_reward_0 || 0);
+                    const nn = Number(row.n_no_reward || 0);
+                    const cnt = Number(row.count || 0);
+                    if (cat === "abort") {
+                        bumpReasonBucket(abortC, reason, n1, n0, nn || cnt);
+                    } else if (cat === "timeout") {
+                        if (n1 || n0 || nn) bumpReasonBucket(timeoutC, reason, n1, n0, nn);
+                        else bumpReasonBucket(timeoutC, reason, 0, 0, cnt);
+                    } else if (cat === "fail") {
+                        if (n1 || n0 || nn) bumpReasonBucket(failC, reason, n1, n0, nn);
+                        else bumpReasonBucket(failC, reason, 0, cnt, 0);
+                    }
+                });
+            }
             const ts = payload.train_sample_stats || {};
             trainKept += Number(ts.n_train_kept || 0);
             trainDropped += Number(ts.n_train_dropped || 0);
