@@ -1,10 +1,10 @@
 """跨任务对比路由。
 
-- GET  /api/cross-task-compare                   跨任务对比页（选任务 + 共同题目趋势）
-- GET  /api/cross-task-compare.json              对比数据 JSON（task_ids 逗号分隔）
-- GET  /api/cross-task-compare/instance.json      只看某一道题在多任务上的变化
+- GET  /api/cross-task-compare                   任务题目变化页（单任务或跨任务）
+- GET  /api/cross-task-compare.json              对比数据 JSON（task_ids 逗号分隔，1–6 个）
+- GET  /api/cross-task-compare/instance.json      只看某一道题在所选任务上的变化
 
-回答的问题：不同训练配置下，共同题目里哪些变好了、哪些变坏了。
+单任务：看该任务全部题目随训练的首末变化；多任务：只看共同题目，并可指定基线。
 """
 from __future__ import annotations
 

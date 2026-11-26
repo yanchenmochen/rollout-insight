@@ -7,7 +7,7 @@
 历史记录；如果不存在则 INSERT；存在则刷新 mean_reward / n_samples / n_attempts 等摘要。
 """
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, desc
 
@@ -133,6 +133,54 @@ class DBRolloutService:
                 .filter(DBRollout.primary_id == primary_id)
                 .first()
             )
+
+    @staticmethod
+    def list_fingerprints(task_id: int) -> List[Dict[str, Any]]:
+        """列出某 task 已入库 .pt 的指纹，供增量扫描跳过未变更文件。
+
+        返回 ``pt_path / pt_size_bytes / pt_mtime / rollout_id / primary_id``。
+        """
+        with Session() as session:
+            rows = (
+                session.query(
+                    DBRollout.primary_id,
+                    DBRollout.rollout_id,
+                    DBRollout.pt_path,
+                    DBRollout.pt_size_bytes,
+                    DBRollout.pt_mtime,
+                )
+                .filter(DBRollout.task_id == task_id)
+                .all()
+            )
+            return [
+                {
+                    "primary_id": row.primary_id,
+                    "rollout_id": row.rollout_id,
+                    "pt_path": row.pt_path,
+                    "pt_size_bytes": int(row.pt_size_bytes or 0),
+                    "pt_mtime": float(row.pt_mtime or 0.0),
+                }
+                for row in rows
+            ]
+
+    @staticmethod
+    def delete_by_pt_path(task_id: int, pt_path: str) -> int:
+        """按 task + .pt 路径删除 rollout 行，返回受影响行数。"""
+        if not pt_path:
+            return 0
+        with Session() as session:
+            count = (
+                session.query(DBRollout)
+                .filter(
+                    and_(
+                        DBRollout.task_id == task_id,
+                        DBRollout.pt_path == pt_path,
+                    )
+                )
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            return int(count or 0)
 
     @staticmethod
     def delete_by_task(task_id: int) -> int:

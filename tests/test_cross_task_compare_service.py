@@ -129,6 +129,21 @@ class TestInstanceRows(unittest.TestCase):
         rows = _sort_instance_rows(_build_instance_rows(per_task, [1, 2], ["a", "b"], 1), [1, 2])
         self.assertEqual(rows[0]["instance_id"], "a")
 
+    def test_single_task_sort_uses_own_delta(self):
+        """单任务排序看自身首末差，而不是恒为 0 的相对基线。"""
+        per_task = {
+            1: {
+                "flat": [{"rate": 1.0, "n_pass": 1, "n_attempts": 1},
+                         {"rate": 1.0, "n_pass": 1, "n_attempts": 1}],
+                "big": [{"rate": 0.0, "n_pass": 0, "n_attempts": 1},
+                        {"rate": 1.0, "n_pass": 1, "n_attempts": 1}],
+            },
+        }
+        rows = _sort_instance_rows(
+            _build_instance_rows(per_task, [1], ["flat", "big"], 1), [1]
+        )
+        self.assertEqual(rows[0]["instance_id"], "big")
+
 
 class TestBuildCrossTaskCompare(unittest.TestCase):
     """用 mock 打桩 DB 读取，验证「共同题目 + 变好/变坏」主流程。"""
@@ -146,13 +161,26 @@ class TestBuildCrossTaskCompare(unittest.TestCase):
             }
 
         def fake_visits(task_id):
-            trend = summarize_pass_visits(rows_payload.get(task_id, []))
+            raw = rows_payload.get(task_id, [])
+            # 与真实 _load_visits 一致：取该题该 rollout 的最小 group_index
+            group_map = {}
+            for row in raw:
+                iid = str(row.get("instance_id") or "").strip()
+                if row.get("rollout_id") is None or not iid or row.get("group_index") is None:
+                    continue
+                key = (int(row["rollout_id"]), iid)
+                gi = int(row["group_index"])
+                if key not in group_map or gi < group_map[key]:
+                    group_map[key] = gi
+            trend = summarize_pass_visits(raw)
             visits = {}
             for item in trend.get("tasks") or []:
                 visits[item["instance_id"]] = [
                     {
                         "epoch": idx + 1,
                         "rollout_id": v["rollout_id"],
+                        "rollout_pk": 1000 + int(v["rollout_id"]),
+                        "group_index": group_map.get((int(v["rollout_id"]), item["instance_id"])),
                         "n_pass": v["n_pass"],
                         "n_attempts": v["n_attempts"],
                         "rate": v["rate"],
@@ -174,11 +202,34 @@ class TestBuildCrossTaskCompare(unittest.TestCase):
             ),
         )
 
-    def test_requires_two_tasks(self):
+    def test_requires_at_least_one_task(self):
         from data.rollout_insight_exception import RolloutInsightException
 
         with self.assertRaises(RolloutInsightException):
-            build_cross_task_compare([1])
+            build_cross_task_compare([])
+
+    def test_single_task_lists_all_instances(self):
+        """单任务：列出该任务全部题目，并按自身首末差排序。"""
+        rows = {
+            1: [
+                _row(1, 0, "fail", "a"),
+                _row(1, 1, "pass", "b"),
+                _row(2, 0, "pass", "a"),
+                _row(2, 1, "fail", "b"),
+            ],
+        }
+        patches = self._patch_db(rows, tasks=(1,))
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1])
+        self.assertTrue(data["single_task"])
+        self.assertEqual(data["n_common"], 2)
+        self.assertEqual(data["baseline_task_id"], 1)
+        # a 变好、b 变坏；按 |delta| 排序 a 与 b 都应出现
+        ids = [r["instance_id"] for r in data["instances"]]
+        self.assertEqual(set(ids), {"a", "b"})
+        bucket = data["buckets"]["1"]
+        self.assertEqual(bucket["improved"], 1)
+        self.assertEqual(bucket["worsened"], 1)
 
     def test_common_instances_and_trend_split(self):
         rows = {
@@ -290,6 +341,62 @@ class TestBuildCrossTaskCompare(unittest.TestCase):
         self.assertEqual(visits[1]["n_pass"], 1)
         self.assertEqual(visits[1]["n_attempts"], 1)
         self.assertEqual(visits[1]["epoch"], 2)
+
+    def test_instance_rows_include_rollout_jump_keys(self):
+        """visits 需带 rollout_pk / group_index，供前端跳转 group 轨迹。"""
+        rows = {
+            1: [
+                _row(1, 3, "pass", "a"),
+                _row(1, 5, "fail", "a"),
+                _row(2, 7, "pass", "a"),
+            ],
+            2: [_row(1, 0, "fail", "a"), _row(2, 0, "pass", "a")],
+        }
+        patches = self._patch_db(rows)
+        with patches[0], patches[1], patches[2], patches[3]:
+            data = build_cross_task_compare([1, 2])
+        visits = data["instances"][0]["tasks"]["1"]["visits"]
+        self.assertEqual(visits[0]["rollout_id"], 1)
+        self.assertEqual(visits[0]["rollout_pk"], 1001)
+        self.assertEqual(visits[0]["group_index"], 3)  # 取该次出现的最小 group
+        self.assertEqual(visits[1]["rollout_id"], 2)
+        self.assertEqual(visits[1]["rollout_pk"], 1002)
+        self.assertEqual(visits[1]["group_index"], 7)
+
+
+class TestLoadVisitsJumpKeys(unittest.TestCase):
+    """_load_visits 应附带 rollout_pk 与 group_index。"""
+
+    def test_enriches_rollout_pk_and_min_group(self):
+        from service.cross_task_compare_service import _load_visits
+
+        attempt_rows = [
+            _row(1, 4, "pass", "repo_pr1"),
+            _row(1, 2, "fail", "repo_pr1"),
+            _row(3, 9, "pass", "repo_pr1"),
+        ]
+        rollout_rows = [
+            mock.Mock(rollout_id=1, primary_id=101),
+            mock.Mock(rollout_id=3, primary_id=103),
+        ]
+        with mock.patch(
+            "db.db_attempt_service.DBAttemptService.list_outcome_rows_by_task",
+            return_value=attempt_rows,
+        ), mock.patch(
+            "db.db_rollout_service.DBRolloutService.list_by_task",
+            return_value=rollout_rows,
+        ):
+            visits = _load_visits(7)
+        self.assertIn("repo_pr1", visits)
+        ordered = visits["repo_pr1"]
+        self.assertEqual(len(ordered), 2)
+        self.assertEqual(ordered[0]["rollout_id"], 1)
+        self.assertEqual(ordered[0]["rollout_pk"], 101)
+        self.assertEqual(ordered[0]["group_index"], 2)
+        self.assertEqual(ordered[0]["epoch"], 1)
+        self.assertEqual(ordered[1]["rollout_id"], 3)
+        self.assertEqual(ordered[1]["rollout_pk"], 103)
+        self.assertEqual(ordered[1]["group_index"], 9)
 
 
 if __name__ == "__main__":

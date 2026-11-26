@@ -178,15 +178,41 @@ class DBSegmentService:
             return count
 
     @staticmethod
-    def delete_by_task(task_id: int) -> int:
-        """按 task_id 级联删除所有 segment（经 JOIN attempt）。"""
+    def delete_by_rollout(task_id: int, rollout_id: int) -> int:
+        """删除某个 rollout 下全部 segment（按 attempt 子查询，一条 SQL）。"""
         from db.db_attempt import DBAttempt
 
         with Session() as session:
-            q = session.query(DBSegment).join(
-                DBAttempt, DBSegment.attempt_id == DBAttempt.primary_id
+            attempt_ids = session.query(DBAttempt.primary_id).filter(
+                and_(
+                    DBAttempt.task_id == task_id,
+                    DBAttempt.rollout_id == rollout_id,
+                )
             )
-            q = q.filter(DBAttempt.task_id == task_id)
-            count = q.delete(synchronize_session=False)
+            count = (
+                session.query(DBSegment)
+                .filter(DBSegment.attempt_id.in_(attempt_ids))
+                .delete(synchronize_session=False)
+            )
             session.commit()
-            return count
+            return int(count or 0)
+
+    @staticmethod
+    def delete_by_task(task_id: int) -> int:
+        """按 task_id 删除所有 segment。
+
+        用 attempt 主键子查询，避免 JOIN + delete 在部分 SQLAlchemy 版本上失败。
+        """
+        from db.db_attempt import DBAttempt
+
+        with Session() as session:
+            attempt_ids = session.query(DBAttempt.primary_id).filter(
+                DBAttempt.task_id == task_id
+            )
+            count = (
+                session.query(DBSegment)
+                .filter(DBSegment.attempt_id.in_(attempt_ids))
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            return int(count or 0)

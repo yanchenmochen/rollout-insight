@@ -155,9 +155,8 @@ def load_dump(path: str | Path) -> Dict[str, Any]:
     return _load_dump(path)
 
 
-def load_dump_meta(path: str | Path) -> Dict[str, Any]:
-    """读取 .pt 顶部元数据：rollout_id、n_samples、n_attempts、mean_reward。"""
-    dump = load_dump(path)
+def _meta_from_dump(dump: Dict[str, Any], path: str | Path) -> Dict[str, Any]:
+    """从已加载的 dump 提取顶部元数据。"""
     samples = dump.get("samples", []) or []
     rollout_id = dump.get("rollout_id")
     n_samples = len(samples)
@@ -181,9 +180,8 @@ def load_dump_meta(path: str | Path) -> Dict[str, Any]:
     }
 
 
-def summarize_dump(path: str | Path) -> List[Dict[str, Any]]:
-    """返回每个 sample 的摘要行（与 view_trajectory 表格一致）。"""
-    dump = load_dump(path)
+def _rows_from_dump(dump: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从已加载的 dump 提取每个 sample 的摘要行。"""
     samples = dump.get("samples") or []
     rows: List[Dict[str, Any]] = []
     for i, s in enumerate(samples):
@@ -218,6 +216,25 @@ def summarize_dump(path: str | Path) -> List[Dict[str, Any]]:
             }
         )
     return rows
+
+
+def load_dump_meta(path: str | Path) -> Dict[str, Any]:
+    """读取 .pt 顶部元数据：rollout_id、n_samples、n_attempts、mean_reward。"""
+    return _meta_from_dump(load_dump(path), path)
+
+
+def summarize_dump(path: str | Path) -> List[Dict[str, Any]]:
+    """返回每个 sample 的摘要行（与 view_trajectory 表格一致）。"""
+    return _rows_from_dump(load_dump(path))
+
+
+def inspect_dump(path: str | Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """一次加载 .pt，同时返回元数据与 sample 摘要。
+
+    扫描路径用它避免 ``load_dump_meta`` + ``summarize_dump`` 各读一遍大文件。
+    """
+    dump = load_dump(path)
+    return _meta_from_dump(dump, path), _rows_from_dump(dump)
 
 
 def split_turns(text: str) -> List[tuple[str, str]]:

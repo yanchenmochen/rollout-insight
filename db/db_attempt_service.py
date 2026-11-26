@@ -177,6 +177,126 @@ class DBAttemptService:
             session.commit()
             return count
 
+    @staticmethod
+    def replace_rollout_samples(
+        task_id: int,
+        rollout_id: int,
+        rows: List[Dict[str, Any]],
+    ) -> tuple:
+        """用一份 .pt 的 sample 行替换该 rollout 的 attempt / segment。
+
+        同一事务内先删旧行再插入。同一 attempt 的多个 segment 会把
+        ``response_length`` 累加，其余会话级字段以后出现的行为准。
+        返回 ``(n_attempts, n_segments)``。
+        """
+        from db.db_segment import DBSegment
+
+        if rollout_id is None:
+            raise RolloutInsightException(
+                RolloutInsightException.INVALID_ARGUMENT,
+                "replace_rollout_samples 需要 rollout_id",
+            )
+        rollout_id = int(rollout_id)
+        with Session() as session:
+            attempt_ids = session.query(DBAttempt.primary_id).filter(
+                and_(
+                    DBAttempt.task_id == task_id,
+                    DBAttempt.rollout_id == rollout_id,
+                )
+            )
+            session.query(DBSegment).filter(
+                DBSegment.attempt_id.in_(attempt_ids)
+            ).delete(synchronize_session=False)
+            session.query(DBAttempt).filter(
+                and_(
+                    DBAttempt.task_id == task_id,
+                    DBAttempt.rollout_id == rollout_id,
+                )
+            ).delete(synchronize_session=False)
+
+            aggregates: Dict[tuple, Dict[str, Any]] = {}
+            order: List[tuple] = []
+            segment_rows: List[Dict[str, Any]] = []
+            for row in rows or []:
+                sample_attempt_id = row.get("rollout_id")
+                if sample_attempt_id is None:
+                    sample_attempt_id = row.get("idx")
+                group_index = row.get("group_index")
+                if group_index is None:
+                    group_index = 0
+                key = (int(group_index), int(sample_attempt_id))
+                response_length = int(row.get("response_length") or 0)
+                if key not in aggregates:
+                    aggregates[key] = {
+                        "task_id": task_id,
+                        "rollout_id": rollout_id,
+                        "group_index": key[0],
+                        "attempt_id": key[1],
+                        "sandbox_id": row.get("sandbox_id") or "",
+                        "instance_id": row.get("instance_id") or "",
+                        "status": row.get("status") or "",
+                        "reward": row.get("reward"),
+                        "agent_turns": int(row.get("agent_turns") or 0),
+                        "tool_calls": int(row.get("tool_calls") or 0),
+                        "diff_line_count": int(row.get("diff_line_count") or 0),
+                        "response_length": response_length,
+                    }
+                    order.append(key)
+                else:
+                    agg = aggregates[key]
+                    agg["sandbox_id"] = row.get("sandbox_id") or ""
+                    agg["instance_id"] = row.get("instance_id") or ""
+                    agg["status"] = row.get("status") or ""
+                    agg["reward"] = row.get("reward")
+                    agg["agent_turns"] = int(row.get("agent_turns") or 0)
+                    agg["tool_calls"] = int(row.get("tool_calls") or 0)
+                    agg["diff_line_count"] = int(row.get("diff_line_count") or 0)
+                    agg["response_length"] = int(agg["response_length"] or 0) + response_length
+                row_idx = int(row.get("idx") or 0)
+                seg_index = row.get("segment_index")
+                if seg_index is None:
+                    seg_index = row_idx
+                segment_rows.append(
+                    {
+                        "key": key,
+                        "segment_index": int(seg_index),
+                        "segment_count": int(row.get("segment_count") or 1),
+                        "status": row.get("status") or "",
+                        "reward": row.get("reward"),
+                        "response_length": response_length,
+                        "mask_sum": int(row.get("mask_sum") or 0),
+                        "sandbox_id": row.get("sandbox_id") or "",
+                    }
+                )
+
+            attempts = [DBAttempt(**aggregates[key]) for key in order]
+            session.add_all(attempts)
+            session.flush()
+            id_by_key = {
+                (int(item.group_index), int(item.attempt_id)): item.primary_id
+                for item in attempts
+            }
+            segments = []
+            for seg in segment_rows:
+                attempt_pk = id_by_key.get(seg["key"])
+                if attempt_pk is None:
+                    continue
+                segments.append(
+                    DBSegment(
+                        attempt_id=attempt_pk,
+                        segment_index=seg["segment_index"],
+                        segment_count=seg["segment_count"],
+                        status=seg["status"],
+                        reward=seg["reward"],
+                        response_length=seg["response_length"],
+                        mask_sum=seg["mask_sum"],
+                        sandbox_id=seg["sandbox_id"],
+                    )
+                )
+            session.add_all(segments)
+            session.commit()
+            return len(attempts), len(segments)
+
     # abort / 不可测：与 rollout_parse_service / summarize_groups 对齐
     _ABORT_STATUSES = frozenset(
         {"aborted", "abort", "cancelled", "canceled", "invalid", "failed_infra"}

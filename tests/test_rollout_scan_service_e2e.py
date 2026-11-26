@@ -147,19 +147,41 @@ class TestEnd2End(unittest.TestCase):
             self.assertEqual(s.query(DBAttempt).count(), 6)
             self.assertEqual(s.query(DBSegment).count(), 6)
 
-    def test_rescan_purges(self) -> None:
+    def test_rescan_is_incremental(self) -> None:
         svc = self.SvcCls()
-        # 第一次扫
         svc.scan_task(self.task.primary_id)
         with Session() as s:
-            self.assertEqual(s.query(DBRollout).count(), 2)
-        # 重扫
+            ids = sorted(row.primary_id for row in s.query(DBRollout).all())
+            self.assertEqual(len(ids), 2)
         result = svc.rescan_task(self.task.primary_id)
         self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["scanned"], 0)
+        self.assertEqual(result["skipped"], 2)
         with Session() as s:
-            self.assertEqual(s.query(DBRollout).count(), 2)
+            self.assertEqual(
+                sorted(row.primary_id for row in s.query(DBRollout).all()),
+                ids,
+            )
             self.assertEqual(s.query(DBAttempt).count(), 6)
             self.assertEqual(s.query(DBSegment).count(), 6)
+
+        dumps_dir = Path(_TMP_DUMP_ROOT) / self.task.task_name / "rollout_dumps"
+        (dumps_dir / "rollout_2.pt").write_bytes(b"FAKE-NEW")
+        again = svc.rescan_task(self.task.primary_id)
+        self.assertEqual(again["scanned"], 1)
+        self.assertEqual(again["skipped"], 2)
+        with Session() as s:
+            self.assertEqual(s.query(DBRollout).count(), 3)
+            self.assertEqual(s.query(DBAttempt).count(), 9)
+            self.assertEqual(s.query(DBSegment).count(), 9)
+
+        forced = svc.rescan_task(self.task.primary_id, force=True)
+        self.assertEqual(forced["scanned"], 3)
+        self.assertEqual(forced["status"], "READY")
+        with Session() as s:
+            self.assertEqual(s.query(DBRollout).count(), 3)
+            self.assertEqual(s.query(DBAttempt).count(), 9)
+            self.assertEqual(s.query(DBSegment).count(), 9)
 
     def test_get_progress_after_scan(self) -> None:
         svc = self.SvcCls()

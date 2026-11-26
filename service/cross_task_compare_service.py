@@ -81,11 +81,37 @@ def _load_task_meta(task_id: int) -> Optional[Dict[str, Any]]:
 def _load_visits(task_id: int) -> Dict[str, List[Dict[str, Any]]]:
     """读某任务的 attempt 结局，按题目收成「出现次序 → 通过率」。
 
-    返回 ``{instance_id: [{"epoch", "rollout_id", "n_pass", "n_attempts", "rate"}]}``。
+    返回 ``{instance_id: [{"epoch", "rollout_id", "rollout_pk", "group_index",
+    "n_pass", "n_attempts", "rate"}]}``。``rollout_pk`` / ``group_index`` 供前端
+    直接跳到该次出现对应的 group 轨迹。
     """
     from db.db_attempt_service import DBAttemptService
+    from db.db_rollout_service import DBRolloutService
 
     rows = DBAttemptService.list_outcome_rows_by_task(int(task_id))
+    rollout_rows = DBRolloutService.list_by_task(int(task_id), limit=100000, offset=0)
+    rollout_pks = {
+        int(row.rollout_id): int(row.primary_id)
+        for row in rollout_rows
+        if row.rollout_id is not None
+    }
+    # (rollout_id, instance_id) → 该次出现里最小的 group_index，用于轨迹深链
+    group_map: Dict[Tuple[int, str], int] = {}
+    for row in rows:
+        if row.get("rollout_id") is None:
+            continue
+        iid = str(row.get("instance_id") or "").strip()
+        if not iid:
+            continue
+        gi = row.get("group_index")
+        if gi is None:
+            continue
+        key = (int(row["rollout_id"]), iid)
+        gi_int = int(gi)
+        prev = group_map.get(key)
+        if prev is None or gi_int < prev:
+            group_map[key] = gi_int
+
     trend = summarize_pass_visits(rows)
     visits: Dict[str, List[Dict[str, Any]]] = {}
     for item in trend.get("tasks") or []:
@@ -94,10 +120,18 @@ def _load_visits(task_id: int) -> Dict[str, List[Dict[str, Any]]]:
             continue
         ordered: List[Dict[str, Any]] = []
         for index, visit in enumerate(item.get("visits") or []):
+            rid = visit.get("rollout_id")
+            rid_int = int(rid) if rid is not None else None
             ordered.append(
                 {
                     "epoch": index + 1,
-                    "rollout_id": visit.get("rollout_id"),
+                    "rollout_id": rid,
+                    "rollout_pk": rollout_pks.get(rid_int) if rid_int is not None else None,
+                    "group_index": (
+                        group_map.get((rid_int, instance_id))
+                        if rid_int is not None
+                        else None
+                    ),
                     "n_pass": int(visit.get("n_pass") or 0),
                     "n_attempts": int(visit.get("n_attempts") or 0),
                     "rate": visit.get("rate"),
@@ -240,11 +274,13 @@ def _build_instance_rows(
                     else None
                 ),
                 "rates": [v.get("rate") for v in visits],
-                # 每次出现（epoch）的通过数量，供前端展示「n_pass / n_attempts」
+                # 每次出现（epoch）的通过数量 + 轨迹跳转键（rollout_pk / group_index）
                 "visits": [
                     {
                         "epoch": int(v.get("epoch") or 0),
                         "rollout_id": v.get("rollout_id"),
+                        "rollout_pk": v.get("rollout_pk"),
+                        "group_index": v.get("group_index"),
                         "n_pass": int(v.get("n_pass") or 0),
                         "n_attempts": int(v.get("n_attempts") or 0),
                         "rate": v.get("rate"),
@@ -266,11 +302,17 @@ def _build_instance_rows(
 
 
 def _sort_instance_rows(rows: List[Dict[str, Any]], task_ids: Sequence[int]) -> List[Dict[str, Any]]:
-    """按「相对基线变化绝对值」降序，让变好/变坏的题目排在最前。"""
+    """按变化幅度绝对值降序，让变好/变坏的题目排在最前。
+
+    多任务时看「相对基线」；单任务时相对基线恒为 0，改看自身首末差 ``delta``。
+    """
+    single = len(task_ids) == 1
+
     def _key(row: Dict[str, Any]) -> Tuple[int, float, str]:
         worst = 0.0
         for task_id in task_ids:
-            value = (row["tasks"].get(str(task_id)) or {}).get("vs_baseline")
+            info = row["tasks"].get(str(task_id)) or {}
+            value = info.get("delta") if single else info.get("vs_baseline")
             if isinstance(value, (int, float)) and abs(value) > abs(worst):
                 worst = float(value)
         return (0 if abs(worst) > _RATE_EPS else 1, -abs(worst), str(row.get("instance_id")))
@@ -350,13 +392,14 @@ def build_cross_task_compare(
     instance_id: str = "",
     baseline_task_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """构建跨任务对比视图。
+    """构建任务题目变化视图（单任务或跨任务）。
 
     Args:
-        task_ids: 参与对比的任务（至少 2 个）。
-        instance_id: 只看某一道题时传入；为空则看全部共同题目。
+        task_ids: 参与分析的任务（1–6 个）。单任务时看该任务全部题目随训练的变化；
+            多任务时只看共同题目，并可指定基线做相对比较。
+        instance_id: 只看某一道题时传入；为空则看全部共同题目（单任务=该任务全部题）。
         baseline_task_id: 用户主动选择的**基线任务**；为空时取第一个任务。
-            基线决定「相对基线」这一列的参照对象。
+            基线决定「相对基线」这一列的参照对象；单任务时基线即自身。
     """
     from data.rollout_insight_exception import RolloutInsightException
 
@@ -368,14 +411,14 @@ def build_cross_task_compare(
             continue
         if value > 0 and value not in cleaned:
             cleaned.append(value)
-    if len(cleaned) < 2:
+    if len(cleaned) < 1:
         raise RolloutInsightException(
-            RolloutInsightException.INVALID_ARGUMENT, "跨任务对比至少需要选择 2 个任务"
+            RolloutInsightException.INVALID_ARGUMENT, "请至少选择 1 个任务"
         )
     if len(cleaned) > _MAX_TASKS:
         raise RolloutInsightException(
             RolloutInsightException.INVALID_ARGUMENT,
-            f"跨任务对比最多支持 {_MAX_TASKS} 个任务",
+            f"最多支持 {_MAX_TASKS} 个任务",
         )
 
     task_meta: Dict[int, Dict[str, Any]] = {}
@@ -447,17 +490,32 @@ def build_cross_task_compare(
 
     guidance = _reward_guidance_list(cleaned, task_meta)
 
+    single = len(cleaned) == 1
     logger.info(
-        "跨任务对比 tasks={} common={} baseline={}",
+        "任务题目对比 tasks={} common={} baseline={} single={}",
         cleaned,
         len(common),
         baseline_id,
+        single,
     )
     baseline_name = (task_meta.get(baseline_id) or {}).get("task_name") or ""
+    if single:
+        page_note = (
+            "单任务模式：列出该任务全部题目；第 k 个 epoch = 该题第 k 次出现。"
+            "「变好 / 变坏」按自身训练轨迹（首末通过率之差）统计。"
+            "展开题目可看每次出现的通过率，并跳转对应 group 轨迹。"
+        )
+    else:
+        page_note = (
+            "共同题目 = 所有选中任务都出现过的题目；第 k 个 epoch = 该题第 k 次出现。"
+            "「变好 / 变坏」按各任务自身训练轨迹（首末通过率之差）统计；"
+            "「相对基线」列比较末次通过率与基线任务（页面顶部可切换）之差。"
+        )
     return {
         "tasks": [task_meta[task_id] for task_id in cleaned],
         "baseline_task_id": baseline_id,
         "baseline_task_name": baseline_name,
+        "single_task": single,
         "n_common": len(common),
         "common_instances": common,
         "summaries": summaries,
@@ -471,11 +529,7 @@ def build_cross_task_compare(
         },
         "reward_guidance": guidance,
         "available_tasks": list_compareable_tasks(),
-        "page_note": (
-            "共同题目 = 所有选中任务都出现过的题目；第 k 个 epoch = 该题第 k 次出现。"
-            "「变好 / 变坏」按各任务自身训练轨迹（首末通过率之差）统计；"
-            "「相对基线」列比较末次通过率与基线任务（页面顶部可切换）之差。"
-        ),
+        "page_note": page_note,
     }
 
 

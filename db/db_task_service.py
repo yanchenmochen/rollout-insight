@@ -8,7 +8,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc
+from sqlalchemy import and_, desc
 
 from db.db_element import Session
 from db.db_task import DBTask
@@ -131,6 +131,45 @@ class DBTaskService:
                     "task_name": task.task_name or "",
                     "status": task.status or "",
                 }
+            return out
+
+    @staticmethod
+    def list_autoscan_candidates(limit: int = 300) -> List[Dict[str, Any]]:
+        """列出自动重扫需要的任务快照，并带上关联南湖作业状态。
+
+        无关联作业时 ``job_status`` 为空字符串。对象在会话内组装成字典，
+        调用方不持有 ORM。
+        """
+        from db.db_nanhu_job import DBNanhuJob
+
+        with Session() as session:
+            rows = (
+                session.query(DBTask, DBNanhuJob.status)
+                .outerjoin(
+                    DBNanhuJob,
+                    and_(
+                        DBTask.nanhu_job_id != "",
+                        DBNanhuJob.job_id == DBTask.nanhu_job_id,
+                    ),
+                )
+                .order_by(desc(DBTask.update_time), desc(DBTask.primary_id))
+                .limit(int(limit))
+                .all()
+            )
+            out: List[Dict[str, Any]] = []
+            for task, job_status in rows:
+                out.append(
+                    {
+                        "task_id": task.primary_id,
+                        "task_name": task.task_name or "",
+                        "task_status": task.status or "",
+                        "job_status": job_status or "",
+                        "rollout_root": task.rollout_root or "",
+                        "recursive": bool(task.recursive),
+                        "last_scanned_at": task.last_scanned_at,
+                        "create_time": task.create_time,
+                    }
+                )
             return out
 
     @staticmethod

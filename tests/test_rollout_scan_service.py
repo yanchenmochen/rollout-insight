@@ -19,7 +19,7 @@
 - ``DBAttemptService.upsert`` 被调用 M 次（每个 sample 一行 attempt）
 - ``DBSegmentService.upsert`` 被调用 M 次
 - ``DBTaskService.update_status`` 调用序列包含 ``SCANNING -> READY``
-- ``rescan_task`` 时 ``*_Service.delete_by_task`` 都被调用
+- ``rescan_task`` 默认增量，指纹未变不再解析；``force=True`` 才清空后全量扫
 - ``get_progress`` 返回的字段非空
 """
 from __future__ import annotations
@@ -108,6 +108,33 @@ class _StubRolloutService:
     def delete_by_task(cls, task_id: int) -> int:
         before = len(cls.calls)
         cls.calls = [c for c in cls.calls if c.get("task_id") != task_id]
+        return before - len(cls.calls)
+
+    @classmethod
+    def list_fingerprints(cls, task_id: int) -> List[Dict[str, Any]]:
+        rows = []
+        for idx, call in enumerate(cls.calls, start=1):
+            if call.get("task_id") != task_id:
+                continue
+            rows.append(
+                {
+                    "primary_id": idx,
+                    "rollout_id": call.get("rollout_id"),
+                    "pt_path": call.get("pt_path"),
+                    "pt_size_bytes": call.get("pt_size_bytes"),
+                    "pt_mtime": call.get("pt_mtime"),
+                }
+            )
+        return rows
+
+    @classmethod
+    def delete_by_pt_path(cls, task_id: int, pt_path: str) -> int:
+        before = len(cls.calls)
+        cls.calls = [
+            c
+            for c in cls.calls
+            if not (c.get("task_id") == task_id and c.get("pt_path") == pt_path)
+        ]
         return before - len(cls.calls)
 
 
@@ -450,7 +477,7 @@ class TestRolloutScanService(unittest.TestCase):
         with self.assertRaises(Exception):
             svc.scan_task(task_id=9999)
 
-    def test_rescan_task_purges_old_data(self) -> None:
+    def test_rescan_skips_unchanged_and_force_purges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
             task_name = "fake-task"
@@ -471,12 +498,18 @@ class TestRolloutScanService(unittest.TestCase):
                 self.assertEqual(r1["scanned"], 2)
                 self.assertEqual(len(_StubRolloutService.calls), 2)
 
+                r2 = svc.rescan_task(self.task_id)
+                self.assertEqual(r2["scanned"], 0)
+                self.assertEqual(r2["skipped"], 2)
+                self.assertEqual(r2["status"], "READY")
+                self.assertEqual(len(_StubRolloutService.calls), 2)
+
                 with mock.patch.object(
                     svc, "_purge_task_data", wraps=svc._purge_task_data
                 ) as purge_spy:
-                    r2 = svc.rescan_task(self.task_id)
+                    r3 = svc.rescan_task(self.task_id, force=True)
                     purge_spy.assert_called_once_with(self.task_id)
-                self.assertEqual(r2["scanned"], 2)
+                self.assertEqual(r3["scanned"], 2)
                 self.assertEqual(len(_StubRolloutService.calls), 2)
 
     def test_scan_task_handles_parse_error_per_pt(self) -> None:

@@ -68,6 +68,7 @@
 - `def load_dump(path: str | Path) -> Dict[str, Any]` — 加载完整 .pt dump dict（优先 zip/pickle，不依赖可 import 的 torch）。
 - `def load_dump_meta(path: str | Path) -> Dict[str, Any]` — 读取 .pt 顶部元数据：rollout_id、n_samples、n_attempts、mean_reward。
 - `def summarize_dump(path: str | Path) -> List[Dict[str, Any]]` — 返回每个 sample 的摘要行（与 view_trajectory 表格一致）。
+- `def inspect_dump(path: str | Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]` — 一次加载 .pt，同时返回元数据与 sample 摘要。
 - `def split_turns(text: str) -> List[tuple[str, str]]` — 按 ``<|im_start|>role\n...<|im_end|>`` 切分为 ``(role, content)``。
 - `def render_transcript(path: str | Path, sample_idx: int, tokenizer_dir: Optional[str]=None, inc…` — 渲染一个 sample 的完整 transcript（Markdown）。
 
@@ -255,6 +256,7 @@
 - `staticmethod` `def get_by_id() -> Optional[DBAttempt]`
 - `staticmethod` `def delete_by_rollout(rollout_id: int) -> int`
 - `staticmethod` `def delete_by_task() -> int`
+- `staticmethod` `def replace_rollout_samples(rollout_id: int, rows: List[Dict[str, Any]]) -> tuple`
 - `classmethod` `def list_outcome_rows_by_task(task_id: int, rollout_id: Optional[int]=None) -> List[Dict[str, A…`
 - `classmethod` `def summarize_reward_metrics_by_rollout(task_id: int) -> Dict[int, Dict[str, int]]`
 - `classmethod` `def summarize_reward_metrics_by_group(task_id: int, rollout_id: int) -> Dict[int, Dict[str, Any…`
@@ -283,6 +285,8 @@
 - `staticmethod` `def list_by_task(limit: int=200, offset: int=0) -> List[DBRollout]`
 - `staticmethod` `def get_by_pt_path() -> Optional[DBRollout]`
 - `staticmethod` `def get_by_id() -> Optional[DBRollout]`
+- `staticmethod` `def list_fingerprints() -> List[Dict[str, Any]]`
+- `staticmethod` `def delete_by_pt_path(pt_path: str) -> int`
 - `staticmethod` `def delete_by_task() -> int`
 
 #### `DBSegmentService` (`db/db_segment_service.py`)
@@ -294,6 +298,7 @@
 - `staticmethod` `def list_by_task(limit: int=2000, offset: int=0) -> List[DBSegment]`
 - `staticmethod` `def count_by_rollout_for_task() -> Dict[int, int]`
 - `staticmethod` `def delete_by_attempt() -> int`
+- `staticmethod` `def delete_by_rollout(rollout_id: int) -> int`
 - `staticmethod` `def delete_by_task() -> int`
 
 #### `DBSegmentTranscriptService` (`db/db_segment_transcript_service.py`)
@@ -321,6 +326,7 @@
 - `staticmethod` `def get_by_name() -> Optional[DBTask]`
 - `staticmethod` `def list_tasks(keyword: Optional[str]=None, limit: int=100, offset: int=0) -> List[DBTask]`
 - `staticmethod` `def list_by_nanhu_job_ids() -> Dict[str, Dict[str, Any]]`
+- `staticmethod` `def list_autoscan_candidates() -> List[Dict[str, Any]]`
 - `staticmethod` `def update_status(status: str) -> bool`
 - `staticmethod` `def update_fields(**fields: Any) -> bool`
 - `staticmethod` `def delete_task() -> bool`
@@ -456,6 +462,19 @@
 - `staticmethod` `def summarize_pool_health(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
 - `staticmethod` `def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
 
+### `rollout_auto_scan_service_module` (`service/rollout_auto_scan_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def cadence_from_mtimes(mtimes: Sequence[float]) -> float`
+- `staticmethod` `def task_is_producing(job_status: str, file_mtimes: Sequence[float], now: datetime) -> bool`
+- `staticmethod` `def decide_autoscan(*, job_status: str, task_status: str, file_mtimes: Sequence[float], last_sc…`
+- `staticmethod` `def worth_watching(item: Dict[str, Any], now: datetime) -> bool`
+- `staticmethod` `def run_autoscan_tick(now: Optional[datetime]=None, candidates: Optional[List[Dict[str, Any]]]=…`
+- `staticmethod` `def start_auto_scan_loop(interval: Optional[float]=None) -> None`
+- `staticmethod` `def stop_auto_scan_loop() -> None`
+- `staticmethod` `def auto_scan_enabled() -> bool`
+
 ### `RolloutParseService` (`service/rollout_parse_service.py`)
 
 - `method` `def parse_rollout(pt_path: str, force: bool=False) -> Dict[str, Any]`
@@ -470,7 +489,7 @@
 ### `RolloutScanService` (`service/rollout_scan_service.py`)
 
 - `method` `def scan_task(task_id: int, force: bool=False) -> Dict[str, Any]`
-- `method` `def rescan_task(task_id: int) -> Dict[str, Any]`
+- `method` `def rescan_task(task_id: int, force: bool=False) -> Dict[str, Any]`
 - `method` `def get_progress(task_id: int) -> Dict[str, Any]`
 
 ### `segment_search_service_module` (`service/segment_search_service.py`)
@@ -586,7 +605,7 @@
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/annotations/meta.json` | `api_task_annotations_meta` | 返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
-| `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。 |
+| `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发增量重扫（异步后台跑，请求立即返回）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/delete` | `api_delete_task` | 删除任务（级联删除其 rollout/attempt/segment）。 |
 | `tensorboard_controller` | GET | `/api/tensorboard` | `page_tensorboard_compare` | 渲染多任务曲线对比页（勾选任务 + 指标，叠图）。 |
 | `tensorboard_controller` | GET | `/api/tensorboard/curve-compare.json` | `api_curve_compare` | 返回多任务曲线叠加数据：勾选的任务 × 勾选的指标。 |

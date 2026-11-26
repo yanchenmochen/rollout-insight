@@ -867,12 +867,16 @@ async def api_rollout_annotations(task_id: int, rollout_pk: int) -> Response:
 @router.post("/api/tasks/{task_id}/rescan")
 async def api_rescan_task(
     task_id: int,
+    force: bool = Query(
+        default=False,
+        description="true 时清空后全量重扫；默认只解析新增或变更的 .pt",
+    ),
     background: BackgroundTasks = None,  # 由 FastAPI 依赖注入
 ) -> Response:
-    """触发 RolloutScanService.rescan_task（异步后台跑，请求立即返回）。
+    """触发增量重扫（异步后台跑，请求立即返回）。
 
-    异步原因：单 task 含 30~50 个 .pt 同步扫会持续 1~3 分钟，期间阻塞 server 线程
-    让所有其他请求都排队。改成 BackgroundTasks 后请求立即返回，scan 在后台跑。
+    默认按 .pt 的大小和 mtime 跳过未变更文件，只解析新增或被覆盖的 dump。
+    ``force=true`` 才清空后全量重来。运行中的南湖任务另有按落盘间隔的自动重扫。
     """
     Task = _task_model()
     if Task is None:
@@ -901,24 +905,25 @@ async def api_rescan_task(
         )
     # 把扫描塞到后台；请求立即返回
     if background is not None:
-        background.add_task(_run_rescan_background, scan_cls, task_id)
+        background.add_task(_run_rescan_background, scan_cls, task_id, force)
     return Response.success(
-        msg="已提交后台重扫",
+        msg="已提交后台全量重扫" if force else "已提交后台增量重扫",
         data={
             "task_id": task_id,
+            "force": force,
             "status": "PENDING_SCAN",
-            "hint": "用 GET /api/tasks/{id} 查看进度（status=READY/FAILED/SCANNING）",
+            "hint": "增量重扫跳过大小与 mtime 未变的 .pt。运行中的任务会按 rollout 落盘间隔自动重扫。",
         },
     )
 
 
-def _run_rescan_background(scan_cls, task_id: int) -> None:
+def _run_rescan_background(scan_cls, task_id: int, force: bool = False) -> None:
     """后台线程：执行 rescan，仅记日志，不抛回响应。"""
     try:
         inst = scan_cls() if callable(scan_cls) else scan_cls
-        inst.rescan_task(task_id)
+        inst.rescan_task(task_id, force=force)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("后台重扫 task_id={} 失败: {}", task_id, exc)
+        logger.exception("后台重扫 task_id={} force={} 失败: {}", task_id, force, exc)
 
 
 @router.post("/api/tasks/{task_id}/delete")

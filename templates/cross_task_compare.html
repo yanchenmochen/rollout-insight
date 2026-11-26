@@ -15,12 +15,28 @@
     .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
     .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
     .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
-    .task-picker { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
-    .task-picker select { min-width: 320px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--ri-border); border-radius: 4px; }
+    .task-picker { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .task-picker input[type="text"] { padding: 6px 9px; border: 1px solid var(--ri-border);
+        border-radius: 4px; min-width: 240px; flex: 1; max-width: 420px; }
+    .task-picker .btn { cursor: pointer; }
+    .task-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 14px;
+        max-height: 280px; overflow: auto; padding: 4px 2px 8px; border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); background: #fafbfc; }
+    .task-check { display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; border-radius: 6px;
+        border: 1px solid transparent; font-size: 13px; cursor: pointer; background: #fff; }
+    .task-check:hover { background: #f4f7fa; border-color: var(--ri-border); }
+    .task-check.on { border-color: var(--ri-accent); background: #eef4fb; }
+    .task-check input { margin-top: 3px; flex: 0 0 auto; }
+    .task-check .tname { display: block; word-break: break-all; line-height: 1.35; }
+    .task-check .tmeta { font-size: 11px; color: var(--ri-muted); font-family: ui-monospace, monospace; margin-top: 2px; }
+    .task-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
     .task-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-    .task-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 14px;
+    .task-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 14px;
         font-size: 13px; border: 1px solid var(--ri-border); background: #f8fafb; }
     .task-chip .baseline { font-size: 11px; color: #8a5a00; background: #fff3cd; border-radius: 8px; padding: 1px 7px; }
+    .task-chip .chip-x { border: none; background: transparent; color: var(--ri-muted); cursor: pointer;
+        font-size: 14px; line-height: 1; padding: 0 2px; }
+    .task-chip .chip-x:hover { color: #c62828; }
     .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
     .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
         font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
@@ -83,9 +99,15 @@
     .detail-spark { width: 100%; }
     .detail-spark svg { width: 100%; height: auto; display: block; }
     .detail-visits { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
-    .visit-badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #f3f5f8;
-        border: 1px solid var(--ri-border); font-variant-numeric: tabular-nums; }
-    .visit-badge .ep { color: var(--ri-muted); margin-right: 3px; }
+    a.visit-badge { font-size: 11px; padding: 2px 8px; border-radius: 9px; background: #f3f5f8;
+        border: 1px solid var(--ri-border); font-variant-numeric: tabular-nums;
+        color: var(--ri-ink); text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+        cursor: pointer; }
+    a.visit-badge:hover { border-color: var(--ri-accent); background: #eef4fb; color: var(--ri-accent); }
+    a.visit-badge:focus-visible { outline: 2px solid var(--ri-accent); outline-offset: 1px; }
+    a.visit-badge .ep { color: var(--ri-muted); }
+    a.visit-badge .rid { font-family: ui-monospace, monospace; font-weight: 600; color: var(--ri-accent); }
+    .visit-hint { font-size: 11px; color: var(--ri-muted); margin-top: 6px; }
     .detail-rate { font-size: 12px; color: var(--ri-muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
     .detail-rate b { color: var(--ri-ink); }
     .instance-name { color: var(--ri-accent); text-decoration: none; font-family: ui-monospace, monospace; }
@@ -95,54 +117,51 @@
 {% block content %}
 <h1>跨任务对比</h1>
 <p class="lead">
-    选择多个任务（不同训练配置），页面只比较它们<strong>共同处理过的题目</strong>：
-    第 k 个 epoch = 该题第 k 次出现。回答的问题是
-    <strong>训练过程中哪些共同的题目变好了，哪些变坏了</strong>。
-    在任务选择下方<strong>主动指定一个基线任务</strong>，其余任务都与它比较末次通过率之差
+    勾选 <strong>1 个任务</strong>可单独看该任务随训练进行、每道题通过率如何变化；
+    勾选 <strong>2–6 个任务</strong>则只比较它们<strong>共同处理过的题目</strong>，并可指定基线看相对差距
     （<span class="delta-up">变好绿色</span> / <span class="delta-down">变差红色</span>）。
-    每道题都可以展开，看到各任务的通过率折线与每次通过的题数。
+    第 k 个 epoch = 该题第 k 次出现；展开题目可看折线、每次通过数，并跳转 group 轨迹。
 </p>
 
 <div class="section">
-    <h2>选择任务 <small>至少 2 个，最多 6 个</small></h2>
+    <h2>选择任务 <small>1–6 个 · 勾选即可</small></h2>
     <div class="task-picker">
-        <select id="taskSelect" size="8" multiple>
-            {% for t in tasks %}
-            <option value="{{ t.task_id }}">#{{ t.task_id }} {{ t.task_name }}（{{ t.status or "—" }} · {{ t.attempt_count }} attempt）</option>
-            {% endfor %}
-        </select>
-        <div>
-            <button type="button" class="btn" id="compareBtn">开始对比</button>
-            <button type="button" class="btn btn-secondary" id="clearBtn">清空选择</button>
-        </div>
+        <input type="text" id="taskFilter" placeholder="按任务名 / #id 筛选…" autocomplete="off" />
+        <button type="button" class="btn btn-secondary" id="btnSelectRecent">最近 3 个</button>
+        <button type="button" class="btn btn-secondary" id="clearBtn">清空</button>
+        <span class="muted" id="taskCount"></span>
     </div>
+    <div class="task-checks" id="taskChecks"></div>
+    <div class="task-list" id="taskChips"></div>
     <div class="baseline-picker" id="baselinePicker" style="display:none;">
         <label for="baselineSelect"><span class="ri-icon ri-icon-scale"></span> 基线任务</label>
         <select id="baselineSelect"></select>
         <span class="muted">其余任务都与它比较末次通过率之差；变好用绿色、变差用红色。</span>
     </div>
-    <div class="task-list" id="taskChips"></div>
-    <div class="muted" id="pickerHint">按住 Ctrl / Cmd 可多选。</div>
+    <div class="task-actions">
+        <button type="button" class="btn" id="compareBtn">开始分析</button>
+        <span class="muted" id="pickerHint">单任务看自身题目变化；多任务比共同题目。</span>
+    </div>
 </div>
 
 <div id="errorBox" class="alert alert-warning" style="display:none;"></div>
 <div id="loading" class="loading" style="display:none;">正在对比…</div>
 <div id="body" style="display:none;">
     <div class="section" id="summarySection">
-        <h2>共同题目概览 <small id="commonMeta"></small></h2>
+        <h2><span id="summaryTitleText">题目概览</span> <small id="commonMeta"></small></h2>
         <div class="chip-row" id="summaryChips"></div>
         <div class="muted" id="summaryNote"></div>
     </div>
 
     <div class="section" id="curveSection">
-        <h2>共同题目通过率趋势 <small>按 epoch 汇总 · 横轴 epoch</small></h2>
+        <h2><span id="curveTitleText">题目通过率趋势</span> <small>按 epoch 汇总 · 横轴 epoch</small></h2>
         <div class="legend" id="curveLegend"></div>
         <div class="curve-chart" id="curveChart"></div>
         <div class="muted" id="curveNote"></div>
     </div>
 
     <div class="section" id="instanceSection">
-        <h2>题目级变化 <small>相对基线任务 · 按变化幅度排序</small></h2>
+        <h2 id="instanceTitle">题目级变化 <small id="instanceSub">按变化幅度排序</small></h2>
         <div class="filters" id="filters">
             <button type="button" data-dir="" class="active">全部</button>
             <button type="button" data-dir="up">变好</button>
@@ -184,10 +203,12 @@
 (function () {
     const $ = (id) => document.getElementById(id);
     const PAGE = 30;
+    const MAX_TASKS = 6;
     const PALETTE = ["#2d6a9f", "#c62828", "#2d6a4f", "#8a5a00", "#6a1b9a", "#0f766e"];
+    const ALL_TASKS = {{ tasks | tojson }};
     let DATA = null;
-    let selected = [];
-    let baselineId = null;     // 用户主动选择的基线任务
+    let selected = [];           // 字符串 task_id 列表，保持勾选顺序
+    let baselineId = null;       // 用户主动选择的基线任务
     let dirFilter = "";
     let search = "";
     let page = 0;
@@ -217,21 +238,74 @@
         $("errorBox").style.display = "";
         $("errorBox").textContent = msg;
     }
-    function taskIds() {
-        return Array.from($("taskSelect").selectedOptions).map((o) => o.value);
-    }
-
     // ------------------------------------------------------------- 任务选择
+    function taskMeta(id) {
+        return (ALL_TASKS || []).find((x) => String(x.task_id) === String(id)) || null;
+    }
     function taskName(id) {
-        const t = (DATA && DATA.tasks || []).find((x) => String(x.task_id) === String(id));
-        return t ? t.task_name : ("#" + id);
+        const fromData = (DATA && DATA.tasks || []).find((x) => String(x.task_id) === String(id));
+        if (fromData) return fromData.task_name;
+        const t = taskMeta(id);
+        return t ? (t.task_name || ("#" + id)) : ("#" + id);
     }
     function colorOf(id) {
-        const ids = (DATA && DATA.tasks || []).map((t) => String(t.task_id));
+        const ids = selected.length
+            ? selected
+            : (DATA && DATA.tasks || []).map((t) => String(t.task_id));
         return PALETTE[Math.max(0, ids.indexOf(String(id))) % PALETTE.length];
     }
 
-    // 基线下拉：只列出参与对比的任务
+    function updateTaskCount() {
+        $("taskCount").textContent = `已选 ${selected.length} / 最多 ${MAX_TASKS}`;
+    }
+
+    function renderTaskChecks() {
+        const host = $("taskChecks");
+        const kw = ($("taskFilter").value || "").trim().toLowerCase();
+        const shown = (ALL_TASKS || []).filter((t) => {
+            if (!kw) return true;
+            const name = String(t.task_name || "").toLowerCase();
+            return name.includes(kw) || String(t.task_id) === kw || ("#" + t.task_id) === kw;
+        });
+        if (!shown.length) {
+            host.innerHTML = `<div class="muted" style="padding:10px;">没有匹配的任务。</div>`;
+            updateTaskCount();
+            return;
+        }
+        host.innerHTML = shown.map((t) => {
+            const id = String(t.task_id);
+            const on = selected.indexOf(id) >= 0;
+            const status = t.status || "—";
+            const attempts = t.attempt_count != null ? t.attempt_count : "—";
+            return `<label class="task-check ${on ? "on" : ""}">
+                <input type="checkbox" data-task-id="${esc(id)}" ${on ? "checked" : ""} />
+                <span>
+                    <span class="tname">${esc(t.task_name || ("任务 #" + id))}</span>
+                    <span class="tmeta">#${esc(id)} · ${esc(status)} · ${esc(String(attempts))} attempt</span>
+                </span>
+            </label>`;
+        }).join("");
+        host.querySelectorAll("input[data-task-id]").forEach((box) => {
+            box.addEventListener("change", () => {
+                const id = String(box.getAttribute("data-task-id"));
+                if (box.checked) {
+                    if (selected.length >= MAX_TASKS) {
+                        box.checked = false;
+                        showError(`最多选择 ${MAX_TASKS} 个任务。`);
+                        return;
+                    }
+                    $("errorBox").style.display = "none";
+                    if (selected.indexOf(id) < 0) selected.push(id);
+                } else {
+                    selected = selected.filter((x) => x !== id);
+                }
+                renderSelection();
+            });
+        });
+        updateTaskCount();
+    }
+
+    // 基线下拉：只列出参与对比的任务（单任务时隐藏）
     function renderBaselinePicker() {
         const picker = $("baselinePicker");
         const select = $("baselineSelect");
@@ -241,7 +315,6 @@
             return;
         }
         picker.style.display = "";
-        // 基线必须是被选中的任务之一；否则回退到第一个
         if (baselineId == null || ids.indexOf(String(baselineId)) < 0) {
             baselineId = ids[0];
         }
@@ -252,25 +325,48 @@
     }
 
     function renderChips() {
-        selected = taskIds();
         if (baselineId != null && selected.indexOf(String(baselineId)) < 0) {
             baselineId = selected.length ? selected[0] : null;
         }
         renderBaselinePicker();
-        $("taskChips").innerHTML = selected.map((id) =>
-            `<span class="task-chip">${String(id) === String(baselineId) ? '<span class="baseline">基线</span>' : ""}#${esc(id)} ${esc(taskName(id))}</span>`
-        ).join("") || `<span class="muted">尚未选择任务</span>`;
+        $("taskChips").innerHTML = selected.map((id) => {
+            const base = String(id) === String(baselineId) && selected.length >= 2
+                ? '<span class="baseline">基线</span>' : "";
+            return `<span class="task-chip">${base}#${esc(id)} ${esc(taskName(id))}
+                <button type="button" class="chip-x" data-remove="${esc(id)}" title="移除" aria-label="移除">×</button>
+            </span>`;
+        }).join("") || `<span class="muted">尚未选择任务</span>`;
+        $("taskChips").querySelectorAll("button[data-remove]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const id = btn.getAttribute("data-remove");
+                selected = selected.filter((x) => x !== id);
+                renderSelection();
+            });
+        });
+        updateTaskCount();
+    }
+
+    function renderSelection() {
+        renderTaskChecks();
+        renderChips();
     }
 
     // ------------------------------------------------------------- 概览
     function renderSummary() {
         const tasks = DATA.tasks || [];
-        $("commonMeta").textContent = `共同题目 ${DATA.n_common} 道 · 基线 #${DATA.baseline_task_id} ${taskName(DATA.baseline_task_id)}`;
+        const single = !!(DATA && DATA.single_task);
+        $("summaryTitleText").textContent = single ? "题目概览" : "共同题目概览";
+        $("commonMeta").textContent = single
+            ? `${DATA.n_common} 道题 · #${DATA.baseline_task_id} ${taskName(DATA.baseline_task_id)}`
+            : `共同题目 ${DATA.n_common} 道 · 基线 #${DATA.baseline_task_id} ${taskName(DATA.baseline_task_id)}`;
+        $("curveTitleText").textContent = single ? "题目通过率趋势" : "共同题目通过率趋势";
+        $("instanceSub").textContent = single
+            ? "自身训练轨迹 · 按首尾变化幅度排序"
+            : "相对基线任务 · 按变化幅度排序";
         const chips = [];
         (tasks || []).forEach((t) => {
-            const s = (DATA.summaries || {})[String(t.task_id)] || {};
             const b = (DATA.buckets || {})[String(t.task_id)] || {};
-            const isBase = String(t.task_id) === String(DATA.baseline_task_id);
+            const isBase = !single && String(t.task_id) === String(DATA.baseline_task_id);
             chips.push(`<span class="chip">#${t.task_id} ${esc(t.task_name)}${isBase ? ' <strong style="font-size:11px;color:#8a5a00;">基线</strong>' : ""} · 变好 <strong class="delta-up">${b.improved || 0}</strong> · 变坏 <strong class="delta-down">${b.worsened || 0}</strong></span>`);
         });
         $("summaryChips").innerHTML = chips.join("");
@@ -354,12 +450,14 @@
     // ------------------------------------------------------------- 题目表
     function filteredInstances() {
         let rows = (DATA && DATA.instances) || [];
+        const single = !!(DATA && DATA.single_task);
         if (dirFilter) {
             rows = rows.filter((row) => {
+                // 单任务看自身首末差；多任务看相对基线
                 const vals = Object.values(row.tasks || {})
-                    .map((t) => t.vs_baseline)
+                    .map((t) => (single ? t.delta : t.vs_baseline))
                     .filter((v) => v != null && !Number.isNaN(v));
-                if (!vals.length) return false;
+                if (!vals.length) return dirFilter === "flat"; // 无差值（只出现一次）归入持平
                 const best = Math.max(...vals), worst = Math.min(...vals);
                 if (dirFilter === "up") return best > 0.005;
                 if (dirFilter === "down") return worst < -0.005;
@@ -400,13 +498,36 @@
         </svg></div>`;
     }
 
-    // 每个任务的通过数量徽章（n_pass / n_attempts）
-    function visitBadges(visits) {
+    // 每次出现的通过率徽章：标 rollout id，可点进该次 group 轨迹
+    function visitHref(taskId, instanceId, visit) {
+        const pk = visit && visit.rollout_pk;
+        if (pk) {
+            let href = `/api/tasks/${taskId}/rollouts/${pk}`;
+            if (visit.group_index != null && visit.group_index !== "") {
+                href += `?group=${encodeURIComponent(visit.group_index)}`;
+            }
+            return href;
+        }
+        return `/api/tasks/${taskId}/problem-analysis/instance?instance_id=${encodeURIComponent(instanceId)}`;
+    }
+
+    function visitBadges(visits, taskId, instanceId) {
         if (!visits || !visits.length) return "";
-        return `<div class="detail-visits">${visits.map((v) =>
-            `<span class="visit-badge" title="epoch ${v.epoch}（rollout ${v.rollout_id}）通过 ${v.n_pass}/${v.n_attempts}">
-                <span class="ep">E${v.epoch}</span>${v.n_pass}/${v.n_attempts}</span>`
-        ).join("")}</div>`;
+        const badges = visits.map((v, i) => {
+            const rid = v.rollout_id;
+            const gi = v.group_index;
+            const keyHint = i < 9 ? ` · 快捷键 ${i + 1}` : "";
+            const title = `第 ${v.epoch} 次出现 · rollout ${rid}`
+                + (gi != null && gi !== "" ? ` · group ${gi}` : "")
+                + ` · 通过 ${v.n_pass}/${v.n_attempts}${keyHint} · 点击查看轨迹`;
+            const href = visitHref(taskId, instanceId, v);
+            return `<a class="visit-badge" href="${esc(href)}" target="_blank" rel="noopener"
+                data-visit-idx="${i + 1}" title="${esc(title)}">
+                <span class="ep">E${v.epoch}</span>
+                <span class="rid">r${rid}</span>
+                ${v.n_pass}/${v.n_attempts}</a>`;
+        }).join("");
+        return `<div class="detail-visits" data-task-id="${esc(String(taskId))}">${badges}</div>`;
     }
 
     function renderInstanceDetail(row) {
@@ -432,11 +553,12 @@
                     首尾差 <span class="${cls}">${delta == null ? "-" : ((delta > 0 ? "+" : "") + (delta * 100).toFixed(1) + " pct")}</span>
                     ${isBase ? "" : ` · 相对基线 <span class="${vsCls}">${vs == null ? "-" : ((vs > 0 ? "+" : "") + (vs * 100).toFixed(1) + " pct")}</span>`}
                 </div>
-                ${visitBadges(info.visits || [])}
+                ${visitBadges(info.visits || [], t.task_id, row.instance_id)}
             </div>`;
         }).join("");
         return `<div class="instance-detail"><div class="instance-detail-inner">
             <div class="detail-tasks">${cards}</div>
+            <div class="visit-hint">徽章：E=第几次出现 · rN=rollout id · 分数=通过数；点击徽章或按 1–9（悬停任务卡优先）打开该次 group 轨迹</div>
             <div style="margin-top:8px;">
                 <a class="instance-name" href="#" data-focus="${esc(row.instance_id)}">查看单题明细（attempt 级别）</a>
             </div>
@@ -459,15 +581,15 @@
             `<span style="color:${colorOf(t.task_id)}">#${t.task_id} ${esc(t.task_name)}</span>`
         ).join(" &nbsp;·&nbsp; ");
 
+        const single = !!(DATA && DATA.single_task);
         $("instanceBody").innerHTML = slice.map((row) => {
             const cells = tasks.map((t) => {
                 const info = (row.tasks || {})[String(t.task_id)] || {};
-                const vs = info.vs_baseline;
                 const isBase = String(t.task_id) === String(DATA.baseline_task_id);
-                const vsText = isBase
-                    ? `<span class="delta-flat">基线</span>`
-                    : signedPct(vs);
-                // 最近一次的通过数量（n_pass / n_attempts）
+                // 单任务展示首尾差；多任务非基线展示相对基线
+                const vsText = single
+                    ? signedPct(info.delta)
+                    : (isBase ? `<span class="delta-flat">基线</span>` : signedPct(info.vs_baseline));
                 const visits = info.visits || [];
                 const lastVisit = visits.length ? visits[visits.length - 1] : null;
                 const passText = lastVisit
@@ -576,8 +698,12 @@
     }
 
     async function load() {
-        if (selected.length < 2) {
-            showError("请至少选择 2 个任务再对比。");
+        if (selected.length < 1) {
+            showError("请至少选择 1 个任务再分析。");
+            return;
+        }
+        if (selected.length > MAX_TASKS) {
+            showError(`最多选择 ${MAX_TASKS} 个任务。`);
             return;
         }
         $("loading").style.display = "";
@@ -591,25 +717,32 @@
             if (DATA.baseline_task_id != null) baselineId = String(DATA.baseline_task_id);
             $("loading").style.display = "none";
             $("body").style.display = "";
-            renderBaselinePicker();
-            renderChips();
+            renderSelection();
             renderSummary();
             renderCurve();
             renderInstances();
             renderGuidance();
         } catch (e) {
             $("loading").style.display = "none";
-            showError("跨任务对比失败：" + (e && e.message ? e.message : e));
+            showError("分析失败：" + (e && e.message ? e.message : e));
         }
     }
 
     $("compareBtn").addEventListener("click", () => { page = 0; expanded.clear(); load(); });
     $("clearBtn").addEventListener("click", () => {
-        Array.from($("taskSelect").options).forEach((o) => { o.selected = false; });
+        selected = [];
         baselineId = null;
-        renderChips();
+        $("body").style.display = "none";
+        $("errorBox").style.display = "none";
+        renderSelection();
     });
-    $("taskSelect").addEventListener("change", renderChips);
+    $("btnSelectRecent").addEventListener("click", () => {
+        selected = (ALL_TASKS || []).slice(0, Math.min(3, MAX_TASKS)).map((t) => String(t.task_id));
+        baselineId = selected[0] || null;
+        $("errorBox").style.display = "none";
+        renderSelection();
+    });
+    $("taskFilter").addEventListener("input", () => { renderTaskChecks(); });
     $("baselineSelect").addEventListener("change", (ev) => {
         baselineId = ev.target.value;
         expanded.clear();
@@ -633,7 +766,23 @@
     $("prevPage").addEventListener("click", () => { page--; renderInstances(); });
     $("nextPage").addEventListener("click", () => { page++; renderInstances(); });
 
-    renderChips();
+    // 展开抽屉后：1–9 打开对应出现（优先鼠标悬停的那张任务卡）
+    document.addEventListener("keydown", (ev) => {
+        if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+        const tag = (ev.target && ev.target.tagName) || "";
+        if (/^(INPUT|TEXTAREA|SELECT)$/i.test(tag) || (ev.target && ev.target.isContentEditable)) return;
+        const n = parseInt(ev.key, 10);
+        if (!(n >= 1 && n <= 9)) return;
+        const hovered = document.querySelector(".detail-task:hover .detail-visits");
+        const box = hovered || document.querySelector(".instance-detail-row .detail-visits");
+        if (!box) return;
+        const badge = box.querySelector(`a.visit-badge[data-visit-idx="${n}"]`);
+        if (!badge || !badge.getAttribute("href")) return;
+        ev.preventDefault();
+        window.open(badge.getAttribute("href"), "_blank", "noopener");
+    });
+
+    renderSelection();
 })();
 </script>
 {% endblock %}

@@ -126,7 +126,7 @@ rollout-insight/
 | GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染；结局/奖励柱 SSR，类型细分渐进加载） |
 | GET  | `/api/tasks/{id}/annotations/meta.json` | 任务详情类型柱渐进加载：待拉取的 rollout 列表 |
 | GET  | `/api/tasks/{id}/rollouts/{rollout_pk}/annotations.json` | 单 rollout 类型柱 / 进入训练 / 失败摘要 |
-| POST | `/api/tasks/{id}/rescan` | 触发 RolloutScanService.rescan_task |
+| POST | `/api/tasks/{id}/rescan` | 增量重扫（跳过大小与 mtime 未变的 .pt）。`?force=true` 清空后全量重扫 |
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
 | GET  | `/api/tasks/create` | 渲染 task_create.html |
 | GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析（可带 `cat=` / `reason=` / `agent=` / `rollout_id=` 初始筛选） |
@@ -142,8 +142,8 @@ rollout-insight/
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
 | GET  | `/api/tensorboard` | 多任务曲线对比页：勾选多个任务 + 指标，叠图对比 |
 | GET  | `/api/tensorboard/curve-compare.json` | 多任务曲线叠加数据（`task_ids=1,2,3` / `keys=` / `view=step\|epoch`；`brief=true` 只回任务清单与指标目录） |
-| GET  | `/api/cross-task-compare` | 跨任务对比页：选多个任务 + 选基线，比较共同题目的训练过程变化 |
-| GET  | `/api/cross-task-compare.json` | 跨任务对比 JSON（`task_ids=1,2,3`，可选 `baseline_task_id=` / `instance_id=`） |
+| GET  | `/api/cross-task-compare` | 任务题目变化页：勾选 1–6 个任务（单任务看自身题目变化，多任务比共同题目 + 可选基线） |
+| GET  | `/api/cross-task-compare.json` | 对比 JSON（`task_ids=1` 或 `1,2,3`，可选 `baseline_task_id=` / `instance_id=`） |
 | GET  | `/api/cross-task-compare/instance.json` | 单题在多任务上的逐次出现与通过率 |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
@@ -157,6 +157,8 @@ rollout-insight/
 | GET  | `/api/failures/attempts/{attempt_pk}/trajectory.json` | OpenHands 轨迹分页（`offset`/`limit`/`errors_only`） |
 
 `GET /api/segments/search` 在原有任务、reward 下限和关键字之外，可以再按 `group_index` 与业务 `attempt_id` 精确过滤。响应里的 `attempt_id` 仍是 attempt 表主键，另外返回 `group_index` 和 `attempt_biz_id`。页面检索走 `GET /api/segments/search/page`。
+
+**重扫。** 列表上的「重扫」走增量：已经入库且大小、mtime 都没变的 `.pt` 不再解析。同一个 `.pt` 只加载一次，attempt / segment 在一个事务里替换，不再逐行提交，也不再在扫描时预热注解 sidecar。需要整库重来时给接口加 `?force=true`。`python main.py` 会打开自动重扫（`ROLLOUT_INSIGHT_AUTO_SCAN=1`）：南湖作业仍在 `RUNNING` / `PENDING` 等状态，或目录里的 `rollout_*.pt` 还在按间隔增长时，用最近几次落盘的时间间隔（默认约 2 分钟，夹在 45 秒到 15 分钟之间）决定下一次增量扫描。新文件落盘并安静约 10 秒后会提前扫，不必干等完整间隔。设 `ROLLOUT_INSIGHT_AUTO_SCAN=0` 可关掉。
 
 ### 5.0 任务详情页
 
@@ -277,17 +279,19 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
 
 数据接口 `GET /api/tensorboard/curve-compare.json?task_ids=1,2&keys=raw_reward&view=step`；`brief=true` 时只回任务清单与指标目录（页面首屏用，不读事件文件，避免一次加载十几个事件目录）。SVG 折线渲染抽到共享模块 `static/ri_multi_chart.js`（暴露 `window.RiMultiChart.renderLineChart` / `renderSparkline`），与问题分析页的单题趋势图共用。
 
-### 5.5 跨任务对比（多任务）
+### 5.5 跨任务对比（单任务 / 多任务）
 
-顶栏「跨任务对比」进入 `/api/cross-task-compare`。它回答：**不同的训练配置下，训练过程中哪些共同的题目变好了，哪些变坏了。**
+顶栏「跨任务对比」进入 `/api/cross-task-compare`。勾选 **1 个任务**可单独看该任务每道题随训练的通过率变化；勾选 **2–6 个任务**则只比较共同题目，并可指定基线看相对差距。
 
-- **共同题目**：所有选中任务都出现过的 `instance_id`。
+- **任务选择**：可搜索的勾选列表（按任务名 / `#id` 过滤），已选任务以可移除芯片展示；「最近 3 个」快捷勾选。
+- **单任务**：列出该任务全部题目，按自身首末通过率差排序 / 筛选；不展示基线下拉。
+- **多任务共同题目**：所有选中任务都出现过的 `instance_id`；可指定基线看「相对基线」列。
 - **epoch 口径**：与问题分析页完全一致——第 k 个 epoch = 该题第 k 次出现（按 `rollout_id` 升序）。
-- **基线任务由用户主动选择**：任务选择框下方有「基线任务」下拉，只列出参与对比的任务。切换基线会重新计算「相对基线」列并按变化幅度重新排序。请求参数 `baseline_task_id=`（非法或未指定时退回第一个任务）。
-- **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计，区分「变好 / 不变 / 变坏」三档；另有「相对基线」一列，比较末次通过率与基线任务之差，回答「哪个配置更强」。**变好用绿色、变差用红色**。
-- **每题可展开**：题目列表每行可展开，抽屉里给出各任务的通过率折线（sparkline）、每次出现（epoch）的**通过数量**（`n_pass / n_attempts`，如 `3/8`）、末次通过率与首尾差。
-- **单题下钻**：抽屉底部可跳「查看单题明细」，看这一道题在多个任务上的 attempt 级别明细。
-- **奖励上升指引**：每个任务给出一组杠杆卡片，复用 `service/reward_diagnosis_service.build_reward_levers` 与单任务奖励诊断页同款口径，指明哪条在拖后腿、该做什么。
+- **基线任务（多任务）**：勾选 ≥2 个后出现「基线任务」下拉。切换基线会重新计算「相对基线」列。请求参数 `baseline_task_id=`（非法或未指定时退回第一个任务）。
+- **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计；多任务另有「相对基线」列。**变好用绿色、变差用红色**。
+- **每题可展开**：抽屉里给出通过率折线、每次出现的 **`E{k} r{rollout_id} n_pass/n_attempts`** 徽章（可点击 / 按 1–9 跳转该次 group 轨迹）。
+- **单题下钻**：抽屉底部可跳「查看单题明细」。
+- **奖励上升指引**：每个任务一组杠杆卡片，与单任务奖励诊断页同款口径。
 
 ### 5.6 界面图标（离线 Lucide）
 

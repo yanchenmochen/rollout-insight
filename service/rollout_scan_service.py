@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,9 +43,14 @@ class RolloutScanService:
     """扫描 .pt dump -> 入库主服务。
 
     单次扫描调用：``scan_task(task_id)``。
-    强制重扫：``rescan_task(task_id)``。
+    重扫：``rescan_task(task_id)`` 默认增量（跳过指纹未变的 .pt）；
+    ``force=True`` 时先清空再全量解析。
     进度查询：``get_progress(task_id)``。
     """
+
+    # 同一 task 同时只跑一次扫描（手动重扫与自动重扫共用）
+    _inflight_guard = threading.Lock()
+    _inflight_tasks: set = set()
 
     def __init__(self) -> None:
         self.log_dir: Path = Path(config.log_dir)
@@ -130,20 +136,47 @@ class RolloutScanService:
 
         Args:
             task_id: DBTask.primary_id
-            force: True 时先清空该 task 下旧数据，再扫
+            force: True 时先清空该 task 下旧数据再全量解析。
+                False（默认，也是重扫按钮的路径）只解析新增、被覆盖或已删除的 .pt，
+                指纹（路径 + 大小 + mtime）未变的文件直接跳过。
 
         Returns:
             形如 ``{
                 "task_id": int,
-                "status": "READY" | "FAILED",
-                "scanned": int,  # 扫描成功的 .pt 数量
-                "total": int,    # 待扫描 .pt 数量
-                "rollouts": int, # 入库 rollout 行数
-                "attempts": int, # 入库 attempt 行数
-                "segments": int, # 入库 segment 行数
+                "status": "READY" | "FAILED" | "SCANNING",
+                "scanned": int,  # 本轮实际解析的 .pt 数量
+                "skipped": int,  # 指纹未变而跳过的 .pt 数量
+                "removed": int,  # 磁盘上已消失、从库中删除的 .pt 数量
+                "total": int,    # 目录里的 .pt 数量
+                "rollouts": int, # 本轮入库 rollout 行数
+                "attempts": int,
+                "segments": int,
                 "errors": List[str],
+                "busy": bool,    # 已有同 task 扫描在跑
             }``
         """
+        if not self._try_begin(task_id):
+            logger.info("[scan_task] skip task_id={} 已有扫描在进行", task_id)
+            return {
+                "task_id": task_id,
+                "status": TASK_STATUS_SCANNING,
+                "scanned": 0,
+                "skipped": 0,
+                "removed": 0,
+                "total": 0,
+                "rollouts": 0,
+                "attempts": 0,
+                "segments": 0,
+                "errors": [],
+                "busy": True,
+            }
+        try:
+            return self._scan_task_body(task_id, force=force)
+        finally:
+            self._end(task_id)
+
+    def _scan_task_body(self, task_id: int, force: bool = False) -> Dict[str, Any]:
+        """``scan_task`` 的实际流程。调用方已持有 in-flight 锁。"""
         log_path = self._scan_log_path(task_id)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -168,11 +201,14 @@ class RolloutScanService:
             "task_id": task_id,
             "status": TASK_STATUS_READY,
             "scanned": 0,
+            "skipped": 0,
+            "removed": 0,
             "total": 0,
             "rollouts": 0,
             "attempts": 0,
             "segments": 0,
             "errors": [],
+            "busy": False,
         }
 
         # 0. 查 task
@@ -192,19 +228,20 @@ class RolloutScanService:
                 RolloutInsightException.TASK_VALIDATION, msg
             )
 
-        # 1. status -> SCANNING
-        try:
-            DBTaskService.update_status(task_id, TASK_STATUS_SCANNING)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "更新状态 -> SCANNING 失败 task_id={} err={}", task_id, exc
-            )
-
-        # 2. force 清空
+        # 1. force 才整库清空；默认增量，指纹未变的 .pt 不解析
         if force:
+            try:
+                DBTaskService.update_status(task_id, TASK_STATUS_SCANNING)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "更新状态 -> SCANNING 失败 task_id={} err={}", task_id, exc
+                )
             self._purge_task_data(task_id)
+            known: Dict[str, Dict[str, Any]] = {}
+        else:
+            known = self._known_fingerprints(task_id)
 
-        # 3. 解析 .pt 路径
+        # 2. 解析 .pt 路径
         try:
             task_rollout_root = getattr(task, "rollout_root", "") or ""
             task_recursive = bool(getattr(task, "recursive", False))
@@ -230,21 +267,50 @@ class RolloutScanService:
                 logger.exception("更新状态 -> FAILED 失败 task_id={}", task_id)
             return result
 
-        if not pt_paths:
+        pending, skipped = self._partition_pt_paths(task_id, pt_paths, known)
+        result["skipped"] = skipped
+        removed = self._drop_missing_rollouts(task_id, known)
+        result["removed"] = removed
+
+        if not pending and not removed:
+            logger.info(
+                "[scan_task] noop task_id={} skipped={} total={}",
+                task_id,
+                skipped,
+                result["total"],
+            )
+            result["status"] = TASK_STATUS_READY
+            try:
+                DBTaskService.update_status(task_id, TASK_STATUS_READY)
+            except Exception:  # noqa: BLE001
+                logger.exception("更新状态 -> READY 失败 task_id={}", task_id)
+            try:
+                self._update_task_stats(task_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("更新任务统计失败 task_id={}", task_id)
+            if not pt_paths:
+                logger.warning(
+                    "[scan_task] task_id={} task_name={} 没有找到任何 .pt，请检查路径",
+                    task_id,
+                    task_name,
+                )
+            return result
+
+        try:
+            DBTaskService.update_status(task_id, TASK_STATUS_SCANNING)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "更新状态 -> SCANNING 失败 task_id={} err={}", task_id, exc
+            )
+
+        if not pending and not pt_paths:
             logger.warning(
                 "[scan_task] task_id={} task_name={} 没有找到任何 .pt，请检查路径",
                 task_id,
                 task_name,
             )
-            # 没有 .pt 也算成功（空扫描）
-            try:
-                DBTaskService.update_status(task_id, TASK_STATUS_READY)
-            except Exception:  # noqa: BLE001
-                logger.exception("更新状态 -> READY 失败 task_id={}", task_id)
-            return result
 
-        # 4. 逐个 .pt 扫描入库
-        for pt_path in pt_paths:
+        for pt_path in pending:
             try:
                 _rollout, n_att, n_seg = self._scan_single_pt(task_id, pt_path)
                 result["scanned"] += 1
@@ -260,12 +326,8 @@ class RolloutScanService:
                 logger.exception(err)
                 result["errors"].append(err)
 
-        # 5. status -> READY / FAILED
-        if result["errors"]:
-            if result["scanned"] == 0:
-                result["status"] = TASK_STATUS_FAILED
-            else:
-                result["status"] = TASK_STATUS_READY
+        if result["errors"] and result["scanned"] == 0 and removed == 0:
+            result["status"] = TASK_STATUS_FAILED
         else:
             result["status"] = TASK_STATUS_READY
 
@@ -276,28 +338,28 @@ class RolloutScanService:
                 "更新状态 -> {} 失败 task_id={}", result["status"], task_id
             )
 
-        # 5.1 回写任务级统计（rollout_count/attempt_count/segment_count/mean_reward/last_scanned_at）
         try:
             self._update_task_stats(task_id)
         except Exception:  # noqa: BLE001
             logger.exception("更新任务统计失败 task_id={}", task_id)
 
         logger.info(
-            "[scan_task] done task_id={} status={} scanned={}/{} rollouts={} attempts={} segments={} errors={}",
+            "[scan_task] done task_id={} status={} scanned={} skipped={} removed={} total={} attempts={} segments={} errors={}",
             task_id,
             result["status"],
             result["scanned"],
+            result["skipped"],
+            result["removed"],
             result["total"],
-            result["rollouts"],
             result["attempts"],
             result["segments"],
             len(result["errors"]),
         )
         return result
 
-    def rescan_task(self, task_id: int) -> Dict[str, Any]:
-        """强制重扫：``force=True`` 的封装。"""
-        return self.scan_task(task_id, force=True)
+    def rescan_task(self, task_id: int, force: bool = False) -> Dict[str, Any]:
+        """重扫。默认增量；``force=True`` 时清空后全量解析。"""
+        return self.scan_task(task_id, force=force)
 
     def get_progress(self, task_id: int) -> Dict[str, Any]:
         """返回扫描进度快照。"""
@@ -475,24 +537,15 @@ class RolloutScanService:
         DBAttemptService = self._db_attempt_service()
         DBSegmentService = self._db_segment_service()
 
-        # 1. 元数据
+        # 1. 一次加载元数据 + sample 行。单测若替换了 load_dump_meta /
+        # summarize_dump，沿用替身，避免去读假 .pt。
         try:
-            meta = load_dump_meta(pt_path)
+            meta, rows = self._load_pt_view(pt_path)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("load_dump_meta 失败 pt={}", pt_path)
+            logger.exception("加载 .pt 失败 pt={}", pt_path)
             raise RolloutInsightException(
                 RolloutInsightException.PARSE_DUMP_CORRUPTED,
-                f"load_dump_meta 失败 {pt_path}: {exc}",
-            ) from exc
-
-        # 2. summary rows
-        try:
-            rows = summarize_dump(pt_path)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("summarize_dump 失败 pt={}", pt_path)
-            raise RolloutInsightException(
-                RolloutInsightException.PARSE_DUMP_CORRUPTED,
-                f"summarize_dump 失败 {pt_path}: {exc}",
+                f"加载 .pt 失败 {pt_path}: {exc}",
             ) from exc
 
         # 3. 计算 fingerprint 所需的 pt_size_bytes / pt_mtime
@@ -522,14 +575,57 @@ class RolloutScanService:
             instance_count=int(meta.get("n_attempts") or 0),
         )
 
-        # 5. 每个 row: upsert attempt + segment
+        # 5. 写入 attempt + segment。有批量替换时一次事务完成；
+        # 否则退回逐行 upsert（单测 stub 走这条）。
+        rollout_id_value = meta.get("rollout_id")
+        writer = getattr(DBAttemptService, "replace_rollout_samples", None)
+        if callable(writer):
+            n_att, n_seg = writer(
+                task_id=task_id,
+                rollout_id=rollout_id_value,
+                rows=rows,
+            )
+        else:
+            n_att, n_seg = self._upsert_rows_one_by_one(
+                DBAttemptService,
+                DBSegmentService,
+                task_id,
+                rollout_id_value,
+                rows,
+            )
+
+        logger.info(
+            "[_scan_single_pt] done task_id={} pt={} attempts={} segments={}",
+            task_id,
+            pt_path,
+            n_att,
+            n_seg,
+        )
+        return rollout, n_att, n_seg
+
+    def _load_pt_view(self, pt_path: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """加载一个 .pt 的元数据与 sample 行。生产路径只读盘一次。"""
+        import utils.analyze_dump as dump_mod
+
+        if (
+            load_dump_meta is not dump_mod.load_dump_meta
+            or summarize_dump is not dump_mod.summarize_dump
+        ):
+            return load_dump_meta(pt_path), summarize_dump(pt_path)
+        return dump_mod.inspect_dump(pt_path)
+
+    def _upsert_rows_one_by_one(
+        self,
+        DBAttemptService: Any,
+        DBSegmentService: Any,
+        task_id: int,
+        rollout_id_value: Any,
+        rows: List[Dict[str, Any]],
+    ) -> Tuple[int, int]:
+        """逐行 upsert。同一 OpenHands 会话的多 segment 共用 sample.rollout_id。"""
         n_att = 0
         n_seg = 0
-        rollout_id_value = meta.get("rollout_id")
         for row in rows:
-            # 5.1 attempt 业务键 = (task_id, dump.rollout_id, group_index, sample.rollout_id)
-            # 与 view_trajectory._attempt_layout 一致：同一 OpenHands 会话的多 segment
-            # 共用 sample.rollout_id，不能再用 sample 下标当 attempt_id（否则 10 段会变成 10 个 attempt）。
             sample_attempt_id = row.get("rollout_id")
             if sample_attempt_id is None:
                 sample_attempt_id = row.get("idx")
@@ -553,9 +649,6 @@ class RolloutScanService:
             )
             if attempt is not None:
                 n_att += 1
-
-            # 5.2 segment 一个 sample 一行，attempt_id 关联 attempt。
-            # metadata.segment_index 可能显式为 None（.get 默认值不生效），回退到 sample 下标。
             attempt_pk = getattr(attempt, "primary_id", None)
             seg_index = row.get("segment_index")
             if seg_index is None:
@@ -572,53 +665,144 @@ class RolloutScanService:
             )
             if seg is not None:
                 n_seg += 1
+        return n_att, n_seg
 
-        logger.info(
-            "[_scan_single_pt] done task_id={} pt={} attempts={} segments={}",
-            task_id,
-            pt_path,
-            n_att,
-            n_seg,
-        )
-        # 扫描成功后预写注解 sidecar，任务详情未点开时也可暖缓存
+    def _try_begin(self, task_id: int) -> bool:
+        with self._inflight_guard:
+            if task_id in self._inflight_tasks:
+                return False
+            self._inflight_tasks.add(task_id)
+            return True
+
+    def _end(self, task_id: int) -> None:
+        with self._inflight_guard:
+            self._inflight_tasks.discard(task_id)
+
+    @staticmethod
+    def _norm_pt_path(path: Any) -> str:
+        return os.path.normpath(str(path))
+
+    @staticmethod
+    def _same_fingerprint(
+        size_a: Any,
+        mtime_a: Any,
+        size_b: Any,
+        mtime_b: Any,
+    ) -> bool:
         try:
-            from service.task_annotation_service import warm_pt_annotation_sidecar
+            if int(size_a) != int(size_b):
+                return False
+            return abs(float(mtime_a) - float(mtime_b)) < 1e-4
+        except (TypeError, ValueError):
+            return False
 
-            warm_pt_annotation_sidecar(str(pt_path))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "扫描后预热注解 sidecar 失败 pt={} err={}", pt_path, exc
-            )
-        return rollout, n_att, n_seg
+    def _known_fingerprints(self, task_id: int) -> Dict[str, Dict[str, Any]]:
+        """``normpath -> {pt_path, pt_size_bytes, pt_mtime, rollout_id}``。"""
+        svc = self._db_rollout_service()
+        fn = getattr(svc, "list_fingerprints", None)
+        if not callable(fn):
+            return {}
+        rows = fn(task_id) or []
+        known: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            if isinstance(row, dict):
+                path = row.get("pt_path")
+                item = dict(row)
+            else:
+                path = getattr(row, "pt_path", None)
+                item = {
+                    "pt_path": path,
+                    "pt_size_bytes": getattr(row, "pt_size_bytes", 0),
+                    "pt_mtime": getattr(row, "pt_mtime", 0.0),
+                    "rollout_id": getattr(row, "rollout_id", None),
+                }
+            if not path:
+                continue
+            known[self._norm_pt_path(path)] = item
+        return known
+
+    def _partition_pt_paths(
+        self,
+        task_id: int,
+        pt_paths: List[Path],
+        known: Dict[str, Dict[str, Any]],
+    ) -> Tuple[List[Path], int]:
+        """把目录里的 .pt 分成「要解析」和「指纹未变可跳过」。
+
+        命中的指纹会从 ``known`` 里弹出，剩下的是库里有、本轮 glob 没看到的路径。
+        """
+        pending: List[Path] = []
+        skipped = 0
+        for pt_path in pt_paths:
+            key = self._norm_pt_path(pt_path)
+            prev = known.get(key)
+            try:
+                st = pt_path.stat()
+                size = int(st.st_size)
+                mtime = float(st.st_mtime)
+            except OSError:
+                size, mtime = 0, 0.0
+            if prev and self._same_fingerprint(
+                prev.get("pt_size_bytes"),
+                prev.get("pt_mtime"),
+                size,
+                mtime,
+            ):
+                known.pop(key, None)
+                skipped += 1
+                continue
+            if prev:
+                self._drop_one_rollout(
+                    task_id,
+                    prev.get("rollout_id"),
+                    prev.get("pt_path") or key,
+                )
+                known.pop(key, None)
+            pending.append(pt_path)
+        return pending, skipped
+
+    def _drop_missing_rollouts(
+        self,
+        task_id: int,
+        known: Dict[str, Dict[str, Any]],
+    ) -> int:
+        """glob 没覆盖、且磁盘上已不存在的 .pt，从库里删掉。仍存在的保留。"""
+        removed = 0
+        for key, prev in list(known.items()):
+            path = prev.get("pt_path") or key
+            if path and os.path.exists(path):
+                continue
+            self._drop_one_rollout(task_id, prev.get("rollout_id"), path)
+            removed += 1
+        return removed
+
+    def _drop_one_rollout(self, task_id: Any, rollout_id: Any, pt_path: Any) -> None:
+        """删掉一个 rollout 及其 attempt / segment。task_id 为空时只按路径删。"""
+        seg_svc = self._db_segment_service()
+        att_svc = self._db_attempt_service()
+        ro_svc = self._db_rollout_service()
+        if task_id is not None and rollout_id is not None:
+            drop_seg = getattr(seg_svc, "delete_by_rollout", None)
+            if callable(drop_seg):
+                drop_seg(int(task_id), int(rollout_id))
+            drop_att = getattr(att_svc, "delete_by_rollout", None)
+            if callable(drop_att):
+                drop_att(int(task_id), int(rollout_id))
+        drop_ro = getattr(ro_svc, "delete_by_pt_path", None)
+        if callable(drop_ro) and task_id is not None and pt_path:
+            drop_ro(int(task_id), str(pt_path))
     def _purge_task_data(self, task_id: int) -> None:
         """清空该 task 下的所有 rollout/attempt/segment（保留 task 本身）。
 
-        删除顺序：segment(逐 attempt) -> attempt -> rollout
-
-        注：DBSegmentService.delete_by_task 在某些 SQLAlchemy 版本下会因
-        join + delete() 不兼容而抛 InvalidRequestError；此处按 attempt 逐个删除，
-        绕过 JOIN 路径。
+        删除顺序：segment -> attempt -> rollout，各一条 SQL。
         """
         DBRolloutService = self._db_rollout_service()
         DBAttemptService = self._db_attempt_service()
         DBSegmentService = self._db_segment_service()
 
         try:
-            # 1. 收集 task 下所有 attempt，按 attempt_id 逐个删除 segment
-            attempts = DBAttemptService.list_by_task(
-                task_id, limit=100000
-            )
-            n_seg = 0
-            for att in attempts:
-                att_id = getattr(att, "primary_id", None)
-                if att_id is None:
-                    continue
-                n_seg += DBSegmentService.delete_by_attempt(att_id)
-
-            # 2. 删除 attempt
+            n_seg = DBSegmentService.delete_by_task(task_id)
             n_att = DBAttemptService.delete_by_task(task_id)
-
-            # 3. 删除 rollout
             n_ro = DBRolloutService.delete_by_task(task_id)
             logger.info(
                 "[_purge_task_data] task_id={} purged segments={} attempts={} rollouts={}",

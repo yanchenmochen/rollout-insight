@@ -42,7 +42,7 @@ NAV_ICONS: Dict[str, Dict[str, str]] = {
     },
     "cross-task-compare": {
         "icon": "git-compare",
-        "hint": "跨任务对比：比较共同题目在不同训练配置下变好还是变坏",
+        "hint": "跨任务对比：单任务看题目随训练变化，多任务比共同题目变好还是变坏",
     },
     "insights": {
         "icon": "lightbulb",

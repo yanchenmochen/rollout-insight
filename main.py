@@ -179,7 +179,28 @@ if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
+@app.on_event("startup")
+def _start_rollout_auto_scan() -> None:
+    """运行中的任务按 rollout 落盘间隔自动增量重扫。
+
+    只在 ``ROLLOUT_INSIGHT_AUTO_SCAN=1`` 时启动。``python main.py`` 会打开这个
+    开关；测试直接 import app 时默认不扫盘。
+    """
+    from service.rollout_auto_scan_service import (
+        auto_scan_enabled,
+        start_auto_scan_loop,
+    )
+
+    if not auto_scan_enabled():
+        return
+    try:
+        start_auto_scan_loop()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[main] 自动重扫循环启动失败: {}", exc)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("ROLLOUT_INSIGHT_PORT", "39998"))
+    os.environ.setdefault("ROLLOUT_INSIGHT_AUTO_SCAN", "1")
     logger.info("rollout-insight 启动中，端口={}", port)
     uvicorn.run(app="main:app", host="0.0.0.0", port=port, reload=False)
