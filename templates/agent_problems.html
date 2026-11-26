@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}问题分析{% if task_id %} · 任务 #{{ task_id }}{% endif %} · {{ brand }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    section.container { min-width: 0; align-self: stretch; }
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        flex-wrap: wrap; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 2px solid var(--ri-border); }
+    .page-header h1 { margin: 0; font-size: 22px; border-bottom: none; padding-bottom: 0; }
+    .page-subtitle { color: var(--ri-muted); font-size: 13px; margin-top: 4px; max-width: 900px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border); border-radius: var(--te-radius);
+        padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px 0; font-size: 1.1em; color: var(--ri-ink); border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-size: 12px; font-weight: 500; margin-left: 8px; }
+    .muted { color: var(--ri-muted); font-size: 12px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border-radius: 12px;
+        font-size: 12px; border: 1px solid var(--ri-border); background: #f8fafb; }
+    .chip strong { font-size: 14px; }
+    .problem-card { border: 1px solid var(--ri-border); border-left-width: 4px; border-radius: var(--te-radius);
+        padding: 12px 14px; margin-bottom: 12px; background: #fff; scroll-margin-top: 72px; }
+    .problem-card.ok { border-left-color: #2d6a4f; }
+    .problem-card.warn { border-left-color: #e0a800; }
+    .problem-card.bad { border-left-color: #c62828; }
+    .problem-card.unknown { border-left-color: #8a939c; }
+    .problem-title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+    .problem-value { float: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .problem-grid { display: grid; gap: 6px; font-size: 13px; margin-top: 8px; }
+    .problem-grid .label { color: var(--ri-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .problem-grid .value { color: var(--ri-ink); line-height: 1.45; }
+    .examples { margin-top: 8px; font-size: 12px; }
+    .examples a { color: var(--ri-accent); text-decoration: none; margin-right: 10px; }
+    .examples a:hover { text-decoration: underline; }
+    .loading { color: var(--ri-muted); padding: 12px 0; }
+    .links-inline a { color: var(--ri-accent); margin-right: 12px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 问题分析{% endif %}
+</div>
+<div class="page-header">
+    <div>
+        <h1 id="pageTitle">问题分析</h1>
+        <div class="page-subtitle" id="pageNote">
+            汇总 agentic RL 常见问题在本任务上的占比，并给出对应的奖励设计动作。
+            题目通过率请看「题目分析」；奖励曲线与杠杆请看「奖励诊断」。
+        </div>
+    </div>
+    {% if task_id %}
+    <div class="action-bar">
+        {% set task_nav_id = task_id %}
+        {% set task_nav_current = 'agent_problems' %}
+        {% set task_nav_actions = true %}
+        {% include "_task_jump_nav.html" %}
+    </div>
+    {% endif %}
+</div>
+<div id="errorBox" class="alert alert-warning" style="display:none;"></div>
+<div id="loading" class="loading">正在加载问题分析…</div>
+<div id="body" style="display:none;">
+    <div class="section">
+        <h2>摘要 <small id="summaryMeta"></small></h2>
+        <div class="chip-row" id="summaryChips"></div>
+        <p class="muted links-inline" id="extraLinks"></p>
+    </div>
+    <div class="section">
+        <h2>问题清单 <small>按严重度排序</small></h2>
+        <div id="problemList"></div>
+    </div>
+</div>
+<script>
+(function () {
+    const TASK_ID = {{ task_id | tojson }};
+    const $ = (id) => document.getElementById(id);
+
+    function showError(msg) {
+        const box = $("errorBox");
+        box.style.display = "";
+        box.textContent = msg;
+    }
+
+    function pct(ratio) {
+        if (ratio == null || ratio === undefined) return "—";
+        return (100 * Number(ratio)).toFixed(1) + "%";
+    }
+
+    function statusLabel(s) {
+        if (s === "bad") return "严重";
+        if (s === "warn") return "关注";
+        if (s === "ok") return "正常";
+        return "未知";
+    }
+
+    function render(data) {
+        const summary = data.summary || {};
+        $("summaryMeta").textContent = "attempts=" + (data.n_attempts || 0);
+        $("summaryChips").innerHTML = [
+            ["严重", summary.n_bad, "bad"],
+            ["关注", summary.n_warn, "warn"],
+            ["正常", summary.n_ok, "ok"],
+            ["条目", summary.n_problems, ""],
+        ].map(([label, v]) =>
+            `<span class="chip"><span>${label}</span><strong>${v == null ? "—" : v}</strong></span>`
+        ).join("");
+
+        const tid = (data.task && data.task.id) || TASK_ID;
+        $("extraLinks").innerHTML = [
+            `<a href="/api/insights/reward-design?task_id=${encodeURIComponent(tid)}">奖励设计（含本任务摘要）</a>`,
+            `<a href="/api/tasks/${encodeURIComponent(tid)}/reward-diagnosis">奖励诊断</a>`,
+            `<a href="/api/tasks/${encodeURIComponent(tid)}/problem-analysis">题目分析</a>`,
+            `<a href="/api/tasks/${encodeURIComponent(tid)}/failures">失败分析</a>`,
+        ].join("");
+
+        const list = $("problemList");
+        const problems = data.problems || [];
+        if (!problems.length) {
+            list.innerHTML = `<p class="muted">目录为空。</p>`;
+            return;
+        }
+        list.innerHTML = problems.map((p) => {
+            const tb = p.tb_trend;
+            let tbHtml = "";
+            if (tb) {
+                tbHtml = `<div><div class="label">TB 趋势</div><div class="value mono">${tb.tag}：`
+                    + `${Number(tb.first_value).toFixed(4)} → ${Number(tb.last_value).toFixed(4)}`
+                    + `（Δ ${Number(tb.delta).toFixed(4)}）</div></div>`;
+            }
+            const examples = (p.examples || []).map((ex) => {
+                if (!ex.detail_url) return "";
+                const label = ex.instance_id || ("attempt#" + ex.attempt_pk);
+                return `<a href="${ex.detail_url}">${label}</a>`;
+            }).filter(Boolean).join("");
+            const failLink = p.failure_url
+                ? `<a href="${p.failure_url}">失败分析筛选</a>`
+                : "";
+            const denom = p.denominator != null
+                ? `${p.count} / ${p.denominator}（${p.denominator_label || ""}）`
+                : `${p.count}`;
+            return `<article class="problem-card ${p.status || "unknown"}" id="${p.id}">
+                <div class="problem-value">${pct(p.ratio)} · ${statusLabel(p.status)}</div>
+                <h3 class="problem-title">${p.title}</h3>
+                <div class="muted">${denom}${p.note ? " · " + p.note : ""}</div>
+                <div class="problem-grid">
+                    <div><div class="label">为何挡住奖励</div><div class="value">${p.why_blocks_reward || ""}</div></div>
+                    <div><div class="label">对 GRPO 的含义</div><div class="value">${p.grpo_meaning || ""}</div></div>
+                    <div><div class="label">奖励设计动作</div><div class="value">${p.reward_action || ""}</div></div>
+                    ${tbHtml}
+                </div>
+                <div class="examples">${failLink}${examples}</div>
+            </article>`;
+        }).join("");
+
+        if (location.hash) {
+            const el = document.getElementById(location.hash.slice(1));
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }
+
+    async function load() {
+        if (TASK_ID == null) {
+            $("loading").textContent = "缺少任务。";
+            return;
+        }
+        try {
+            const res = await fetch(`/api/tasks/${TASK_ID}/agent-problems.json`);
+            const payload = await res.json();
+            if (!payload || payload.code !== 0) {
+                throw new Error((payload && payload.msg) || res.status);
+            }
+            const data = payload.data || {};
+            $("loading").style.display = "none";
+            $("body").style.display = "";
+            const name = {{ task_name | tojson }};
+            if (name) $("pageTitle").textContent = name + " · 问题分析";
+            if (data.page_note) $("pageNote").textContent = data.page_note;
+            render(data);
+        } catch (e) {
+            $("loading").style.display = "none";
+            showError("加载问题分析失败：" + (e && e.message ? e.message : e));
+        }
+    }
+    load();
+})();
+</script>
+{% endblock %}

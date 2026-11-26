@@ -384,6 +384,14 @@
 - `staticmethod` `def analyze_transcript(path: str) -> Dict[str, Any]`
 - `staticmethod` `def batch_analyze(paths: Iterable[str]) -> List[Dict[str, Any]]`
 
+### `agentic_problem_service_module` (`service/agentic_problem_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def problem_status(ratio: Optional[float], *, warn_ratio: float, bad_ratio: float) -> str`
+- `staticmethod` `def assemble_problem_cards(*, catalog: Optional[Sequence[Dict[str, Any]]]=None, n_attempts: int…`
+- `staticmethod` `def build_task_problem_report(task_id: int) -> Dict[str, Any]`
+
 ### `cross_task_compare_service_module` (`service/cross_task_compare_service.py`)
 
 模块级公开函数（不在 class 内）：
@@ -447,6 +455,12 @@
 - `staticmethod` `def build_response_tool_stats(task_id: int) -> Dict[str, Any]`
 - `staticmethod` `def advance_response_tool_stats(task_id: int, rollout_limit: int=1) -> Dict[str, Any]`
 - `staticmethod` `def count_rollout_file(pt_path: str) -> Dict[str, Any]`
+
+### `reward_design_service_module` (`service/reward_design_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def build_reward_design_page(task_id: Optional[int]=None) -> Dict[str, Any]`
 
 ### `reward_diagnosis_service_module` (`service/reward_diagnosis_service.py`)
 
@@ -557,6 +571,8 @@
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/page` | `page_agent_transcripts` | 渲染 agent_transcript_report.html。 |
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/report` | `api_agent_transcript_report` | 返回单文件分析 JSON。 |
 | `agent_transcript_controller` | GET | `/api/agent-transcripts/batch` | `api_agent_transcript_batch` | 批量分析；返回 list[dict]。 |
+| `agentic_problem_controller` | GET | `/api/tasks/{task_id}/agent-problems` | `page_agent_problems` | 任务级问题分析：常见 agentic 问题占比与奖励动作。 |
+| `agentic_problem_controller` | GET | `/api/tasks/{task_id}/agent-problems.json` | `api_agent_problems` | 返回按严重度排序的问题卡片。 |
 | `auth_controller` | GET | `/api/auth/login` | `page_login` | 渲染 ``templates/login.html``。 |
 | `auth_controller` | POST | `/api/auth/login` | `api_login` | 登录端点（兼容 form + JSON 两种 body）。 |
 | `auth_controller` | GET | `/api/auth/register` | `page_register` | 渲染 ``templates/register.html``。 |
@@ -580,11 +596,13 @@
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/link-task` | `api_link_task` | 关联 task 到南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/{job_id}/unlink-task` | `api_unlink_task` | 解绑 task 与南湖 job。 |
 | `nanhu_controller` | POST | `/api/nanhu/jobs/restart` | `api_restart_job` | 重启南湖 job；默认 dry-run。 |
-| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis` | `page_problem_analysis` | 任务详情下的问题分析：通过率曲线与 sglang 响应统计。 |
+| `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis` | `page_problem_analysis` | 任务详情下的题目分析：通过率曲线与 sglang 响应统计。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/instance` | `page_instance_appearances` | 按题目名列出每次出现的 rollout 与轨迹入口。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis/pass.json` | `api_problem_pass_trend` | 按题目列出历次出现的 rollout 与通过率，不读响应统计。 |
 | `problem_analysis_controller` | GET | `/api/tasks/{task_id}/problem-analysis.json` | `api_problem_analysis` | 通过率（按题目出现次序）以及当前已能给出的响应统计。 |
 | `problem_analysis_controller` | POST | `/api/tasks/{task_id}/response-stats` | `api_advance_response_stats` | 补统计下一批 rollout 的 assistant 回复。不写入 turn 正文。 |
+| `reward_design_controller` | GET | `/api/insights/reward-design` | `page_reward_design` | 渲染奖励设计页：流程说明、实践策略、可选任务问题摘要。 |
+| `reward_design_controller` | GET | `/api/insights/reward-design.json` | `api_reward_design` | 返回奖励设计静态目录；带 task_id 时附问题摘要。 |
 | `reward_diagnosis_controller` | GET | `/api/tasks/{task_id}/reward-diagnosis` | `page_reward_diagnosis` | 任务详情旁的奖励诊断：梯度组、奖励分解、行为失败卡片。 |
 | `reward_diagnosis_controller` | GET | `/api/tasks/{task_id}/reward-diagnosis.json` | `api_reward_diagnosis` | 返回有效梯度组曲线、奖励分解曲线与行为失败卡片。 |
 | `rollout_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_id}` | `page_rollout_detail` | 渲染 rollout_detail.html。rollout_id 是 ``ri_rollout_table.primary_id``。 |

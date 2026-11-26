@@ -1,6 +1,6 @@
-"""任务问题分析路由。
+"""任务题目分析路由。
 
-- GET  /api/tasks/{task_id}/problem-analysis            问题分析页
+- GET  /api/tasks/{task_id}/problem-analysis            题目分析页
 - GET  /api/tasks/{task_id}/problem-analysis/pass.json  只返回按题目的通过率
 - GET  /api/tasks/{task_id}/problem-analysis.json       通过率曲线 + 已有响应统计
 - POST /api/tasks/{task_id}/response-stats              按 rollout 分批补响应计数
@@ -36,13 +36,13 @@ async def _task_name(task_id: int) -> Optional[str]:
 
 @router.get("/api/tasks/{task_id}/problem-analysis", include_in_schema=False)
 async def page_problem_analysis(request: Request, task_id: int) -> HTMLResponse:
-    """任务详情下的问题分析：通过率曲线与 sglang 响应统计。"""
+    """任务详情下的题目分析：通过率曲线与 sglang 响应统计。"""
     task_name = await _task_name(task_id)
     return templates.TemplateResponse(
         request,
         "problem_analysis.html",
         {
-            "page_title": "问题分析",
+            "page_title": "题目分析",
             "task_id": task_id,
             "task_name": task_name,
         },
@@ -90,7 +90,7 @@ async def api_problem_analysis(task_id: int) -> Response:
         build_response_tool_stats,
     )
 
-    logger.info("问题分析 task_id={}", task_id)
+    logger.info("题目分析 task_id={}", task_id)
     pass_trend = await asyncio.to_thread(build_pass_trend, int(task_id))
     response = await asyncio.to_thread(build_response_tool_stats, int(task_id))
     return Response.success(

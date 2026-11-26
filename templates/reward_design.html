@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}{% if page_title %}{{ page_title }}{% else %}奖励设计{% endif %} · {{ brand }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .breadcrumb { font-size: 13px; color: var(--ri-muted); margin-bottom: 10px; }
+    .breadcrumb a { color: var(--ri-accent); text-decoration: none; }
+    .lead { color: var(--ri-muted); font-size: 14px; margin: 0 0 16px; }
+    .section { background: var(--ri-surface); border: 1px solid var(--ri-border);
+        border-radius: var(--te-radius); padding: 14px 18px; margin-bottom: 16px; }
+    .section h2 { margin: 0 0 10px; font-size: 1.15em; border-bottom: 1px solid var(--ri-border); padding-bottom: 6px; }
+    .section h2 small { color: var(--ri-muted); font-weight: 500; font-size: 12px; margin-left: 8px; }
+    .alert { padding: 10px 12px; border-radius: var(--te-radius); border-left: 4px solid; margin-bottom: 12px; font-size: 13px; }
+    .alert-info { background: #e8f0fa; border-color: var(--ri-accent); color: #1e5080; }
+    .alert-warning { background: #fff3cd; border-color: #ffc107; color: #856404; }
+    .picker { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    .picker select { min-width: 280px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--ri-border); border-radius: 4px; }
+    .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 12px; font-size: 13px; }
+    .flow .step { padding: 6px 10px; border: 1px solid var(--ri-border); border-radius: 8px; background: #f8fafb; }
+    .flow .arrow { color: var(--ri-muted); }
+    ol.notes, ol.playbook { margin: 0; padding-left: 1.2em; }
+    ol.notes li, ol.playbook li { margin: 8px 0; font-size: 13px; line-height: 1.45; }
+    .playbook a, .catalog a, .problem-mini a { color: var(--ri-accent); text-decoration: none; }
+    .playbook a:hover, .catalog a:hover, .problem-mini a:hover { text-decoration: underline; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .chips a { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--ri-border); background: #fff; }
+    .problem-mini { border: 1px solid var(--ri-border); border-left-width: 4px; border-radius: var(--te-radius);
+        padding: 10px 12px; margin-bottom: 8px; background: #fff; font-size: 13px; }
+    .problem-mini.ok { border-left-color: #2d6a4f; }
+    .problem-mini.warn { border-left-color: #e0a800; }
+    .problem-mini.bad { border-left-color: #c62828; }
+    .problem-mini.unknown { border-left-color: #8a939c; }
+    .problem-mini .meta { color: var(--ri-muted); font-size: 12px; }
+    .empty-inline { color: var(--ri-muted); font-size: 13px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set insight_nav_current = 'reward_design' %}
+{% include "_insight_subnav.html" %}
+
+<h1>奖励设计</h1>
+<p class="lead">
+    本仓库不计算奖励函数，只把<strong>已落盘的二值奖励</strong>如何进入 GRPO 说清楚，
+    并给出与现有数据对得上的改法。选定任务后，同一套问题统计会嵌在下方。
+</p>
+
+{% if notice %}
+<div class="alert alert-warning">{{ notice }}</div>
+{% endif %}
+
+<div class="section">
+    <h2>选择任务 <small>可选；用于嵌入问题摘要</small></h2>
+    {% if tasks %}
+    <form class="picker" method="get" action="/api/insights/reward-design">
+        <label for="rewardDesignTask">任务</label>
+        <select id="rewardDesignTask" name="task_id">
+            <option value="">（不绑定任务，只看设计说明）</option>
+            {% for item in tasks %}
+            <option value="{{ item.primary_id }}"
+                {% if task and task.primary_id == item.primary_id %}selected{% endif %}>
+                #{{ item.primary_id }} {{ item.task_name }}（{{ item.status or "—" }}）
+            </option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn">查看</button>
+    </form>
+    {% else %}
+    <p class="empty-inline">库里还没有任务。请先到 <a href="/api/tasks">任务列表</a> 创建。</p>
+    {% endif %}
+</div>
+
+{% if task %}
+<p class="breadcrumb">
+    <a href="/api/tasks">任务列表</a>
+    /
+    <a href="/api/tasks/{{ task.primary_id }}">{{ task.task_name }}</a>
+    /
+    奖励设计
+</p>
+{% endif %}
+
+<div class="section" id="reward-flow">
+    <h2>当前奖励如何进入 GRPO</h2>
+    <div class="flow" aria-hidden="true">
+        <span class="step">Attempt</span><span class="arrow">→</span>
+        <span class="step">评测二值奖励</span><span class="arrow">→</span>
+        <span class="step">abort/timeout 不可测</span><span class="arrow">→</span>
+        <span class="step">组内约 8 条</span><span class="arrow">→</span>
+        <span class="step">GRPO 减均值÷标准差</span><span class="arrow">→</span>
+        <span class="step">advantage</span>
+    </div>
+    <div class="flow" aria-hidden="true">
+        <span class="step">全过或全挂组</span><span class="arrow">→</span>
+        <span class="step">advantage = 0（仍占预算）</span>
+    </div>
+    <ol class="notes">
+        {% for note in flow_notes %}
+        <li>{{ note }}</li>
+        {% endfor %}
+    </ol>
+</div>
+
+<div class="section" id="playbook">
+    <h2>把奖励做上去的常用做法</h2>
+    <ol class="playbook">
+        {% for entry in playbook %}
+        <li>
+            <strong>{{ entry.title }}</strong>
+            — {{ entry.summary }}
+            <div class="chips">
+                {% for pid in entry.problem_ids %}
+                <a href="#problem-{{ pid }}">{{ pid }}</a>
+                {% endfor %}
+            </div>
+        </li>
+        {% endfor %}
+    </ol>
+</div>
+
+<div class="section" id="problem-catalog">
+    <h2>问题目录
+        {% if problem_report %}
+        <small>已绑定任务 #{{ task.primary_id }} ·
+            <a href="/api/tasks/{{ task.primary_id }}/agent-problems">打开完整问题分析</a>
+        </small>
+        {% else %}
+        <small>未选任务时只展示定义；选定后显示占比</small>
+        {% endif %}
+    </h2>
+
+    {% if problem_report and problem_report.problems %}
+        {% for p in problem_report.problems %}
+        <div class="problem-mini {{ p.status or 'unknown' }}" id="problem-{{ p.id }}">
+            <div>
+                <strong>{{ p.title }}</strong>
+                <span class="meta">
+                    ·
+                    {% if p.ratio_pct is not none %}{{ p.ratio_pct }}%{% else %}—{% endif %}
+                    · {{ p.count }}{% if p.denominator is not none %} / {{ p.denominator }}{% endif %}
+                </span>
+            </div>
+            <div class="meta">{{ p.reward_action }}</div>
+            <div>
+                <a href="/api/tasks/{{ task.primary_id }}/agent-problems#{{ p.id }}">任务问题分析</a>
+                {% if p.failure_url %}
+                · <a href="{{ p.failure_url }}">失败筛选</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        {% for item in catalog %}
+        <div class="problem-mini unknown" id="problem-{{ item.id }}">
+            <div><strong>{{ item.title }}</strong> <span class="meta mono">{{ item.id }}</span></div>
+            <div class="meta">{{ item.why_blocks_reward }}</div>
+            <div class="meta">动作：{{ item.reward_action }}</div>
+        </div>
+        {% endfor %}
+        {% if not task %}
+        <p class="empty-inline">选定任务后，这里会显示该任务上每条问题的次数与占比。</p>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

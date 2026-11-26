@@ -1,7 +1,7 @@
 {# 任务内右上角跳转。
    调用方在包一层 .action-bar 之前设置：
    task_nav_id       任务主键
-   task_nav_current  detail | failures | problems | reward | curves | 空（子页）
+   task_nav_current  detail | failures | problems | agent_problems | reward | curves | 空（子页）
    task_nav_actions  是否附带重扫 / 删除
 #}
 {% set nav_current = task_nav_current if task_nav_current is defined else '' %}
@@ -15,8 +15,10 @@
     <span class="ri-icon ri-icon-chart-spline"></span>训练曲线</a>
 <a class="btn {% if nav_current == 'failures' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/failures" title="失败分析：每个 attempt 怎么失败的"{% if nav_current == 'failures' %} aria-current="page"{% endif %}>
     <span class="ri-icon ri-icon-triangle-alert"></span>失败分析</a>
-<a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis" title="问题分析：逐题看通过率与变好变坏"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>
-    <span class="ri-icon ri-icon-scan-search"></span>问题分析</a>
+<a class="btn {% if nav_current == 'problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/problem-analysis" title="题目分析：逐题看通过率与变好变坏"{% if nav_current == 'problems' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-scan-search"></span>题目分析</a>
+<a class="btn {% if nav_current == 'agent_problems' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/agent-problems" title="问题分析：agentic RL 常见问题与占比"{% if nav_current == 'agent_problems' %} aria-current="page"{% endif %}>
+    <span class="ri-icon ri-icon-bug"></span>问题分析</a>
 <a class="btn {% if nav_current == 'reward' %}is-current{% else %}btn-secondary{% endif %}" href="/api/tasks/{{ task_nav_id }}/reward-diagnosis" title="奖励诊断：奖励为什么不涨"{% if nav_current == 'reward' %} aria-current="page"{% endif %}>
     <span class="ri-icon ri-icon-gauge"></span>奖励诊断</a>
 {% if nav_actions %}

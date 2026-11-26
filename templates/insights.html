@@ -30,10 +30,13 @@
 {% endblock %}
 
 {% block content %}
-<h1>洞察</h1>
+{% set insight_nav_current = 'metrics' %}
+{% include "_insight_subnav.html" %}
+
+<h1>指标洞察</h1>
 <p class="lead">
     先选定一个任务，再看它事件目录里的 scalar、已知评测指标的含义，以及建议的排查顺序。
-    训练类 tag 只列出名字和最近值，作用标为「未收录」。
+    训练类 tag 只列出名字和最近值，作用标为「未收录」。奖励如何进 GRPO 见「奖励设计」。
 </p>
 
 <div class="section">
@@ -75,7 +78,7 @@
 {% endif %}
 
 <div class="section" id="analysis-order">
-    <h2>问题分析顺序 <small>固定顺序，不随 tag 多少变化</small></h2>
+    <h2>排查顺序 <small>固定顺序，不随 tag 多少变化</small></h2>
     <ol class="steps">
         <li>
             看<a href="#eval-primary">评测主分数</a>（<code>eval/&lt;dataset&gt;</code>，attempt 平均 reward）。
@@ -86,6 +89,14 @@
             打开
             <a href="/api/tasks/{{ task.primary_id }}#rollout-stack">任务详情 · Attempt 分布</a>，
             看通过 / 失败 / 超时 / abort 随 step 怎么变。
+        </li>
+        <li>
+            看
+            <a href="/api/insights/reward-design?task_id={{ task.primary_id }}">奖励设计</a>
+            与本任务的
+            <a href="/api/tasks/{{ task.primary_id }}/agent-problems">问题分析</a>
+            （假响应、超时、零方差组等），再对照
+            <a href="/api/tasks/{{ task.primary_id }}/reward-diagnosis">奖励诊断</a>。
         </li>
         <li>
             进入该任务失败分析，用 group / attempt 定位具体样本：
@@ -101,8 +112,9 @@
             正文是 sglang 序列；若有 history.jsonl，同页可以看到沙盒真实命令。
         </li>
         <li>
+            题目通过率与变好变坏看
+            <a href="/api/tasks/{{ task.primary_id }}/problem-analysis">题目分析</a>。
             前面仍解释不了时，再按需打开<a href="#other-tags">训练类 tag</a>。
-            这些 tag 的作用未收录，只提供名字、最近值和 TensorBoard 入口。
         </li>
     </ol>
 </div>

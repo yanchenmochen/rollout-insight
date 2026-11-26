@@ -87,11 +87,19 @@ NAV_ICONS: Dict[str, Dict[str, str]] = {
     },
     "task-problems": {
         "icon": "scan-search",
-        "hint": "问题分析：逐题看通过率与变好变坏",
+        "hint": "题目分析：逐题看通过率与变好变坏",
+    },
+    "task-agent-problems": {
+        "icon": "bug",
+        "hint": "问题分析：agentic RL 常见问题与占比",
     },
     "task-reward": {
         "icon": "gauge",
         "hint": "奖励诊断：奖励为什么不涨",
+    },
+    "reward-design": {
+        "icon": "lightbulb",
+        "hint": "奖励设计：二值奖励如何进 GRPO，以及常见改法",
     },
 }
 

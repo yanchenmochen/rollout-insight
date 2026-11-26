@@ -59,7 +59,7 @@ bash scripts/restart_server.sh status       # 查看谁占用 39998
 - 顶栏「曲线对比」→ `/api/tensorboard`：**多任务曲线对比页**。勾选任意多个任务 + 任意多个指标，即可把它们叠在同一张图里对比，与「单任务训练曲线」完全同款（同一套指标目录、同一套 SVG 折线、逐 step / 按 epoch 两种视图）。页面下方仍保留一键拉起本机 TensorBoard 的入口。
 - TB 端口默认 `6006`，配置项 `tensorboard_port` 或环境变量 `ROLLOUT_INSIGHT_TENSORBOARD_PORT`。
 - 需本机已安装 `tensorboard`（见 `requirements.txt`）；无事件目录的任务会被跳过。
-- 顶栏「洞察」→ `/api/insights`：先选一个任务，列出该任务当前 TensorBoard scalar、已知评测指标说明、尚未收录的 tag，以及建议的分析流程，并可跳转到 TensorBoard（本机 2.20.0 用查询参数 `?tagFilter=`）。
+- 顶栏「洞察」→ `/api/insights`（指标洞察）与 `/api/insights/reward-design`（奖励设计）：先选一个任务，列出 TensorBoard scalar / 排查顺序，或查看二值奖励如何进 GRPO 与常见改法；可跳转到 TensorBoard（本机 2.20.0 用查询参数 `?tagFilter=`）。
 
 ---
 
@@ -130,13 +130,17 @@ rollout-insight/
 | POST | `/api/tasks/{id}/delete` | 删除任务（级联） |
 | GET  | `/api/tasks/create` | 渲染 task_create.html |
 | GET  | `/api/tasks/{id}/failures` | 从任务进入的失败分析（可带 `cat=` / `reason=` / `agent=` / `rollout_id=` 初始筛选） |
-| GET  | `/api/tasks/{id}/problem-analysis` | 任务问题分析：通过率曲线与 sglang 响应统计 |
+| GET  | `/api/tasks/{id}/problem-analysis` | 任务题目分析：通过率曲线与 sglang 响应统计 |
 | GET  | `/api/tasks/{id}/problem-analysis/instance?instance_id=` | 一道题每次出现的 rollout 与轨迹 |
 | GET  | `/api/tasks/{id}/problem-analysis/pass.json` | 按题目的历次通过率（不含响应统计） |
 | GET  | `/api/tasks/{id}/problem-analysis.json` | 通过率与已有响应统计 JSON |
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
+| GET  | `/api/tasks/{id}/agent-problems` | 任务问题分析：agentic RL 常见问题占比与奖励动作 |
+| GET  | `/api/tasks/{id}/agent-problems.json` | 问题分析 JSON |
 | GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
 | GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
+| GET  | `/api/insights/reward-design` | 洞察 · 奖励设计（可选 `task_id=` 嵌入问题摘要） |
+| GET  | `/api/insights/reward-design.json` | 奖励设计 JSON |
 | GET  | `/api/tasks/{id}/train-curve` | 训练曲线页：指标按钮组（奖励/长度/梯度/entropy_loss/context_exhausted/max_fake_responses/rollout_time）+ 折线（逐 step / 按 epoch 聚合）+ 外部评测分数（`evaluations.md`） |
 | GET  | `/api/tasks/{id}/train-curve.json` | 训练曲线 JSON：指标列表 + 每个指标的 step→value 序列（含 epoch 聚合序列）+ `evaluations` 评测台账 |
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
@@ -149,7 +153,7 @@ rollout-insight/
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
 | GET  | `/api/segments/{id}` | Segment transcript（HTML 渲染） |
 | GET  | `/api/segments/{id}/transcript.json` | Segment transcript（JSON） |
-| GET  | `/api/insights` | 洞察页：当前任务的 TensorBoard scalar、指标说明与分析流程 |
+| GET  | `/api/insights` | 洞察 · 指标洞察：当前任务的 TensorBoard scalar、指标说明与排查顺序 |
 | GET  | `/api/failures` | 失败分析旧入口（`?task_id=` 仍进入该任务；不带 `task_id` 时只提示回任务列表） |
 | GET  | `/api/failures/attempts/{attempt_pk}` | 单 attempt 失败详情页（结论 / 评测证据 / 耗时 / 轨迹 / patch） |
 | GET  | `/api/failures/tasks/{task_id}/overview.json` | 任务失败总览：每 rollout 结局分布 + 非通过 attempt + 原因聚类 + agent 结束态聚类 + 组内失败类型 |
@@ -168,13 +172,13 @@ rollout-insight/
 
 ### 5.1 失败分析（任务级）
 
-失败分析从任务进入：任务列表打开任务详情后，用页顶「失败分析」进入 `/api/tasks/{task_id}/failures`。任务详情、失败分析、问题分析以及 rollout / attempt / segment 子页的右上角都有同一组跳转。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
+失败分析从任务进入：任务列表打开任务详情后，用页顶「失败分析」进入 `/api/tasks/{task_id}/failures`。任务详情、失败分析、题目分析、问题分析以及 rollout / attempt / segment 子页的右上角都有同一组跳转。顶栏不再放「失败分析」。旧地址 `/api/failures?task_id=` 以及 `/api/failures/attempts/{pk}` 仍可用；不带 `task_id` 的 `/api/failures` 只说明如何回到任务列表。总览可以按 group、attempt id 精确筛选。它回答"每个 attempt 是怎么失败的"：
 
 - **任务视图**：每个 rollout 一行进度条（通过 / 正常失败 / 超时截断 / 中止 / 其它）+ 主要失败原因；点行即按 rollout 过滤。
 - **按聚类**：按失败原因聚类，可下钻到对应 attempt 列表。失败原因由 `utils/failure_reason_taxonomy.py` 统一归一：artifacts summary 与 `.pt` 注解两处口径一致（`evaluator:tests_failed`、`slime_context_limit_reached`、`agent_time_budget_exceeded`、`exception:SandboxApiException` 等）。
 - **Agent 结束态**：单列一节按 `agent_outcome` 聚类（正常结束 / 上下文打满 / 时间预算耗尽 / SDK 报错 / 迭代次数超限 …），带次数与占比。它与评测结论正交——`evaluator:tests_failed` 说明评测没通过，`context_exhausted` / `sdk_error` 说明 agent 自己没跑完。点任一项即跳到该结束态的 attempt 列表。
 - **按 attempt**：逐条列出非通过 attempt，含「agent 结束态」列，可跳「失败轨迹」或「手风琴定位」。点题目名称切到「按题目」。
-- **按题目**：用题目名称（`instance_id`）检索。同一题会在多个 rollout 里各采样一次（通常约 8 条 attempt）。列出每次所在的 rollout、该次通过率，以及最后一次减第一次的变化。通过率与问题分析同一套算法。
+- **按题目**：用题目名称（`instance_id`）检索。同一题会在多个 rollout 里各采样一次（通常约 8 条 attempt）。列出每次所在的 rollout、该次通过率，以及最后一次减第一次的变化。通过率与题目分析同一套算法。
 - **单 attempt 详情**：结论、首个失败用例、评测 stdout/stderr、耗时分解、同组 8 次尝试、OpenHands 轨迹（默认看结尾，可只看报错步）、patch。
 - **与 Rollout 详情页四层手风琴联动**：失败 attempt 行右侧出现「失败轨迹 →」；详情页「在手风琴中定位」跳回 `/api/tasks/{id}/rollouts/{pk}?group=..#attempt-{pk}` 并自动展开高亮。任务详情页的 Rollout 列表新增「失败分析」列。
 - **从任务详情直接跳**：任务详情页「正常失败 / 超时 / abort · 具体类型」清单里的每个原因都是快捷链接，点它跳到本任务的失败分析页并自动按该类型筛选（`/api/tasks/{id}/failures?cat=..&reason=..`）。
@@ -183,13 +187,13 @@ rollout-insight/
 
 **Rollout 详情页的组结果列**：Group 列表概览新增「失败类型」列，列出每个 group 内出现的失败类型；每个类型下的 attempt 主号都是超链接，点击直接定位到页面下方对应 attempt（`#attempt-{pk}`，自动展开并高亮）。「正常失败 / 超时 / abort」三列的数量同样渲染为可点链接，指向本组。
 
-### 5.2 问题分析（任务级）
+### 5.2 题目分析（任务级）
 
-问题分析从任务进入：任务详情页顶「问题分析」进入 `/api/tasks/{task_id}/problem-analysis`。它回答两件事。
+题目分析从任务进入：任务详情页顶「题目分析」进入 `/api/tasks/{task_id}/problem-analysis`（路由未改，避免旧链接失效）。它回答两件事。
 
 **任务通过分析。** 一道题的一次出现是同一个 `rollout_id` 下的同一个 `instance_id`（通常约 8 条 attempt）。按 `rollout_id` 升序，第 k 次出现就是第 k 个 epoch。通过率 = 该次 reward≈1 的条数 / 该次 attempt 条数；abort 与 timeout 计入分母、不计入分子。变好或变坏只看该题最后一次减第一次：大于 0 为绿，小于 0 为红，相等为灰。只出现一次的题单独计数，不进直方图。筛选里另有「太容易」（每一次出现都全通过，常见是每次 8/8）和「太难」（每一次出现都是 0 通过，常见是每次 0/8）。题目名可点进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，按出现次序看每次所在的 rollout，以及该次每条 attempt 的 sglang 轨迹。总览有两条：一是按 epoch 把全部题目合在一起的通过率曲线，第 k 个点是各题第 k 次出现的 attempt 加总（分子、分母跨题相加）。单步 raw_reward 只覆盖当步抽到的题目，所以会上下跳；这条曲线按 epoch 看全量题目。该次还没再次出现的题不计入，覆盖不足全部题目时用空心点标出。二是首尾差值直方图，每格 1/8。`ROLLOUT_BATCH_SIZE` 来自 run 目录环境变量，读不到时用每个 rollout 的 group 数众数，只用来核对「每个 epoch 窗口里一题是否只出现一次」，不用来重画曲线。
 
-**响应 fake_response。** 统计 sglang 序列里的 assistant 回复：有 tool_call、无 tool_call、工具名（其中 finish 单独列出）。「最后一条是不是 finish」看该 attempt 最后一条 assistant 回复的最后一个工具名。attempt 维度分开报告「出现过无 tool_call」和「最后一条不是 finish」，并给出两者的并集。合法工具名是 `execute_bash`、`str_replace_editor`、`think`、`finish`；有标签但名字不在其中仍算有 tool_call，另外单列。turn 已全部落库时直接用标记，不读正文。覆盖不全时，页面上的「统计全部响应」按 rollout 从 `.pt` 只累计计数，不把正文写入 turn 表，结果缓存在 `rollout_root/.ri_response_stats.json`，按 pt 的路径、大小和 mtime 失效。
+**响应 fake_response。** 统计 sglang 序列里的 assistant 回复：有 tool_call、无 tool_call、工具名（其中 finish 单独列出）。「最后一条是不是 finish」看该 attempt 最后一条 assistant 回复的最后一个工具名。attempt 维度分开报告「出现过无 tool_call」和「最后一条不是 finish」，并给出两者的并集。合法工具名是 `execute_bash`、`str_replace_editor`、`think`、`finish`；有标签但名字不在其中仍算有 tool_call，另外单列。turn 已全部落库时直接用标记，不读正文。覆盖不全时，页面上的「统计全部响应」按 rollout 从 `.pt` 只累计计数，不把正文写入 turn 表，结果缓存在 `rollout_root/.ri_response_stats.json`，按 pt 的路径、大小和 mtime 失效。注意：这里的「fake_response」是 tool_call 形态统计，与训练曲线里的 TB tag `max_fake_responses`（假响应超限占比）以及问题分析里的 `agent_outcome=max_fake_responses` **不是同一口径**。
 
 **单题明细（题目为中心）。** 点题目名进 `/api/tasks/{task_id}/problem-analysis/instance?instance_id=`，页面围绕**这一道题**组织：
 
@@ -198,6 +202,16 @@ rollout-insight/
 - 响应长度与轮数取自 `ri_attempt_table` 的 `response_length` / `agent_turns` 字段。
 
 趋势与折线渲染复用共享模块 `static/ri_multi_chart.js`（与多任务曲线对比同款 SVG）。
+
+### 5.2.1 问题分析（任务级）
+
+问题分析从任务进入：任务详情页顶「问题分析」进入 `/api/tasks/{task_id}/agent-problems`。它把 agentic RL 常见问题收成一张按严重度排序的清单，每条给出：占 attempt（或组 / 题目）的比例、为何挡住奖励上升、对 GRPO 的含义、奖励设计动作，以及跳到失败分析的样例。
+
+目录定义在 `data/agentic_problem_catalog.py`，包括：假响应超限、动作格式非法、无 tool_call / 非 finish / 过早 finish、上下文打满、时间预算、迭代/轮次上限、SDK/abort、评测器故障与 `tests_failed`、无 diff、零方差组、题目池饱和/过难。拼装入口是 `service/agentic_problem_service.build_task_problem_report`：复用失败分析的 `agent_outcome` / diagnosis 聚类、奖励诊断的行为卡片与组/题目池统计；若事件目录有 `max_fake_responses` / `context_exhausted`，附 TB 首尾趋势。
+
+### 5.2.2 奖励设计（洞察）
+
+顶栏「洞察」下有二级菜单：**指标洞察**（原 `/api/insights`）与 **奖励设计**（`/api/insights/reward-design`）。奖励设计页说明当前已落盘的二值奖励如何进入 GRPO（不可测样本、零方差组），列出与数据对得上的实践策略（`data/reward_design_playbook.py`），并展示问题目录。选定 `task_id` 后嵌入与问题分析同口径的任务摘要，链到 `/api/tasks/{id}/agent-problems#<problem_id>`。本页**不**计算 format/process/KL 奖励分量——那些尚未进入当前训练奖励。
 
 ### 5.3 奖励诊断（任务级）
 
@@ -295,7 +309,7 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
 
 ### 5.6 界面图标（离线 Lucide）
 
-顶栏、任务内跳转栏、页面按钮都配了图标，用来一眼区分各入口的职责（任务列表 / 曲线对比 / 跨任务对比 / 洞察 / **南湖作业** / 系统设置 / 登录 / 注册 / 设置 / 退出，以及任务详情 / 训练曲线 / 失败分析 / 问题分析 / 奖励诊断）。悬停时还会显示一句话说明。
+顶栏、任务内跳转栏、页面按钮都配了图标，用来一眼区分各入口的职责（任务列表 / 曲线对比 / 跨任务对比 / 洞察 / **南湖作业** / 系统设置 / 登录 / 注册 / 设置 / 退出，以及任务详情 / 训练曲线 / 失败分析 / 题目分析 / 问题分析 / 奖励诊断）。悬停时还会显示一句话说明。
 
 - **系统设置**：指向 `/api/me/cluster-configs`（兼容旧链 `/api/settings`）。每位登录用户维护**自己的**南湖 `app_key` / `app_secret`，同步与解析不会混用他人凭据。
 - **南湖作业**：顶栏入口 `/api/nanhu/jobs/page`；列表展示**创建人**与**算法库名称**，可按任务名称 / 创建人 / 算法库检索。同事共享作业用「批量 UUID / 导入并勾选」（`getJobDetail`，与 `nanhu jobs detail` 同源）。**新建任务**：在「关联南湖 job_id」框粘贴单个或多个 `jb-aitrain-…`——单个点「解析」回填字段；多个点「解析」即批量创建（无需改任务名）；已关联过的 job 返回 `51006` 并跳过，其余继续创建。

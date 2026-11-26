@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}问题分析{% if task_id %} · 任务 #{{ task_id }}{% endif %} · {{ brand }}{% endblock %}
+{% block title %}题目分析{% if task_id %} · 任务 #{{ task_id }}{% endif %} · {{ brand }}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -65,11 +65,11 @@
 {% block content %}
 <div class="breadcrumb">
     <a href="/api/tasks">任务列表</a>
-    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 问题分析{% endif %}
+    {% if task_id %} / <a href="/api/tasks/{{ task_id }}">任务 #{{ task_id }}</a> / 题目分析{% endif %}
 </div>
 <div class="page-header">
     <div>
-        <h1 id="pageTitle">问题分析</h1>
+        <h1 id="pageTitle">题目分析</h1>
         <div class="page-subtitle" id="pageNote">按题目在训练中的出现次序看通过率，并统计 sglang 回复里的 tool_call。</div>
     </div>
     {% if task_id %}
@@ -82,7 +82,7 @@
     {% endif %}
 </div>
 <div id="errorBox" class="alert alert-warning" style="display:none;"></div>
-<div id="loading" class="loading">正在加载问题分析…</div>
+<div id="loading" class="loading">正在加载题目分析…</div>
 <div id="body" style="display:none;">
     <div class="section" id="passSection">
         <h2>任务通过分析 <small id="passMeta"></small></h2>
@@ -391,12 +391,12 @@
             $("loading").style.display = "none";
             $("body").style.display = "";
             const name = {{ task_name | tojson }};
-            if (name) $("pageTitle").textContent = name + " · 问题分析";
+            if (name) $("pageTitle").textContent = name + " · 题目分析";
             renderPass(DATA.pass_trend || {});
             renderResponse(DATA.response || {});
         } catch (e) {
             $("loading").style.display = "none";
-            showError("加载问题分析失败：" + (e && e.message ? e.message : e));
+            showError("加载题目分析失败：" + (e && e.message ? e.message : e));
         }
     }
 

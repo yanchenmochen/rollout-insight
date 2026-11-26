@@ -1,0 +1,22 @@
+{# 洞察相关页二级菜单。
+   调用方设置 insight_nav_current: metrics | reward_design
+#}
+{% set insight_current = insight_nav_current if insight_nav_current is defined else '' %}
+{% set insight_task_q = '' %}
+{% if task is defined and task and task.primary_id %}
+  {% set insight_task_q = '?task_id=' ~ task.primary_id %}
+{% elif task_id is defined and task_id %}
+  {% set insight_task_q = '?task_id=' ~ task_id %}
+{% endif %}
+<nav class="insight-subnav" aria-label="洞察子菜单" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;">
+    <a class="btn {% if insight_current == 'metrics' %}is-current{% else %}btn-secondary{% endif %}"
+       href="/api/insights{{ insight_task_q }}"
+       title="指标洞察：事件目录 scalar 与排查顺序"
+       {% if insight_current == 'metrics' %}aria-current="page"{% endif %}>
+        <span class="ri-icon ri-icon-chart-line"></span>指标洞察</a>
+    <a class="btn {% if insight_current == 'reward_design' %}is-current{% else %}btn-secondary{% endif %}"
+       href="/api/insights/reward-design{{ insight_task_q }}"
+       title="奖励设计：二值奖励如何进 GRPO，以及常见改法"
+       {% if insight_current == 'reward_design' %}aria-current="page"{% endif %}>
+        <span class="ri-icon ri-icon-lightbulb"></span>奖励设计</a>
+</nav>
