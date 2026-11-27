@@ -81,6 +81,20 @@
 <div id="errorBox" class="alert alert-warning" style="display:none;"></div>
 <div id="loading" class="loading">正在加载奖励诊断…</div>
 <div id="body" style="display:none;">
+    <div class="section" id="budgetSection">
+        <h2>时间预算健康度 <small id="budgetMeta"></small></h2>
+        <div class="chip-row" id="budgetChips"></div>
+        <div class="readout" id="budgetReadout"></div>
+        <div class="legend">
+            <span><i style="background:#c62828;"></i>撞墙率</span>
+            <span><i style="background:#2d6a9f;"></i>单轮耗时(s)</span>
+            <span><i style="background:#2d6a4f;"></i>单轮 token</span>
+            <span><i style="background:#8a5a00;"></i>轮数</span>
+        </div>
+        <div class="line-chart" id="budgetChart"></div>
+        <div class="muted" id="budgetNote"></div>
+    </div>
+
     <div class="section" id="gradientSection">
         <h2>有效梯度组 <small id="gradMeta"></small></h2>
         <div class="chip-row" id="gradChips"></div>
@@ -245,6 +259,65 @@
         return `<span class="rel-unclear">样本不足</span>`;
     }
 
+    const VERDICT_LABEL = {
+        per_turn_slowdown: "单轮变慢",
+        turn_count_blowup: "轮数爆炸",
+        context_exhaustion: "上下文打满",
+        healthy: "健康",
+        insufficient_data: "数据不足",
+    };
+
+    function renderBudget(budget) {
+        const deg = (budget && budget.degradation) || {};
+        const series = (budget && budget.series) || [];
+        const verdict = deg.verdict || "insufficient_data";
+        $("budgetMeta").textContent = budget && budget.available
+            ? `${series.length} 个 rollout · 预算 ${budget.budget_seconds || 3600}s`
+            : "无 artifacts 数据";
+        const chips = [
+            `<span class="chip">判定 <strong>${esc(VERDICT_LABEL[verdict] || verdict)}</strong></span>`,
+            `<span class="chip">置信度 <strong>${esc(deg.confidence || "-")}</strong></span>`,
+        ];
+        if (deg.per_turn_growth != null) {
+            chips.push(`<span class="chip">单轮耗时增幅 <strong>${(deg.per_turn_growth * 100).toFixed(0)}%</strong></span>`);
+        }
+        if (deg.time_budget_ratio_last != null) {
+            chips.push(`<span class="chip">末段撞墙 <strong>${pct(deg.time_budget_ratio_last)}</strong></span>`);
+        }
+        if (deg.slowdown_attribution && deg.slowdown_attribution !== "not_applicable") {
+            chips.push(`<span class="chip">归因 <strong>${esc(deg.slowdown_attribution)}</strong></span>`);
+        }
+        $("budgetChips").innerHTML = chips.join("");
+        const reasons = (deg.verdict_reasons || []).map((r) => esc(r)).join("；");
+        $("budgetReadout").textContent = reasons || "尚无判定依据";
+        // 撞墙率用 0-1；单轮耗时 / token / 轮数量纲不同，拆两张思路：主图画比率+归一化困难
+        // → 只画撞墙率，其它用 readout；若有 RiMultiChart 可叠，这里复用现有 multiLine 画撞墙率
+        //   同时把 per_turn 做相对首值归一化画在第二层不方便，改为 chips+表意即可
+        $("budgetChart").innerHTML = multiLineChart(series, [
+            { key: "time_budget_ratio", color: "#c62828" },
+        ], 1);
+        // 附加一条「相对首值」的单轮耗时趋势（归一化到相对倍数/10 以便同图？不合适）
+        // 改：在 note 里写首末数字
+        const noteParts = [];
+        if (budget && budget.note) noteParts.push(budget.note);
+        if (deg.per_turn_seconds_first != null && deg.per_turn_seconds_last != null) {
+            noteParts.push(
+                `单轮耗时 ${Number(deg.per_turn_seconds_first).toFixed(1)}s → ${Number(deg.per_turn_seconds_last).toFixed(1)}s`
+            );
+        }
+        if (deg.tokens_per_turn_first != null && deg.tokens_per_turn_last != null) {
+            noteParts.push(
+                `单轮 token ${Number(deg.tokens_per_turn_first).toFixed(0)} → ${Number(deg.tokens_per_turn_last).toFixed(0)}`
+            );
+        }
+        if (deg.turns_first != null && deg.turns_last != null) {
+            noteParts.push(
+                `轮数 ${Number(deg.turns_first).toFixed(0)} → ${Number(deg.turns_last).toFixed(0)}`
+            );
+        }
+        $("budgetNote").textContent = noteParts.join(" · ");
+    }
+
     function renderGradient(grad) {
         const series = (grad && grad.series) || [];
         const latest = grad && grad.latest;
@@ -342,6 +415,7 @@
     const RATIO_LEVER_KEYS = new Set([
         "learnable_ratio", "timeout_ratio", "abort_ratio",
         "saturated_pool_ratio", "hard_pool_ratio",
+        "time_budget_ratio", "per_turn_seconds_growth",
     ]);
 
     function renderLevers(payload) {
@@ -382,6 +456,7 @@
                 $("pageTitle").textContent = data.task.task_name + " · 奖励诊断";
             }
             if (data.page_note) $("pageNote").textContent = data.page_note;
+            renderBudget(data.agent_budget || {});
             renderGradient(data.gradient_groups || {});
             renderSplit(data.reward_split || {});
             renderLevers(data.levers || {});

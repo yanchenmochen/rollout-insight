@@ -561,6 +561,51 @@
             </table>
         </div>
 
+        <div class="section" id="task-env">
+            <h2>训练环境变量
+                <small>关键键 · 来自 {% if job_context and job_context.env_source %}{{ job_context.env_source }}{% else %}resolved_config / 南湖{% endif %}</small>
+            </h2>
+            {% set env_rows = (job_context.env_highlight if job_context else None) or [] %}
+            {% if env_rows %}
+            <p class="meta" style="margin:0 0 8px;color:var(--ri-muted);font-size:12px;">
+                共 {{ job_context.env_count or 0 }} 项，展示其中 {{ env_rows | length }} 个训练相关键。
+                与其它任务对比请用顶栏「跨任务对比」。
+                <a class="mono" href="/api/tasks/{{ task.id }}/env.json?full=true" target="_blank" rel="noopener">全量 JSON</a>
+            </p>
+            <table class="info-table env-table">
+                <thead>
+                    <tr>
+                        <th style="width:18%;">分组</th>
+                        <th style="width:28%;">变量</th>
+                        <th>值</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in env_rows %}
+                    <tr title="{{ row.why or '' }}">
+                        <td>{{ row.category_label or row.category }}</td>
+                        <td class="mono">
+                            <strong>{{ row.key }}</strong>
+                            {% if row.label and row.label != row.key %}
+                            <span class="meta" style="color:var(--ri-muted);font-size:11px;"> · {{ row.label }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="mono" style="word-break:break-all;">{{ row.value if row.value is not none else '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="alert alert-info" style="margin:0;">
+                未读到训练环境变量。请确认 <code>rollout_root</code> 指向含
+                <code>resolved_config.yaml</code> 的 run 目录，或任务已关联南湖 job。
+                {% if job_context and job_context.run_dir %}
+                <br/>解析到的 run 目录：<code class="mono">{{ job_context.run_dir }}</code>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
         {% if job_context and job_context.is_eval_job %}
         <div class="section" id="eval-scores">
             <h2>评测评分 <small>TensorBoard 主 tag · attempt 平均 reward</small></h2>

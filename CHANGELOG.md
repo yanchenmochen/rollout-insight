@@ -1,5 +1,36 @@
 # rollout-insight CHANGELOG
 
+## 未发布 — 任务环境变量对比 + Agent 时间预算退化诊断
+
+### 概述
+
+1. **任务配置侧**：任务详情展示训练关键环境变量，跨任务对比页给出相对基线的 env diff。
+2. **奖励不涨第一主因**：奖励诊断页新增「时间预算健康度」——按 rollout 聚合单轮耗时 / token / 撞墙率，判定 `per_turn_slowdown` / `turn_count_blowup` / `context_exhaustion` / `healthy`。
+
+### 改动
+
+**环境变量（P1）**
+
+- `utils/task_env_catalog.py`：关键 env 目录、脱敏、两两 / 多任务 diff
+- `service/task_job_context_service.py`：抽出 `load_merged_task_env`；详情上下文附带 env 摘要
+- `service/task_env_service.py`：单任务快照 + 多任务对比
+- `GET /api/tasks/{id}/env.json`、`GET /api/cross-task-compare/env.json`
+- 任务详情「训练环境变量」区块；跨任务对比「环境变量差异」表
+
+**时间预算（P3）**
+
+- `utils/agent_budget_profile.py`：纯函数画像 + 退化判定（对齐 PLAN v2 §3.0）
+- `utils/attempt_artifacts.summarize_entry`：索引补齐 `phase_times` / `agent_run` / token 字段
+- `service/reward_diagnosis_service`：接入 `agent_budget`；杠杆新增 `time_budget_ratio` / `per_turn_seconds_growth`
+- 奖励诊断页「时间预算健康度」卡片
+
+**单测**
+
+- `tests/test_task_env_catalog.py`、`tests/test_task_env_service.py`
+- `tests/test_agent_budget_profile.py`（锁死 task8 式 `per_turn_slowdown` / task9 式 `healthy`）
+
+---
+
 ## 未发布 — 奖励提升方案 v2：用真实数据验证并纠错「奖励不涨」的归因
 
 ### 概述

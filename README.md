@@ -123,7 +123,8 @@ rollout-insight/
 | GET  | `/site.webmanifest` | PWA manifest（名称 / 主题色 / 各尺寸图标） |
 | GET  | `/api/tasks` | 任务列表（带分页/状态过滤） |
 | POST | `/api/tasks` | 创建任务（form-encoded） |
-| GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染；结局/奖励柱 SSR，类型细分渐进加载） |
+| GET  | `/api/tasks/{id}` | 任务详情（HTML 渲染；结局/奖励柱 SSR，类型细分渐进加载；含训练环境变量关键键） |
+| GET  | `/api/tasks/{id}/env.json` | 任务训练环境变量快照（`resolved_config.yaml` / 南湖）；`?full=true` 返回脱敏全量 |
 | GET  | `/api/tasks/{id}/annotations/meta.json` | 任务详情类型柱渐进加载：待拉取的 rollout 列表 |
 | GET  | `/api/tasks/{id}/rollouts/{rollout_pk}/annotations.json` | 单 rollout 类型柱 / 进入训练 / 失败摘要 |
 | POST | `/api/tasks/{id}/rescan` | 增量重扫（跳过大小与 mtime 未变的 .pt）。`?force=true` 清空后全量重扫 |
@@ -137,7 +138,7 @@ rollout-insight/
 | POST | `/api/tasks/{id}/response-stats` | 按 rollout 分批补响应计数（不写 turn 正文） |
 | GET  | `/api/tasks/{id}/agent-problems` | 任务问题分析：agentic RL 常见问题占比与奖励动作 |
 | GET  | `/api/tasks/{id}/agent-problems.json` | 问题分析 JSON |
-| GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：有效梯度组 / 奖励分解 / 行为失败卡片 |
+| GET  | `/api/tasks/{id}/reward-diagnosis` | 奖励诊断页：时间预算健康度 / 有效梯度组 / 奖励分解 / 行为失败卡片 |
 | GET  | `/api/tasks/{id}/reward-diagnosis.json` | 奖励诊断 JSON |
 | GET  | `/api/insights/reward-design` | 洞察 · 奖励设计（可选 `task_id=` 嵌入问题摘要） |
 | GET  | `/api/insights/reward-design.json` | 奖励设计 JSON |
@@ -146,8 +147,9 @@ rollout-insight/
 | POST | `/api/tasks/{id}/train-curve/preference` | 保存曲线指标配置（`scope=global` 用户默认 / `scope=task` 任务追加） |
 | GET  | `/api/tensorboard` | 多任务曲线对比页：勾选多个任务 + 指标，叠图对比 |
 | GET  | `/api/tensorboard/curve-compare.json` | 多任务曲线叠加数据（`task_ids=1,2,3` / `keys=` / `view=step\|epoch`；`brief=true` 只回任务清单与指标目录） |
-| GET  | `/api/cross-task-compare` | 任务题目变化页：勾选 1–6 个任务（单任务看自身题目变化，多任务比共同题目 + 可选基线） |
+| GET  | `/api/cross-task-compare` | 任务题目变化页：勾选 1–6 个任务（单任务看自身题目变化，多任务比共同题目 + 可选基线；含环境变量差异） |
 | GET  | `/api/cross-task-compare.json` | 对比 JSON（`task_ids=1` 或 `1,2,3`，可选 `baseline_task_id=` / `instance_id=`） |
+| GET  | `/api/cross-task-compare/env.json` | 多任务训练环境变量差异（相对基线；默认只比关键键，`only_diff` / `full_catalog`） |
 | GET  | `/api/cross-task-compare/instance.json` | 单题在多任务上的逐次出现与通过率 |
 | GET  | `/api/segments/search` | Segment 检索 JSON（可选 `group_index`、业务 `attempt_id`） |
 | GET  | `/api/segments/search/page` | Segment 检索页（任务列表按钮指向这里） |
@@ -217,20 +219,24 @@ rollout-insight/
 
 奖励诊断从任务进入：任务详情页顶「奖励诊断」进入 `/api/tasks/{task_id}/reward-diagnosis`。它回答「奖励为什么不涨」。
 
+**时间预算健康度。** 从 `attempt_artifacts/summaries` 读 `phase_time`，按 rollout 聚合单轮耗时 / 单轮 token / 轮数 / 撞墙率，判定 `per_turn_slowdown`（本批第一主因）/ `turn_count_blowup` / `context_exhaustion` / `healthy`。口径在 `utils/agent_budget_profile.py`。
+
 **有效梯度组。** 按 rollout 把每个 group 分成四类：混合（去掉 abort/timeout 后既有过又有挂，可学习）、全过、全挂、只剩基建。画出可学习组占比，并标出相对上一步下降超过 15 pct 的骤降点。判定与任务详情里的 `n_valid_groups` 一致。
 
 **奖励分解。** 同一 rollout 轴叠四条线：有数值 reward 的原始均值、可测通过率（abort/timeout 不进分母）、超时占比、abort 占比。用来区分能力掉分与基建噪声。
 
 **行为失败卡片。** 对非通过 attempt 按优先级打主类：abort → timeout → 无 tool_call → 最后不是 finish → 过早 finish（已 finish 但工具步很少且 diff 很小）。每张卡片给出现象、占失败 attempt 比例、与可测通过率是否同向、建议杠杆，以及跳到失败详情的样例链接。后三类依赖已落库的 assistant turn 标记。
 
-**奖励还能怎么涨。** 奖励诊断页新增杠杆区块，把「奖励为什么不涨」拆成 7 条可执行杠杆，按状态排序（先修 bad，再看 warn）：
+**奖励还能怎么涨。** 杠杆区块按状态排序（先修 bad，再看 warn）：
 
 | 杠杆 | 含义 | 异常时说明 |
 | ---- | ---- | ---- |
+| `time_budget_ratio` | Agent 时间预算撞墙率 | 末段偏高或判定单轮变慢 → 存活不足、整组被丢 |
+| `per_turn_seconds_growth` | 单轮生成耗时增幅 | 与单轮 token 同步上升 → 限长 / 提预算 |
 | `learnable_ratio` | 有效梯度组（混合组）占比 | 偏低或骤降 → 大量样本同号，梯度趋零，没有上升空间 |
 | `measurable_pass_rate` | 可测通过率（去掉 abort / timeout 的分母） | 停滞 → 策略本身没在学 |
 | `timeout_ratio` | 超时 / 上下文打满占比 | 升高 → 奖励被截断吃掉，可测样本变少 |
-| `abort_ratio` | abort 占比 | 升高 → 奖励不可测，属基建问题而非策略问题 |
+| `abort_ratio` | abort 占比 | 升高 → 先区分 time_budget vs 基建，勿一律当沙箱问题 |
 | `raw_mean_reward` | 训练实际拿到的奖励 | 明显低于可测通过率 → 差值就是被 abort / timeout 扣掉的部分 |
 | `saturated_pool_ratio` | 题目池饱和度（末次最好一次通过率 ≥ 0.875 的题占比） | 过高 → 题目池已被刷穿，剩下样本同号，再怎么训也涨不动 |
 | `hard_pool_ratio` | 题目池难度天花板（末次最好一次通过率 ≤ 0.125 的题占比） | 过高 → 题目池太难，大量样本全挂，同样没有学习信号 |
@@ -300,6 +306,7 @@ epoch 聚合逻辑在 `utils/train_curve_epoch.py`（`resolve_steps_per_epoch` /
 - **任务选择**：可搜索的勾选列表（按任务名 / `#id` 过滤），已选任务以可移除芯片展示；「最近 3 个」快捷勾选。
 - **单任务**：列出该任务全部题目，按自身首末通过率差排序 / 筛选；不展示基线下拉。
 - **多任务共同题目**：所有选中任务都出现过的 `instance_id`；可指定基线看「相对基线」列。
+- **环境变量差异**：同页拉取 `/api/cross-task-compare/env.json`，按训练关键键（batch / filter / 时间预算 / LR / KL 等）相对基线标出 changed / missing；任务详情页「训练环境变量」区块同源。
 - **epoch 口径**：与问题分析页完全一致——第 k 个 epoch = 该题第 k 次出现（按 `rollout_id` 升序）。
 - **基线任务（多任务）**：勾选 ≥2 个后出现「基线任务」下拉。切换基线会重新计算「相对基线」列。请求参数 `baseline_task_id=`（非法或未指定时退回第一个任务）。
 - **变好 / 变坏**：按各任务**自身训练轨迹**（末次通过率 − 首次通过率）统计；多任务另有「相对基线」列。**变好用绿色、变差用红色**。

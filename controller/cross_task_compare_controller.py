@@ -110,3 +110,42 @@ async def api_cross_task_instance(
         baseline_task_id=baseline_task_id,
     )
     return Response.success(msg="ok", data=data)
+
+
+@router.get("/api/cross-task-compare/env.json")
+async def api_cross_task_env_compare(
+    request: Request,
+    task_ids: str = Query("", description="参与对比的任务 id，逗号分隔"),
+    baseline_task_id: Optional[int] = Query(
+        None, description="基线任务 id；为空取第一个"
+    ),
+    only_diff: bool = Query(
+        True, description="true 时只返回相对基线有差异的关键键"
+    ),
+    full_catalog: bool = Query(
+        False, description="true 时对比全部 env 键（默认只比训练关键键目录）"
+    ),
+) -> Response:
+    """返回多任务训练环境变量差异（相对基线）。"""
+    from service.task_env_service import build_task_env_compare
+    from utils.auth_session import current_user
+
+    ids = _parse_task_ids(task_ids)
+    user = current_user(request)
+    local_user_id = getattr(user, "primary_id", None) if user is not None else None
+    logger.info(
+        "跨任务环境变量对比 task_ids={} baseline={} only_diff={}",
+        ids,
+        baseline_task_id,
+        only_diff,
+    )
+    data = await asyncio.to_thread(
+        build_task_env_compare,
+        ids,
+        baseline_task_id=baseline_task_id,
+        local_user_id=local_user_id,
+        fetch_nanhu_env=False,
+        only_highlight=not bool(full_catalog),
+        only_diff=bool(only_diff),
+    )
+    return Response.success(msg="ok", data=data)

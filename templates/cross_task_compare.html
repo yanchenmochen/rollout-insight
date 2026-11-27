@@ -111,6 +111,21 @@
     .detail-rate { font-size: 12px; color: var(--ri-muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
     .detail-rate b { color: var(--ri-ink); }
     .instance-name { color: var(--ri-accent); text-decoration: none; font-family: ui-monospace, monospace; }
+    /* 环境变量对比 */
+    table.env-cmp { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.env-cmp th, table.env-cmp td { padding: 6px 8px; border-bottom: 1px solid #e4e8ec;
+        text-align: left; vertical-align: top; }
+    table.env-cmp th { font-size: 11px; color: var(--ri-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    table.env-cmp td.mono { font-family: ui-monospace, monospace; word-break: break-all; }
+    table.env-cmp tr.diff td { background: #fff8e8; }
+    table.env-cmp .env-changed { color: #c62828; font-weight: 600; }
+    table.env-cmp .env-same { color: #5c6b7a; }
+    table.env-cmp .env-missing { color: #8a5a00; font-style: italic; }
+    table.env-cmp .env-only { color: #2d6a4f; font-weight: 600; }
+    .env-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; font-size: 13px; }
+    .env-filters button { padding: 4px 10px; border: 1px solid var(--ri-border); background: #fff;
+        border-radius: 12px; cursor: pointer; font-size: 12px; }
+    .env-filters button.active { background: var(--ri-accent); color: #fff; border-color: var(--ri-accent); }
 </style>
 {% endblock %}
 
@@ -120,6 +135,7 @@
     勾选 <strong>1 个任务</strong>可单独看该任务随训练进行、每道题通过率如何变化；
     勾选 <strong>2–6 个任务</strong>则只比较它们<strong>共同处理过的题目</strong>，并可指定基线看相对差距
     （<span class="delta-up">变好绿色</span> / <span class="delta-down">变差红色</span>）。
+    同时对比<strong>训练环境变量</strong>差异，便于判断配置改动是否导致奖励差。
     第 k 个 epoch = 该题第 k 次出现；展开题目可看折线、每次通过数，并跳转 group 轨迹。
 </p>
 
@@ -151,6 +167,18 @@
         <h2><span id="summaryTitleText">题目概览</span> <small id="commonMeta"></small></h2>
         <div class="chip-row" id="summaryChips"></div>
         <div class="muted" id="summaryNote"></div>
+    </div>
+
+    <div class="section" id="envSection">
+        <h2>环境变量差异 <small>训练关键键 · 相对基线</small></h2>
+        <div class="chip-row" id="envChips"></div>
+        <div class="env-filters">
+            <button type="button" data-env-mode="diff" class="active">仅差异</button>
+            <button type="button" data-env-mode="all">含相同</button>
+            <span class="muted" id="envMeta"></span>
+        </div>
+        <div id="envNotes" class="muted" style="margin-bottom:8px;"></div>
+        <div id="envBody"><div class="muted">分析后显示…</div></div>
     </div>
 
     <div class="section" id="curveSection">
@@ -207,11 +235,13 @@
     const PALETTE = ["#2d6a9f", "#c62828", "#2d6a4f", "#8a5a00", "#6a1b9a", "#0f766e"];
     const ALL_TASKS = {{ tasks | tojson }};
     let DATA = null;
+    let ENV_DATA = null;
     let selected = [];           // 字符串 task_id 列表，保持勾选顺序
     let baselineId = null;       // 用户主动选择的基线任务
     let dirFilter = "";
     let search = "";
     let page = 0;
+    let envMode = "diff";        // diff | all
     const expanded = new Set();  // 已展开的题目
 
     function esc(s) {
@@ -661,6 +691,78 @@
         }
     }
 
+    // ------------------------------------------------------------- 环境变量
+    function envCellClass(status) {
+        if (status === "changed" || status === "only_here") return "env-changed";
+        if (status === "missing") return "env-missing";
+        if (status === "same" || status === "baseline") return "env-same";
+        if (status === "absent") return "env-missing";
+        return "";
+    }
+    function envCellText(val, present, status) {
+        if (!present || val == null) {
+            if (status === "missing") return "(基线有 · 此处无)";
+            if (status === "absent") return "(未设置)";
+            return "—";
+        }
+        return String(val);
+    }
+    function renderEnv() {
+        const box = $("envBody");
+        const chips = $("envChips");
+        const meta = $("envMeta");
+        const notes = $("envNotes");
+        if (!ENV_DATA || !ENV_DATA.ok) {
+            chips.innerHTML = "";
+            meta.textContent = "";
+            notes.textContent = (ENV_DATA && ENV_DATA.error) || "没有环境变量对比数据。";
+            box.innerHTML = `<div class="muted">${esc((ENV_DATA && ENV_DATA.error) || "未加载")}</div>`;
+            return;
+        }
+        const compare = ENV_DATA.compare || {};
+        const summary = compare.summary || {};
+        const tasks = ENV_DATA.tasks || [];
+        chips.innerHTML = [
+            `<span class="chip"><strong>${summary.diff_key_count || 0}</strong> 差异键</span>`,
+            `<span class="chip flat"><strong>${summary.same_key_count || 0}</strong> 相同键</span>`,
+            `<span class="chip flat"><strong>${summary.compared_key_count || 0}</strong> 已对比</span>`,
+        ].join("");
+        meta.textContent = `基线：${compare.baseline_label || ("#" + ENV_DATA.baseline_task_id)} · 来源优先 resolved_config.yaml`;
+        notes.innerHTML = (ENV_DATA.notes || []).map((n) => `<div>${esc(n)}</div>`).join("");
+
+        let rows = compare.rows || [];
+        if (envMode === "diff") {
+            rows = (compare.diff_rows && compare.diff_rows.length)
+                ? compare.diff_rows
+                : rows.filter((r) => !r.all_same);
+        }
+        if (!rows.length) {
+            box.innerHTML = `<div class="alert alert-info" style="margin:0;">关键环境变量完全一致（或均未读到）。</div>`;
+            return;
+        }
+        const head = tasks.map((t) =>
+            `<th style="color:${colorOf(t.task_id)}">#${t.task_id}<br/><span class="muted" style="text-transform:none;letter-spacing:0;">${esc(t.task_name)}</span></th>`
+        ).join("");
+        const body = rows.map((r) => {
+            const cells = (r.values || []).map((v, i) => {
+                const st = (r.statuses || [])[i] || "";
+                const present = (r.presents || [])[i];
+                return `<td class="mono ${envCellClass(st)}">${esc(envCellText(v, present, st))}</td>`;
+            }).join("");
+            return `<tr class="${r.all_same ? "" : "diff"}" title="${esc(r.why || "")}">
+                <td>${esc(r.category_label || r.category || "")}</td>
+                <td class="mono"><strong>${esc(r.key)}</strong>
+                    ${r.label && r.label !== r.key ? `<div class="muted" style="font-size:11px;">${esc(r.label)}</div>` : ""}
+                </td>
+                ${cells}
+            </tr>`;
+        }).join("");
+        box.innerHTML = `<table class="env-cmp">
+            <thead><tr><th>分组</th><th>变量</th>${head}</tr></thead>
+            <tbody>${body}</tbody>
+        </table>`;
+    }
+
     // ------------------------------------------------------------- 奖励指引
     function renderGuidance() {
         const rows = DATA.reward_guidance || [];
@@ -709,16 +811,31 @@
         $("loading").style.display = "";
         $("errorBox").style.display = "none";
         try {
-            const resp = await fetch(`/api/cross-task-compare.json?${queryString()}`);
+            const qs = queryString();
+            const envQs = queryString({ only_diff: "false" }); // 前端自行按 envMode 过滤
+            const [resp, envResp] = await Promise.all([
+                fetch(`/api/cross-task-compare.json?${qs}`),
+                fetch(`/api/cross-task-compare/env.json?${envQs}`),
+            ]);
             const payload = await resp.json();
             if (!payload || payload.code !== 0) throw new Error((payload && payload.msg) || resp.status);
             DATA = payload.data || {};
             // 服务端确认了最终生效的基线（可能因参数非法而回退）
             if (DATA.baseline_task_id != null) baselineId = String(DATA.baseline_task_id);
+            try {
+                const envPayload = await envResp.json();
+                ENV_DATA = (envPayload && envPayload.code === 0) ? (envPayload.data || {}) : {
+                    ok: false,
+                    error: (envPayload && envPayload.msg) || "环境变量对比失败",
+                };
+            } catch (envErr) {
+                ENV_DATA = { ok: false, error: "环境变量对比失败：" + (envErr && envErr.message ? envErr.message : envErr) };
+            }
             $("loading").style.display = "none";
             $("body").style.display = "";
             renderSelection();
             renderSummary();
+            renderEnv();
             renderCurve();
             renderInstances();
             renderGuidance();
@@ -729,9 +846,19 @@
     }
 
     $("compareBtn").addEventListener("click", () => { page = 0; expanded.clear(); load(); });
+    document.querySelectorAll("#envSection .env-filters button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            envMode = btn.getAttribute("data-env-mode") || "diff";
+            document.querySelectorAll("#envSection .env-filters button").forEach((b) =>
+                b.classList.toggle("active", b === btn)
+            );
+            renderEnv();
+        });
+    });
     $("clearBtn").addEventListener("click", () => {
         selected = [];
         baselineId = null;
+        ENV_DATA = null;
         $("body").style.display = "none";
         $("errorBox").style.display = "none";
         renderSelection();

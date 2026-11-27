@@ -22,6 +22,8 @@ __all__ = [
     "summarize_behavior_cards",
     "build_reward_diagnosis",
     "build_reward_levers",
+    "load_agent_budget_rows",
+    "build_agent_budget_section",
 ]
 
 _RATE_EPS = 1e-9
@@ -473,6 +475,50 @@ def summarize_behavior_cards(
     }
 
 
+def load_agent_budget_rows(rollout_root: Optional[str]) -> List[Dict[str, Any]]:
+    """从 attempt_artifacts 索引构造预算画像行（L2）。"""
+    if not rollout_root:
+        return []
+    try:
+        from utils.attempt_artifacts import load_summary_index, locate_artifacts_dir
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("导入 attempt_artifacts 失败: {}", exc)
+        return []
+    artifacts_dir = locate_artifacts_dir(rollout_root)
+    if artifacts_dir is None:
+        return []
+    try:
+        entries = load_summary_index(artifacts_dir, use_cache=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("加载 summary 索引失败 root={}: {}", rollout_root, exc)
+        return []
+    return list(entries or [])
+
+
+def build_agent_budget_section(rollout_root: Optional[str]) -> Dict[str, Any]:
+    """组装奖励诊断页的「时间预算健康度」区块。"""
+    from utils.agent_budget_profile import build_agent_budget_profile
+
+    rows = load_agent_budget_rows(rollout_root)
+    if not rows:
+        return {
+            "available": False,
+            "n_attempts": 0,
+            "n_rollouts": 0,
+            "series": [],
+            "degradation": {
+                "verdict": "insufficient_data",
+                "verdict_reasons": ["未找到 attempt_artifacts summaries，无法画像"],
+                "confidence": "low",
+                "slowdown_attribution": "not_applicable",
+                "secondary_signals": [],
+            },
+            "note": "需要 run 目录下的 attempt_artifacts/summaries 才能判定时间预算退化。",
+        }
+    profile = build_agent_budget_profile(rows)
+    return profile
+
+
 def build_reward_diagnosis(task_id: int) -> Dict[str, Any]:
     """组装任务奖励诊断页 / JSON 载荷。"""
     from data.rollout_insight_exception import RolloutInsightException
@@ -501,13 +547,15 @@ def build_reward_diagnosis(task_id: int) -> Dict[str, Any]:
         turn_flags,
         reward_split_series=reward_split["series"],
     )
+    agent_budget = build_agent_budget_section(getattr(task, "rollout_root", None))
 
     logger.info(
-        "奖励诊断 task_id={} attempts={} rollouts={} turns={}",
+        "奖励诊断 task_id={} attempts={} rollouts={} turns={} budget_verdict={}",
         task_id,
         len(rows),
         reward_split["n_rollouts"],
         len(turn_flags),
+        (agent_budget.get("degradation") or {}).get("verdict"),
     )
     return {
         "task": {
@@ -525,9 +573,10 @@ def build_reward_diagnosis(task_id: int) -> Dict[str, Any]:
         "gradient_groups": gradient,
         "reward_split": reward_split,
         "behavior": behavior,
-        "levers": build_reward_levers(rows),
+        "agent_budget": agent_budget,
+        "levers": build_reward_levers(rows, agent_budget=agent_budget),
         "page_note": (
-            "先看可学习组占比与奖励分解，再看行为卡片对应的奖励杠杆；"
+            "先看时间预算健康度与可学习组占比，再看奖励分解与行为卡片；"
             "样例链到失败详情页。"
         ),
     }
@@ -539,6 +588,19 @@ def build_reward_diagnosis(task_id: int) -> Dict[str, Any]:
 
 # 每条杠杆：(key, 标题, 现象判据, 建议动作)
 _LEVER_RULES: Tuple[Tuple[str, str, str, str], ...] = (
+    (
+        "time_budget_ratio",
+        "Agent 时间预算撞墙",
+        "末段 time_budget_exceeded 占比偏高，或判定为单轮变慢 → 存活 attempt 不足、整组被丢。",
+        "提高 SWE_AGENT_TIME_BUDGET_SEC（如 60→90 分钟），或限制单轮输出长度；"
+        "先看奖励诊断「时间预算健康度」卡片的归因。",
+    ),
+    (
+        "per_turn_seconds_growth",
+        "单轮生成变慢",
+        "单轮耗时与单轮 token 同步上升 → 模型学会每轮说更多，墙钟内跑不完。",
+        "对输出长度加惩罚 / 在 prompt 约束单轮输出；核对 tokens_per_turn 曲线。",
+    ),
     (
         "learnable_ratio",
         "有效梯度组占比",
@@ -696,10 +758,26 @@ def _lever_status(
         if value >= 0.35:
             return "warn"
         return "ok"
+    if key == "time_budget_ratio":
+        if value >= 0.15:
+            return "bad"
+        if value >= 0.05:
+            return "warn"
+        return "ok"
+    if key == "per_turn_seconds_growth":
+        if value >= 1.0:
+            return "bad"
+        if value >= 0.5:
+            return "warn"
+        return "ok"
     return "unknown"
 
 
-def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def build_reward_levers(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    agent_budget: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """把奖励相关指标整理成「哪一条在拖后腿 + 该做什么」。
 
     纯函数：输入 attempt 结局行，输出杠杆卡片列表。
@@ -710,8 +788,18 @@ def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     pool = summarize_pool_health(rows)
     latest_gradient = gradient.get("latest") or {}
     latest_split = split.get("series")[-1] if split.get("series") else {}
+    deg = (agent_budget or {}).get("degradation") or {}
+    time_budget_ratio = deg.get("time_budget_ratio_last")
+    per_turn_growth = deg.get("per_turn_growth")
+    # 判定为单轮变慢但缺末段撞墙率时，仍用 1.0 占位把杠杆顶到 bad
+    if deg.get("verdict") == "per_turn_slowdown" and time_budget_ratio is None:
+        time_budget_ratio = 1.0
+    if deg.get("verdict") == "per_turn_slowdown" and per_turn_growth is None:
+        per_turn_growth = 1.0
 
     values: Dict[str, Optional[float]] = {
+        "time_budget_ratio": time_budget_ratio,
+        "per_turn_seconds_growth": per_turn_growth,
         "learnable_ratio": latest_gradient.get("learnable_ratio"),
         "n_mixed": latest_gradient.get("n_mixed"),
         "n_groups": latest_gradient.get("n_groups"),

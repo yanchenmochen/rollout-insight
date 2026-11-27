@@ -35,6 +35,8 @@ class TestBuildRewardLevers(unittest.TestCase):
         self.assertEqual(
             set(keys),
             {
+                "time_budget_ratio",
+                "per_turn_seconds_growth",
                 "learnable_ratio",
                 "measurable_pass_rate",
                 "timeout_ratio",

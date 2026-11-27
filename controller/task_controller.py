@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -844,6 +845,30 @@ async def page_task_detail(
         raise RolloutInsightException(
             RolloutInsightException.DB_ERROR, f"加载任务失败: {exc}"
         ) from exc
+
+
+@router.get("/api/tasks/{task_id}/env.json")
+async def api_task_env(
+    request: Request,
+    task_id: int,
+    full: bool = Query(
+        False, description="true 时返回脱敏后的全量 env；默认只回关键键摘要"
+    ),
+) -> Response:
+    """返回任务训练环境变量快照（来自 resolved_config.yaml / 南湖）。"""
+    from service.task_env_service import build_task_env_view
+    from utils.auth_session import current_user
+
+    user = current_user(request)
+    local_user_id = getattr(user, "primary_id", None) if user is not None else None
+    data = await asyncio.to_thread(
+        build_task_env_view,
+        int(task_id),
+        local_user_id=local_user_id,
+        fetch_nanhu_env=True,
+        include_full=bool(full),
+    )
+    return Response.success(msg="ok", data=data)
 
 
 @router.get("/api/tasks/{task_id}/annotations/meta.json")

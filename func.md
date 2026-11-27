@@ -63,6 +63,16 @@
 
 ## utils/ — 通用工具（优先复用）
 
+### `utils/agent_budget_profile.py`
+
+- `def percentile(values: Sequence[float], q: float) -> Optional[float]` — 线性插值分位数；空序列返回 None。
+- `def window_size(n_rollouts: int) -> int` — 首/末窗口宽度：clamp(round(0.2n), 3, 10)。
+- `def normalize_attempt_row(raw: Mapping[str, Any], *, default_context_limit: int=_DEFAULT_CONTEX…` — 把任意来源的 attempt 行规整成画像输入行。
+- `def aggregate_rollout_point(rows: Sequence[Mapping[str, Any]], *, budget_seconds: float=_DEFAUL…` — 把同一 rollout 的规范行聚成一个 RolloutPoint。
+- `def classify_degradation(series: Sequence[Mapping[str, Any]], *, min_rollouts: int=3) -> Dict[s…` — 按 A.6 规则判定退化模式（命中即停）。
+- `def infer_budget_seconds(rows: Sequence[Mapping[str, Any]]) -> int` — 从撞墙样本的 agent_run 推断预算（p1 向下取整到百位）；不足则 3600。
+- `def build_agent_budget_profile(rows: Sequence[Mapping[str, Any]], *, budget_seconds: Optional[i…` — 从 attempt 行构建完整预算画像。
+
 ### `utils/analyze_dump.py`
 
 - `def load_dump(path: str | Path) -> Dict[str, Any]` — 加载完整 .pt dump dict（优先 zip/pickle，不依赖可 import 的 torch）。
@@ -185,6 +195,17 @@
 - `def classify_slime_job_type(env: Optional[Mapping[str, Any]]=None, *, launcher: str='', trainin…` — 按 env / launcher 判定作业类型。
 - `def attach_slime_job_type(target: MutableMapping[str, Any], env: Optional[Mapping[str, Any]]=No…` — 就地写入 ``job_type`` / ``job_type_label`` 等字段。
 - `def load_env_from_run_dir(run_dir: Optional[Path | str]) -> Tuple[Dict[str, str], str, str]` — 从 run 目录读取 env 与 launcher。
+
+### `utils/task_env_catalog.py`
+
+- `def catalog_entry(key: str) -> Optional[Dict[str, str]]` — 查目录项；未知键返回 None。
+- `def classify_env_key(key: str) -> str` — 返回 category 名；未知为 ``other``。
+- `def is_sensitive_key(key: str) -> bool` — （无 docstring）
+- `def redact_env_value(key: str, value: Any) -> str` — 敏感键脱敏；其余转成短字符串。
+- `def pick_highlight_env(env: Optional[Mapping[str, Any]], *, include_unknown: bool=False) -> Lis…` — 按目录顺序抽出关键环境变量行。
+- `def summarize_env_map(env: Optional[Mapping[str, Any]]) -> Dict[str, Any]` — 单任务 env 摘要：关键行 + 计数。
+- `def diff_env_maps(left: Optional[Mapping[str, Any]], right: Optional[Mapping[str, Any]], *, lef…` — 两份 env 的差异：changed / only_left / only_right / same。
+- `def compare_env_maps(envs: Sequence[Mapping[str, Any]], *, labels: Optional[Sequence[str]]=None…` — 多任务 env 对比：相对基线的逐键矩阵 + 汇总。
 
 ### `utils/tb_deep_link.py`
 
@@ -472,9 +493,11 @@
 - `staticmethod` `def aggregate_attempt_turn_flags(flags: Sequence[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]`
 - `staticmethod` `def classify_behavior_primary(row: Dict[str, Any], turn_summary: Optional[Dict[str, Any]]=None)…`
 - `staticmethod` `def summarize_behavior_cards(rows: Sequence[Dict[str, Any]], turn_flags: Sequence[Dict[str, Any…`
+- `staticmethod` `def load_agent_budget_rows(rollout_root: Optional[str]) -> List[Dict[str, Any]]`
+- `staticmethod` `def build_agent_budget_section(rollout_root: Optional[str]) -> Dict[str, Any]`
 - `staticmethod` `def build_reward_diagnosis(task_id: int) -> Dict[str, Any]`
 - `staticmethod` `def summarize_pool_health(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
-- `staticmethod` `def build_reward_levers(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
+- `staticmethod` `def build_reward_levers(rows: Sequence[Dict[str, Any]], *, agent_budget: Optional[Dict[str, Any…`
 
 ### `rollout_auto_scan_service_module` (`service/rollout_auto_scan_service.py`)
 
@@ -536,10 +559,19 @@
 - `staticmethod` `def get_rollout_annotation_payload(task_id: int, rollout_pk: int) -> Dict[str, Any]`
 - `staticmethod` `def clear_annotation_cache_for_tests() -> None`
 
+### `task_env_service_module` (`service/task_env_service.py`)
+
+模块级公开函数（不在 class 内）：
+
+- `staticmethod` `def load_task_env_snapshot(task_id: int, *, local_user_id: Optional[int]=None, fetch_nanhu_env:…`
+- `staticmethod` `def build_task_env_view(task_id: int, *, local_user_id: Optional[int]=None, fetch_nanhu_env: bo…`
+- `staticmethod` `def build_task_env_compare(task_ids: Sequence[int], *, baseline_task_id: Optional[int]=None, lo…`
+
 ### `task_job_context_service_module` (`service/task_job_context_service.py`)
 
 模块级公开函数（不在 class 内）：
 
+- `staticmethod` `def load_merged_task_env(*, rollout_root: Optional[str]=None, nanhu_job_id: Optional[str]=None,…`
 - `staticmethod` `def build_task_job_context(*, rollout_root: Optional[str]=None, nanhu_job_id: Optional[str]=Non…`
 
 ### `tensorboard_service_module` (`service/tensorboard_service.py`)
@@ -582,6 +614,7 @@
 | `cross_task_compare_controller` | GET | `/api/cross-task-compare` | `page_cross_task_compare` | 渲染跨任务对比页。 |
 | `cross_task_compare_controller` | GET | `/api/cross-task-compare.json` | `api_cross_task_compare` | 返回跨任务对比数据：共同题目的 epoch 趋势 + 变好/变坏清单 + 奖励指引。 |
 | `cross_task_compare_controller` | GET | `/api/cross-task-compare/instance.json` | `api_cross_task_instance` | 返回某一道题在多个任务上的逐次出现与通过率。 |
+| `cross_task_compare_controller` | GET | `/api/cross-task-compare/env.json` | `api_cross_task_env_compare` | 返回多任务训练环境变量差异（相对基线）。 |
 | `failure_controller` | GET | `/api/tasks/{task_id}/failures` | `page_task_failures` | 任务详情下的失败分析。复用 failure_overview.html 与 overview.json，不重写聚类。 |
 | `failure_controller` | GET | `/api/failures` | `page_failure_overview` | 旧地址。有 task_id 时与任务失败分析相同；没有 task_id 时只给回任务列表的说明。 |
 | `failure_controller` | GET | `/api/failures/attempts/{attempt_pk}` | `page_failure_attempt` | 渲染 failure_attempt.html：单 attempt 怎么失败的。 |
@@ -621,6 +654,7 @@
 | `task_controller` | GET | `/api/tasks/create` | `page_task_create` | 渲染 task_create.html。 |
 | `task_controller` | POST | `/api/tasks` | `api_create_task` | 创建任务（form-encoded）。写库后由前端跳到 /api/tasks/{id}。 |
 | `task_controller` | GET | `/api/tasks/{task_id}` | `page_task_detail` | 渲染 task_detail.html；概览 + Rollout 列表（含 n_segments）+ 南湖绑定。 |
+| `task_controller` | GET | `/api/tasks/{task_id}/env.json` | `api_task_env` | 返回任务训练环境变量快照（来自 resolved_config.yaml / 南湖）。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/annotations/meta.json` | `api_task_annotations_meta` | 返回待渐进加载的 rollout 列表（rollout_pk / rollout_id / pt_path）。 |
 | `task_controller` | GET | `/api/tasks/{task_id}/rollouts/{rollout_pk}/annotations.json` | `api_rollout_annotations` | 单 rollout 类型柱 / 进入训练 / 失败摘要（读 sidecar 或 .pt）。 |
 | `task_controller` | POST | `/api/tasks/{task_id}/rescan` | `api_rescan_task` | 触发增量重扫（异步后台跑，请求立即返回）。 |
